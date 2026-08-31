@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #0b0e14;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* Prevent text selection on the game UI for a more "app-like" feel. */
+button {
+  user-select: none;
+}
+
+/* Subtle focus ring for keyboard accessibility. */
+:focus-visible {
+  outline: 2px solid rgba(255, 209, 102, 0.8);
+  outline-offset: 2px;
+}
