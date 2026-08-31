@@ -11,8 +11,6 @@ interface PowerSelectorProps {
   onChange: (power: number) => void;
 }
 
-const POWER_LABELS = ["", "", "", "", ""];
-
 export function PowerSelector({ power, disabled, onChange }: PowerSelectorProps) {
   const { min, max } = CONFIG.power;
   const levels = Array.from({ length: max - min + 1 }, (_, i) => min + i);
@@ -53,7 +51,7 @@ export function PowerSelector({ power, disabled, onChange }: PowerSelectorProps)
                   isCurrent ? "text-amber-100" : "text-white/70"
                 )}
               >
-                {POWER_LABELS[level - 1] || level}
+                {level}
               </span>
             </button>
           );

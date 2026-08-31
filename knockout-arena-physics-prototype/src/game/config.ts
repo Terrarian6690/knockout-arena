@@ -46,8 +46,10 @@ export const CONFIG = {
     /** Exponent making higher power levels ramp up non-linearly. */
     curve: 1.5,
     /**
-     * Outward radial speed required at the rim to be knocked out. High power
-     * aimed directly at the edge exceeds this; low/medium power bounces back.
+     * Outward radial speed at rim contact required to fly OVER the rim (the
+     * rim is a low lip): fast head-on launches clear it and leave the floor,
+     * slow or glancing contacts bounce back. This only decides pass-through;
+     * the elimination itself is a pure geometric check (see arena.ts).
      */
     knockoutSpeed: 2.3,
   },
@@ -68,9 +70,23 @@ export const CONFIG = {
 
   /** Turn / motion resolution. */
   simulation: {
+    /**
+     * The physics always steps by this fixed delta (ms). The game loop
+     * exchanges real frame time for fixed ticks via an accumulator, so the
+     * simulation behaves identically on 60 / 120 / 144 Hz displays.
+     */
+    fixedTimestepMs: 1000 / 60,
+    /**
+     * Clamp for one frame's delta (tab switches, GC pauses) so the loop
+     * never tries to catch up in an unbounded spiral.
+     */
+    maxFrameMs: 100,
     /** Below this speed the pawn is considered at rest. */
     restSpeedThreshold: 0.1,
-    /** Max ticks we wait for the pawn to settle before giving up. */
+    /**
+     * Max fixed ticks we wait for the pawn to settle before stopping it
+     * anyway (600 ticks = 10 s at 60 Hz, on every machine).
+     */
     maxSettleTicks: 600,
   },
 

@@ -29,8 +29,13 @@ export function floorRadius(arena: Arena): number {
 }
 
 /**
- * True when a point center (with given radius) has fully crossed the inner
- * boundary line. We use the center distance so the whole pawn must leave.
+ * The single authoritative elimination rule: a pawn is out of bounds when it
+ * has completely left the playable floor — the distance from the arena
+ * center exceeds the floor radius by more than the pawn's own radius, i.e.
+ * no part of the pawn touches the playfield anymore.
+ *
+ * Pure geometry (no velocity heuristics, no magic thresholds): the same
+ * check works identically on client and, later, on a server.
  */
 export function isPawnOutOfBounds(
   arena: Arena,
@@ -40,22 +45,10 @@ export function isPawnOutOfBounds(
 ): boolean {
   const dx = x - arena.centerX;
   const dy = y - arena.centerY;
-  const dist = Math.hypot(dx, dy);
-  return dist > floorRadius(arena) - pawnRadius * 0.4;
+  return Math.hypot(dx, dy) > floorRadius(arena) + pawnRadius;
 }
 
-/** Clamp a point to be just inside the floor (used for safe spawns). */
-export function clampToFloor(arena: Arena, x: number, y: number): [number, number] {
-  const dx = x - arena.centerX;
-  const dy = y - arena.centerY;
-  const dist = Math.hypot(dx, dy) || 1;
-  const max = floorRadius(arena) - CONFIG.pawn.radius - 4;
-  if (dist <= max) return [x, y];
-  const scale = max / dist;
-  return [arena.centerX + dx * scale, arena.centerY + dy * scale];
-}
-
-/** A spawn point near the arena edge, given an angle in radians. */
+/** A spawn point just inside the floor, given an angle in radians. */
 export function spawnPositionAtAngle(arena: Arena, angle: number): [number, number] {
   const r = floorRadius(arena) - CONFIG.pawn.radius - 8;
   return [

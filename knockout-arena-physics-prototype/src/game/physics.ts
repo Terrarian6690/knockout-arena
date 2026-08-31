@@ -4,6 +4,10 @@ import { createArena, floorRadius, type Arena } from "./arena";
 
 const { Engine, Bodies, Composite, Body, Events } = Matter;
 
+/** Collision category bits: pawns and the arena rim. */
+const CAT_PAWN = 0x0001;
+const CAT_WALL = 0x0002;
+
 /**
  * Physics module — the only place that knows about Matter.js.
  *
@@ -25,7 +29,7 @@ export interface PhysicsWorld {
   removePawnBody(body: Matter.Body): void;
   /** Rebuild boundary walls (called once on init or after resize). */
   buildBoundary(): void;
-  /** Advance the physics by one fixed step. */
+  /** Advance the physics by one FIXED timestep (supplied by the game loop). */
   step(dtMs: number): void;
   /** Apply a velocity impulse (direct Δv) to a body. */
   applyImpulse(body: Matter.Body, ix: number, iy: number): void;
@@ -37,19 +41,28 @@ export interface PhysicsWorld {
   label(body: Matter.Body): string;
   /** Stop a body in place. */
   stop(body: Matter.Body): void;
+  /**
+   * Toggle whether a body collides with the arena rim. Used for the rim
+   * pass-over rule: a fast head-on contact clears the lip and stops
+   * colliding with it so the pawn can leave the floor.
+   */
+  setCollidesWithWalls(body: Matter.Body, enabled: boolean): void;
   /** Subscribe to collision events (fires for each colliding pair). */
   onCollision(cb: (a: Matter.Body, b: Matter.Body) => void): void;
+  /** Tear down the world and remove all engine event listeners. */
+  destroy(): void;
 }
 
 export function createPhysicsWorld(): PhysicsWorld {
   const engine = Engine.create({ enableSleeping: false });
   const arena = createArena();
 
-  // Prevent any body from sleeping so we keep full control over settle logic.
+  // Top-down view: no gravity. Prevent sleeping so we keep full control over
+  // settle logic.
   engine.world.gravity.x = 0;
   engine.world.gravity.y = 0;
 
-  const world = engine.world as any;
+  const world = engine.world;
 
   // Keep a reference to boundary pieces so we can rebuild them.
   let boundaryBodies: Matter.Body[] = [];
@@ -93,6 +106,7 @@ export function createPhysicsWorld(): PhysicsWorld {
           friction: 0.01,
           restitution: CONFIG.pawn.restitution,
           label: "arenaWall",
+          collisionFilter: { category: CAT_WALL, mask: CAT_PAWN },
         }
       );
       boundaryBodies.push(segment);
@@ -114,6 +128,9 @@ export function createPhysicsWorld(): PhysicsWorld {
       frictionAir: CONFIG.pawn.frictionAir,
       frictionStatic: CONFIG.pawn.frictionStatic,
       restitution: CONFIG.pawn.restitution,
+      // Pawns collide with other pawns and with the rim; the rim can be
+      // toggled off per-pawn for the pass-over rule (see setCollidesWithWalls).
+      collisionFilter: { category: CAT_PAWN, mask: CAT_PAWN | CAT_WALL },
     });
     Composite.add(world, body);
     return body;
@@ -124,8 +141,10 @@ export function createPhysicsWorld(): PhysicsWorld {
   }
 
   function step(dtMs: number) {
-    // fixed timestep for deterministic-ish behavior
-    Engine.update(engine, Math.min(dtMs, 34));
+    // dtMs must be the FIXED timestep supplied by the game loop (see
+    // game.ts): Matter integrates deterministically as long as every update
+    // is called with the same delta.
+    Engine.update(engine, dtMs);
   }
 
   function applyImpulse(body: Matter.Body, ix: number, iy: number) {
@@ -156,12 +175,32 @@ export function createPhysicsWorld(): PhysicsWorld {
     Body.setAngularVelocity(body, 0);
   }
 
+  function setCollidesWithWalls(body: Matter.Body, enabled: boolean) {
+    body.collisionFilter.mask = enabled
+      ? CAT_PAWN | CAT_WALL
+      : CAT_PAWN;
+  }
+
+  // Keep a reference to the collision listener so destroy() can remove it.
+  let collisionHandler: ((event: Matter.IEventCollision<Matter.Engine>) => void) | null = null;
+
   function onCollision(cb: (a: Matter.Body, b: Matter.Body) => void) {
-    Events.on(engine, "collisionStart", (event: Matter.IEventCollision<Matter.Engine>) => {
+    collisionHandler = (event: Matter.IEventCollision<Matter.Engine>) => {
       for (const pair of event.pairs) {
         cb(pair.bodyA, pair.bodyB);
       }
-    });
+    };
+    Events.on(engine, "collisionStart", collisionHandler);
+  }
+
+  function destroy() {
+    // Remove the collision listener first so teardown does not fire it.
+    if (collisionHandler) {
+      Events.off(engine, "collisionStart", collisionHandler);
+      collisionHandler = null;
+    }
+    Composite.clear(world, false, true);
+    Engine.clear(engine);
   }
 
   // Build the initial boundary.
@@ -179,6 +218,8 @@ export function createPhysicsWorld(): PhysicsWorld {
     velocity,
     label,
     stop,
+    setCollidesWithWalls,
     onCollision,
+    destroy,
   };
 }

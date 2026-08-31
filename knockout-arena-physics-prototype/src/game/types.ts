@@ -27,12 +27,19 @@ export interface PawnSnapshot {
   colorIndex: number;
 }
 
-/** The high-level phase of a match / turn. */
-export type GamePhase =
-  | "aiming"
-  | "moving"
-  | "eliminated"
-  | "gameOver";
+/**
+ * The explicit phase of a match. The engine is in exactly one phase at a
+ * time and every input is gated by it:
+ *
+ *   aiming     — the active pawn may aim and pick a power level (1 launch).
+ *   moving     — the launch is resolving; physics runs until the pawn settles.
+ *   eliminated — the pawn left the arena; only `reset` is accepted.
+ *
+ * A separate "finished / match over" phase is deliberately deferred to the
+ * multiplayer phase: single-player has no win condition beyond elimination,
+ * so adding it now would only create an unreachable state.
+ */
+export type GamePhase = "aiming" | "moving" | "eliminated";
 
 /** Immutable-ish summary of game state fed to the UI each frame. */
 export interface GameStateSnapshot {

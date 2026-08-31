@@ -9,6 +9,12 @@ with the mouse, chooses a power level (1–5), and launches to knock opponents
 out of the arena. Phase 1 implements one player, aiming, power selection,
 momentum physics, knockout detection, elimination, and reset — no networking yet.
 
+The simulation runs at a **fixed 60 Hz timestep** (the render loop exchanges
+real frame time for fixed ticks), so physics behaves identically on any
+display refresh rate. Elimination is a pure geometric rule: the pawn is out
+when it has **completely left the playable floor** (arena geometry + pawn
+radius — see `arena.ts`).
+
 ## Tech stack
 
 - **TypeScript** throughout
@@ -23,6 +29,10 @@ The engine is deliberately split from the React UI so multiplayer (rooms,
 matchmaking, server-authoritative simulation, bots) can be added later without
 rewriting the core.
 
+There is exactly **one** game instance in the app: `App.tsx` creates it via
+`useGame()` and passes the state down as props, so the canvas and the controls
+always share the same game state.
+
 | Module          | Responsibility                                            |
 | --------------- | --------------------------------------------------------- |
 | `config.ts`     | Every tunable number (physics, balance, sizes, colors).   |
@@ -30,7 +40,7 @@ rewriting the core.
 | `arena.ts`      | Circular arena model + boundary math (server-safe).       |
 | `player.ts`     | Pawn model + color palette.                               |
 | `aiming.ts`     | Aim direction + launch-velocity math.                     |
-| `turnLogic.ts`  | Turn state machine (aim → move → settle).                 |
+| `turnLogic.ts`  | Turn state machine + phase (aim → move → settle).    |
 | `physics.ts`    | The *only* place that knows Matter.js (swap-friendly).    |
 | `game.ts`       | Orchestrator: owns state, turns, and physics.             |
 | `renderer.ts`   | Pure canvas drawing from a snapshot.                      |
@@ -50,10 +60,13 @@ rewriting the core.
 
 ## Controls
 
-1. Move the mouse to aim (a dashed arrow shows the direction).
+1. Move the mouse to aim (a dashed arrow shows the direction; its length,
+   opacity and chevron count grow with the selected power).
 2. Pick a power level **1–5** (higher = stronger launch).
-3. Click **Launch** to apply the impulse.
-4. The pawn slides with friction; if it flies over the rim it is **knocked out**.
+3. Click **Launch** to apply the impulse — one launch per turn.
+4. The pawn slides with friction. The rim is a low lip: slow or glancing
+   contacts bounce off it, but a fast head-on launch clears it — and once the
+   pawn has completely left the floor it is **knocked out**.
 5. Click **Reset** to play again.
 
 > Tuning notes (see `config.ts`): power 1 is a gentle nudge, power 5 is clearly

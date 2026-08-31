@@ -9,7 +9,6 @@ const PHASE_BADGE: Record<GamePhase, { label: string; className: string }> = {
   aiming: { label: "Aim your knockout", className: "bg-emerald-500/15 text-emerald-300 border-emerald-400/30" },
   moving: { label: "In motion…", className: "bg-amber-500/15 text-amber-300 border-amber-400/30" },
   eliminated: { label: "Knocked out!", className: "bg-red-500/15 text-red-300 border-red-400/30" },
-  gameOver: { label: "Game over", className: "bg-red-500/15 text-red-300 border-red-400/30" },
 };
 
 export function Header({ phase }: HeaderProps) {

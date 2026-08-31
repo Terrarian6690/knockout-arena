@@ -1,15 +1,30 @@
 import { useEffect, useRef } from "react";
-import { useGame } from "../game/useGame";
 import { computeTransform, render } from "../game/renderer";
 import { createArena } from "../game/arena";
-import type { GameAction } from "../game/types";
+import type { GameAction, GameStateSnapshot } from "../game/types";
 
 /**
- * Canvas view for the arena. Owns the game loop's rendering and translates
- * canvas-relative mouse coordinates into world coordinates for aiming.
+ * Canvas view for the arena. Receives the authoritative game state from App
+ * (single instance — see App.tsx), draws it, and translates canvas-relative
+ * pointer coordinates into world coordinates for aiming.
  */
-export function ArenaGame() {
-  const { snapshot, dispatch, canvasRef, canvasSize } = useGame();
+interface ArenaGameProps {
+  /** Snapshot of the shared game instance. */
+  snapshot: GameStateSnapshot;
+  /** Dispatches input actions to the shared game instance. */
+  dispatch: (action: GameAction) => void;
+  /** Ref of the canvas element (owned by the shared useGame hook). */
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  /** Measured canvas CSS size (owned by the shared useGame hook). */
+  canvasSize: { width: number; height: number };
+}
+
+export function ArenaGame({
+  snapshot,
+  dispatch,
+  canvasRef,
+  canvasSize,
+}: ArenaGameProps) {
   const arenaRef = useRef(createArena());
 
   // Render whenever the snapshot or canvas size changes.
@@ -44,6 +59,10 @@ export function ArenaGame() {
     const px = e.clientX - rect.left;
     const py = e.clientY - rect.top;
     const transform = computeTransform(canvasSize.width, canvasSize.height);
+    if (transform.scale <= 0) {
+      // Canvas not measured yet — fall back to the world center.
+      return { x: arenaRef.current.centerX, y: arenaRef.current.centerY };
+    }
     return {
       x: (px - transform.offsetX) / transform.scale,
       y: (py - transform.offsetY) / transform.scale,

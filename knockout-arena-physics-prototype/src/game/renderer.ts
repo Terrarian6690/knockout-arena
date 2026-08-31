@@ -177,9 +177,13 @@ function drawAimIndicator(
   const len = indicatorLength(power) + CONFIG.pawn.radius + 4;
   const tipX = x + direction.x * len;
   const tipY = y + direction.y * len;
+  const angle = Math.atan2(direction.y, direction.x);
+
+  // Higher power → longer, more opaque indicator.
+  ctx.save();
+  ctx.globalAlpha = 0.55 + 0.09 * power;
 
   // Dashed line.
-  ctx.save();
   ctx.setLineDash([8, 7]);
   ctx.beginPath();
   ctx.moveTo(x + direction.x * (CONFIG.pawn.radius + 2), y + direction.y * (CONFIG.pawn.radius + 2));
@@ -190,9 +194,29 @@ function drawAimIndicator(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Arrowhead.
-  const angle = Math.atan2(direction.y, direction.x);
-  const head = 11;
+  // Power chevrons along the shaft: evenly spaced, so a stronger power
+  // (longer indicator) shows more chevrons — "more power, harder launch"
+  // is readable at a glance without predicting the landing spot.
+  for (let d = CONFIG.pawn.radius + 14; d < len - 14; d += 14) {
+    const cx = x + direction.x * d;
+    const cy = y + direction.y * d;
+    ctx.beginPath();
+    ctx.moveTo(
+      cx - 7 * Math.cos(angle - 0.45),
+      cy - 7 * Math.sin(angle - 0.45)
+    );
+    ctx.lineTo(cx, cy);
+    ctx.lineTo(
+      cx - 7 * Math.cos(angle + 0.45),
+      cy - 7 * Math.sin(angle + 0.45)
+    );
+    ctx.strokeStyle = CONFIG.colors.aimArrow;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // Arrowhead (grows slightly with power).
+  const head = 9 + power;
   ctx.beginPath();
   ctx.moveTo(tipX, tipY);
   ctx.lineTo(

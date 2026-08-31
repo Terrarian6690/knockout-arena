@@ -1,15 +1,14 @@
 {
-  "name": "react-vite-tailwind",
+  "name": "knockout-arena",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@types/matter-js": "^0.20.2",
     "clsx": "2.1.1",
     "matter-js": "^0.20.0",
     "react": "19.2.6",
@@ -18,6 +17,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.17",
+    "@types/matter-js": "^0.20.2",
     "@types/node": "22.19.17",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",

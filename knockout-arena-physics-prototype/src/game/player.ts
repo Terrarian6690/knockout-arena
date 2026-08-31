@@ -1,5 +1,4 @@
 import { CONFIG } from "./config";
-import type { Vec2 } from "./types";
 
 /**
  * Player / pawn model.
@@ -69,13 +68,4 @@ export function playerColor(index: number): string {
 
 export function playerStroke(index: number): string {
   return PLAYER_STROKES[index % PLAYER_STROKES.length];
-}
-
-/** Direction from a source toward a target point (unit vector). */
-export function directionTo(from: Vec2, to: Vec2): Vec2 {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const len = Math.hypot(dx, dy);
-  if (len < 1e-4) return { x: 0, y: 1 };
-  return { x: dx / len, y: dy / len };
 }

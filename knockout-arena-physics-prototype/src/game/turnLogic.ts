@@ -2,38 +2,38 @@ import { CONFIG } from "./config";
 import type { GamePhase } from "./types";
 
 /**
- * Turn logic state machine.
+ * Turn logic state machine — the single source of truth for the game phase.
  *
- * In phase 1 this is trivial (a single pawn that aims → launches → settles),
- * but the structure is designed to grow into a full multiplayer turn order:
+ * The phase lives on `TurnState` and every other module (game.ts, renderer,
+ * UI) reads it from here; nothing keeps a duplicate copy. In phase 1 this is
+ * trivial (a single pawn: aim → launch → settle or eliminate), but the
+ * structure is designed to grow into a full multiplayer turn order:
  *  - a queue of participant ids
  *  - simultaneous-turn flags (all players aim, then all resolve)
  *  - bot participants that select a target + power procedurally
  *
- * Keeping the phase transitions here (rather than in game.ts) means the
+ * Keeping phase + turn order here (rather than in game.ts) means the
  * multiplayer ruleset can evolve independently of physics/rendering.
  */
-export type TurnPhase = Extract<GamePhase, "aiming" | "moving" | "gameOver">;
+export type TurnPhase = GamePhase;
 
 export interface TurnState {
+  /** Current phase. game.ts transitions it; everything else reads it. */
   phase: TurnPhase;
   /** Pawn ids in turn order. Single-player uses ["p0"]. */
   queue: string[];
   /** Index of the currently acting pawn in the queue. */
   activeIndex: number;
-  /** Ticks elapsed since the active pawn was launched. */
+  /** Fixed simulation ticks elapsed since the active pawn launched. */
   settleTicks: number;
-  /** Whether any pawn is still in motion. */
-  moving: boolean;
 }
 
 export function createTurnState(pawnIds: string[]): TurnState {
   return {
-    phase: pawnIds.length ? "aiming" : "gameOver",
+    phase: "aiming",
     queue: pawnIds,
     activeIndex: 0,
     settleTicks: 0,
-    moving: false,
   };
 }
 
@@ -55,7 +55,8 @@ export interface SettleResult {
 
 /**
  * Decide whether the moving pawn has settled. A pawn "settles" when its speed
- * drops below a threshold; we also cap the wait time to avoid soft-locks.
+ * drops below a threshold; we also cap the wait (counted in fixed simulation
+ * ticks, so it is independent of display frame rate) to avoid soft-locks.
  */
 export function checkSettled(
   speed: number,

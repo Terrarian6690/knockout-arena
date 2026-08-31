@@ -9,6 +9,10 @@ import type { GameAction, GameStateSnapshot } from "./types";
  * render cycle; this hook creates it, runs an animation-frame loop, and mirrors
  * its immutable snapshots into React state for rendering.
  *
+ * IMPORTANT: the app must have exactly ONE useGame() instance (in App.tsx),
+ * because each call creates an independent engine. Children receive the state
+ * via props — never call this hook from a second component.
+ *
  * When multiplayer arrives, this hook is the natural place to swap the local
  * authoritative loop for a networked one (e.g. latency interpolation between
  * server snapshots) without touching the engine classes.

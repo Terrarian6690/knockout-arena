@@ -1,7 +1,7 @@
 import Matter from "matter-js";
 import { CONFIG } from "./config";
 import { createPhysicsWorld, type PhysicsWorld } from "./physics";
-import { spawnPositionAtAngle } from "./arena";
+import { spawnPositionAtAngle, isPawnOutOfBounds, floorRadius } from "./arena";
 import { createPlayer, type Player } from "./player";
 import { createAimState, aimAt, launchVelocity, type AimState } from "./aiming";
 import {
@@ -13,8 +13,8 @@ import {
 } from "./turnLogic";
 import type {
   GameAction,
-  GameStateSnapshot,
   GamePhase,
+  GameStateSnapshot,
   PawnSnapshot,
 } from "./types";
 
@@ -29,6 +29,11 @@ import type {
  * It deliberately does NOT know about React, canvas, or networking. A future
  * network layer can drive `dispatch` from server messages and read `snapshot`
  * for authority, without changing this class's responsibilities.
+ *
+ * Simulation timing: `update` receives real frame time and exchanges it for
+ * fixed `CONFIG.simulation.fixedTimestepMs` ticks via an accumulator, so the
+ * physics behaves identically regardless of display refresh rate. All
+ * per-tick decisions (elimination, settling) happen inside those fixed ticks.
  */
 export interface GameHandle {
   dispatch(action: GameAction): void;
@@ -66,46 +71,10 @@ export function createGame(): GameHandle {
   const aim: AimState = createAimState();
 
   let power: number = CONFIG.power.default;
-  let phase: GamePhase = "aiming";
   let listeners: ((s: GameStateSnapshot) => void)[] = [];
-  let lastEmit = 0;
 
-  /**
-   * Knockout detection. The rim is solid and pawns bump off it during normal
-   * play; but a strong launch aimed at the edge shoves the pawn over the rim.
-   * We detect that by checking the pawn's outward radial speed at the moment it
-   * contacts the arena wall.
-   */
-  physics.onCollision((a, b) => {
-    if (phase !== "moving") return;
-
-    const aLabel = physics.label(a);
-    const bLabel = physics.label(b);
-
-    const pawnBody = aLabel.startsWith("pawn:") ? a : bLabel.startsWith("pawn:") ? b : null;
-    const wallBody = (aLabel === "arenaWall" ? a : bLabel === "arenaWall" ? b : null);
-
-    if (!pawnBody || !wallBody) return;
-
-    const id = (pawnBody === a ? aLabel : bLabel).slice("pawn:".length);
-    const player = players.find((p) => p.id === id);
-    if (!player || player.eliminated) return;
-
-    const pos = physics.position(pawnBody);
-    const vel = physics.velocity(pawnBody);
-
-    // Outward radial unit vector from arena center.
-    const dx = pos.x - arena.centerX;
-    const dy = pos.y - arena.centerY;
-    const dist = Math.hypot(dx, dy) || 1;
-    const outwardX = dx / dist;
-    const outwardY = dy / dist;
-
-    const outwardSpeed = vel.x * outwardX + vel.y * outwardY;
-    if (outwardSpeed >= CONFIG.launch.knockoutSpeed) {
-      eliminatePawn(player, pawnBody);
-    }
-  });
+  const FIXED_DT = CONFIG.simulation.fixedTimestepMs;
+  let accumulator = 0;
 
   function eliminatePawn(player: Player, body: Matter.Body) {
     player.eliminated = true;
@@ -131,28 +100,28 @@ export function createGame(): GameHandle {
         velocity: { x: vel.x, y: vel.y },
         radius: p.radius,
         eliminated: p.eliminated,
-        isMoving: phase === "moving" && p.id === active,
+        isMoving: turn.phase === "moving" && p.id === active,
         colorIndex: p.colorIndex,
       };
     });
 
     return {
-      phase,
+      phase: turn.phase,
       pawns,
       localPawnId: "p0",
       power,
       aimDirection: aim.active ? { ...aim.direction } : null,
-      isAiming: aim.active && phase === "aiming",
+      isAiming: aim.active && turn.phase === "aiming",
       activePawnId: active,
     };
   }
 
   function setPhase(next: GamePhase) {
-    phase = next;
+    turn.phase = next;
   }
 
   function onAim(x: number, y: number) {
-    if (phase !== "aiming") return;
+    if (turn.phase !== "aiming") return;
     const active = activePawnId(turn);
     const body = active ? bodies.get(active) : undefined;
     if (!body) return;
@@ -165,11 +134,12 @@ export function createGame(): GameHandle {
   }
 
   function onSetPower(value: number) {
+    if (turn.phase !== "aiming") return;
     power = Math.max(CONFIG.power.min, Math.min(CONFIG.power.max, Math.round(value)));
   }
 
   function onConfirmLaunch() {
-    if (phase !== "aiming") return;
+    if (turn.phase !== "aiming") return; // exactly one launch per turn
     const active = activePawnId(turn);
     const body = active ? bodies.get(active) : undefined;
     if (!body) return;
@@ -177,8 +147,9 @@ export function createGame(): GameHandle {
     const dir = aim.active ? aim.direction : { x: 0, y: -1 };
     const vel = launchVelocity(dir, power);
     physics.applyImpulse(body, vel.x, vel.y);
+    aim.active = false; // the aim was consumed by this launch
     turn.settleTicks = 0;
-    turn.moving = true;
+    accumulator = 0;
     setPhase("moving");
     emit();
   }
@@ -187,67 +158,107 @@ export function createGame(): GameHandle {
     for (const p of players) {
       const body = bodies.get(p.id);
       if (body) {
-        // Reposition the body to spawn and zero velocity.
+        // Reposition the body to spawn, zero velocity, restore rim collision.
         Matter.Body.setPosition(body, { x: p.spawnX, y: p.spawnY });
         physics.stop(body);
+        physics.setCollidesWithWalls(body, true);
       }
       p.eliminated = false;
     }
     turn.activeIndex = 0;
     turn.settleTicks = 0;
-    turn.moving = false;
     aim.active = false;
     power = CONFIG.power.default;
+    accumulator = 0;
     setPhase("aiming");
     emit();
   }
 
+  /** Return control to the aiming state for the next turn. */
+  function beginAiming() {
+    advanceTurn(turn); // single pawn: wraps back to the same actor
+    aim.active = false;
+    setPhase("aiming");
+  }
+
+  /**
+   * One fixed simulation tick.
+   *
+   * 1. Rim pass-over decision — BEFORE stepping (a pure function of position
+   *    and velocity, so it is fully deterministic): the rim is a low lip. A
+   *    pawn whose outward radial speed is at least `knockoutSpeed` as it
+   *    reaches the rim flies over it (wall collision disabled for that pawn);
+   *    slower or glancing contacts bounce off normally. The decision zone is
+   *    widened by two max-speed steps so it always happens at least one tick
+   *    before contact, and once a pawn's center is past the rim the walls
+   *    stay off until reset.
+   * 2. Step the physics by the fixed delta.
+   * 3. Decide elimination (pure geometry) and settling from the result.
+   */
+  function tickSimulation() {
+    const active = activePawnId(turn);
+    const body = active ? bodies.get(active) : undefined;
+    const player = players.find((p) => p.id === active);
+    if (!body || !player) {
+      beginAiming();
+      return;
+    }
+
+    const rimContact = floorRadius(arena) - player.radius;
+    const unlockZone = rimContact - CONFIG.launch.maxSpeed * 2 - 1;
+    const pos = physics.position(body);
+    const vel = physics.velocity(body);
+    const dx = pos.x - arena.centerX;
+    const dy = pos.y - arena.centerY;
+    const dist = Math.hypot(dx, dy) || 1;
+    const outwardSpeed = (vel.x * dx + vel.y * dy) / dist;
+    const fliesOverRim =
+      dist > unlockZone && outwardSpeed >= CONFIG.launch.knockoutSpeed;
+    const alreadyPastRim = dist > rimContact;
+    physics.setCollidesWithWalls(body, !fliesOverRim && !alreadyPastRim);
+
+    physics.step(FIXED_DT);
+    turn.settleTicks += 1;
+
+    // Authoritative elimination check: pure arena geometry, every tick. The
+    // pawn must have completely left the playable floor.
+    const posAfter = physics.position(body);
+    if (isPawnOutOfBounds(arena, posAfter.x, posAfter.y, player.radius)) {
+      eliminatePawn(player, body);
+      return;
+    }
+
+    const velAfter = physics.velocity(body);
+    const speed = Math.hypot(velAfter.x, velAfter.y);
+    const { settled } = checkSettled(speed, turn.settleTicks);
+    if (settled) {
+      physics.stop(body);
+      beginAiming();
+    }
+  }
+
+  /**
+   * Advance the game by one animation frame. Frame time is converted into
+   * fixed simulation ticks; large frame gaps (tab switches, GC pauses) are
+   * clamped so the loop never tries to catch up in a spiral. When nothing is
+   * moving this is a cheap no-op — no physics, no state emission.
+   */
   function update(dtMs: number) {
-    if (phase === "moving") {
-      physics.step(dtMs);
-
-      const active = activePawnId(turn);
-      const body = active ? bodies.get(active) : undefined;
-      const player = players.find((p) => p.id === active);
-
-      // The collision handler may have eliminated the pawn during the step.
-      if (player?.eliminated) return;
-
-      if (body && player) {
-        const vel = physics.velocity(body);
-        const speed = Math.hypot(vel.x, vel.y);
-
-        // Elimination is handled by the wall-collision handler (knockout).
-        // Check settling.
-        turn.settleTicks += 1;
-        const { settled } = checkSettled(speed, turn.settleTicks);
-        if (settled) {
-          physics.stop(body);
-          turn.moving = false;
-
-          // For phase 1 there is only one pawn; wrap back to aiming. (When
-          // multiplayer is added, `advanceTurn` will route to the next actor.)
-          advanceTurn(turn);
-          setPhase("aiming");
-          aim.active = false;
-          emit();
-          return;
-        }
-      }
+    if (turn.phase !== "moving") {
+      accumulator = 0;
+      return;
     }
 
-    // Keep the UI in sync. During "moving" we emit every frame so the canvas
-    // animates smoothly; aiming only needs occasional emits (mouse events
-    // already trigger their own).
-    if (phase === "moving") {
-      emit();
-    } else {
-      const now = performance.now();
-      if (now - lastEmit > 100) {
-        lastEmit = now;
-        emit();
-      }
+    accumulator += Math.min(dtMs, CONFIG.simulation.maxFrameMs);
+    let stepped = false;
+    while (accumulator >= FIXED_DT && turn.phase === "moving") {
+      accumulator -= FIXED_DT;
+      tickSimulation();
+      stepped = true;
     }
+    if (!stepped) return;
+    if (turn.phase !== "moving") accumulator = 0;
+    emit();
   }
 
   function dispatch(action: GameAction) {
@@ -270,6 +281,9 @@ export function createGame(): GameHandle {
   }
 
   function subscribe(listener: (s: GameStateSnapshot) => void) {
+    // Push the current state immediately so a freshly mounted UI (e.g. the
+    // React app) never has to wait for the next event to render something.
+    listener(snapshot());
     listeners.push(listener);
     return () => {
       listeners = listeners.filter((l) => l !== listener);
@@ -278,7 +292,7 @@ export function createGame(): GameHandle {
 
   function destroy() {
     listeners = [];
-    Matter.Engine.clear(physics.engine);
+    physics.destroy();
   }
 
   // Emit initial state.

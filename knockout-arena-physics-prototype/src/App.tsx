@@ -12,11 +12,12 @@ import { EliminationOverlay } from "./components/EliminationOverlay";
  *   ArenaGame (canvas, fills available space)
  *   ControlPanel (power selector + launch/reset)
  *
- * The engine lifecycle is handled entirely by useGame(); this component is
- * purely presentational.
+ * There is exactly ONE game instance in the whole app: it is created here by
+ * useGame() and handed down to the children as props. The canvas and the
+ * controls therefore always read from — and write to — the same game state.
  */
 export default function App() {
-  const { snapshot, dispatch } = useGame();
+  const { snapshot, dispatch, canvasRef, canvasSize } = useGame();
 
   if (!snapshot) {
     return (
@@ -31,7 +32,12 @@ export default function App() {
       <Header phase={snapshot.phase} />
 
       <main className="relative flex min-h-0 flex-1">
-        <ArenaGame />
+        <ArenaGame
+          snapshot={snapshot}
+          dispatch={dispatch}
+          canvasRef={canvasRef}
+          canvasSize={canvasSize}
+        />
 
         {snapshot.phase === "eliminated" && (
           <EliminationOverlay onReset={() => dispatch({ type: "reset" })} />
