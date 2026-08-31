@@ -1,8 +1,9 @@
 /**
- * Shared types bridging the engine core and the React UI.
+ * View types bridging the engine core and the React UI.
  *
- * These are intentionally engine-agnostic where possible so that a future
- * server-authoritative backend can reuse the same shapes.
+ * These describe what the CLIENT needs (rendering, input, presentation).
+ * Authoritative, serializable state lives in state.ts; player intentions
+ * (commands) live in commands.ts.
  */
 
 /** A 2D vector in world coordinates. */
@@ -41,7 +42,12 @@ export interface PawnSnapshot {
  */
 export type GamePhase = "aiming" | "moving" | "eliminated";
 
-/** Immutable-ish summary of game state fed to the UI each frame. */
+/**
+ * Immutable-ish summary of game state fed to the UI each frame. This is a
+ * CLIENT-FACING PROJECTION of GameState (see state.ts): it adds presentation
+ * flags (isMoving, isAiming, localPawnId) and omits reconstruction details.
+ * It is what a future networked client will render from.
+ */
 export interface GameStateSnapshot {
   phase: GamePhase;
   pawns: PawnSnapshot[];
@@ -56,13 +62,6 @@ export interface GameStateSnapshot {
   /** Which pawn currently acts (index for turn order later). */
   activePawnId: string | null;
 }
-
-/** Input actions the UI can dispatch to the engine. */
-export type GameAction =
-  | { type: "aim"; x: number; y: number } // world-space aim target
-  | { type: "setPower"; power: number }
-  | { type: "confirmLaunch" }
-  | { type: "reset" };
 
 /** Callback used by the engine to push state to the UI. */
 export type StateListener = (state: GameStateSnapshot) => void;

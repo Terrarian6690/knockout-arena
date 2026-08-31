@@ -1,12 +1,25 @@
 import Matter from "matter-js";
 import { CONFIG } from "./config";
 import { createArena, floorRadius, type Arena } from "./arena";
+import type { Vec2 } from "./types";
 
 const { Engine, Bodies, Composite, Body, Events } = Matter;
 
 /** Collision category bits: pawns and the arena rim. */
 const CAT_PAWN = 0x0001;
 const CAT_WALL = 0x0002;
+
+/**
+ * Plain-data kinematics of a physics body. This is the ONLY shape from the
+ * physics layer that ever leaves the engine as state — deliberately free of
+ * Matter.js types so GameState stays serializable.
+ */
+export interface BodyKinematics {
+  position: Vec2;
+  velocity: Vec2;
+  angle: number;
+  angularVelocity: number;
+}
 
 /**
  * Physics module — the only place that knows about Matter.js.
@@ -41,6 +54,18 @@ export interface PhysicsWorld {
   label(body: Matter.Body): string;
   /** Stop a body in place. */
   stop(body: Matter.Body): void;
+  /**
+   * Read a body's kinematics (position, velocity, angle, angular velocity)
+   * as plain data — used to build the serializable GameState without
+   * exposing Matter internals.
+   */
+  bodyState(body: Matter.Body): BodyKinematics;
+  /**
+   * Restore a body's kinematics from plain data (counterpart of bodyState).
+   * Uses Matter's official setters so the engine's internal bookkeeping
+   * (positionPrev etc.) stays consistent.
+   */
+  setBodyState(body: Matter.Body, state: BodyKinematics): void;
   /**
    * Toggle whether a body collides with the arena rim. Used for the rim
    * pass-over rule: a fast head-on contact clears the lip and stops
@@ -175,6 +200,22 @@ export function createPhysicsWorld(): PhysicsWorld {
     Body.setAngularVelocity(body, 0);
   }
 
+  function bodyState(body: Matter.Body): BodyKinematics {
+    return {
+      position: { x: body.position.x, y: body.position.y },
+      velocity: { x: body.velocity.x, y: body.velocity.y },
+      angle: body.angle,
+      angularVelocity: body.angularVelocity,
+    };
+  }
+
+  function setBodyState(body: Matter.Body, state: BodyKinematics) {
+    Body.setPosition(body, { x: state.position.x, y: state.position.y });
+    Body.setVelocity(body, { x: state.velocity.x, y: state.velocity.y });
+    Body.setAngle(body, state.angle);
+    Body.setAngularVelocity(body, state.angularVelocity);
+  }
+
   function setCollidesWithWalls(body: Matter.Body, enabled: boolean) {
     body.collisionFilter.mask = enabled
       ? CAT_PAWN | CAT_WALL
@@ -218,6 +259,8 @@ export function createPhysicsWorld(): PhysicsWorld {
     velocity,
     label,
     stop,
+    bodyState,
+    setBodyState,
     setCollidesWithWalls,
     onCollision,
     destroy,

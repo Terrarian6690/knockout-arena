@@ -12,23 +12,38 @@ import {
   type TurnState,
 } from "./turnLogic";
 import type {
-  GameAction,
-  GamePhase,
   GameStateSnapshot,
-  PawnSnapshot,
+  GamePhase,
 } from "./types";
+import { validateCommand, type CommandResult, type GameCommand } from "./commands";
+import {
+  validateGameState,
+  type GameState,
+  type PawnState,
+} from "./state";
+import { projectSnapshot } from "./project";
 
 /**
- * Core game engine (orchestrator).
+ * Core game engine (orchestrator) — the authoritative simulation.
  *
  * Owns the game state, turn logic, and physics. It exposes:
- *   - dispatch(action) — feed UI input
- *   - update(dtMs) — advance one frame (called from the RAF loop)
- *   - snapshot() — current state for rendering / UI
+ *   - applyCommand(command) — validate + apply a player INTENT
+ *   - update(dtMs) — advance one frame (called from a RAF or a server loop)
+ *   - getState()/loadState() — full serializable state (reconstruction I/O)
+ *   - snapshot() — client-facing projection for rendering
+ *   - subscribe(listener) — state-change notifications
  *
- * It deliberately does NOT know about React, canvas, or networking. A future
- * network layer can drive `dispatch` from server messages and read `snapshot`
- * for authority, without changing this class's responsibilities.
+ * Intended ownership model for the future multiplayer server:
+ *
+ *   receive command → validateCommand → applyCommand → update (fixed ticks)
+ *   → getState → serializeGameState → send to clients
+ *
+ * The engine never accepts outcomes from outside: elimination, phase
+ * transitions, collisions and settling are computed here and only here.
+ * Clients (the React bridge in the UI layer) send commands and render
+ * snapshots.
+ *
+ * It deliberately does NOT know about React, canvas, or networking.
  *
  * Simulation timing: `update` receives real frame time and exchanges it for
  * fixed `CONFIG.simulation.fixedTimestepMs` ticks via an accumulator, so the
@@ -36,9 +51,30 @@ import type {
  * per-tick decisions (elimination, settling) happen inside those fixed ticks.
  */
 export interface GameHandle {
-  dispatch(action: GameAction): void;
+  /**
+   * Validate and apply a player command. Returns acceptance or a
+   * machine-readable rejection reason — a future server can forward this
+   * verbatim as the command acknowledgement.
+   */
+  applyCommand(command: GameCommand): CommandResult;
+  /**
+   * Legacy alias of applyCommand that discards the result. Kept for the
+   * React client bridge and existing call sites; new code should prefer
+   * applyCommand.
+   */
+  dispatch(action: GameCommand): void;
+  /** Advance the game by one animation frame (fixed-tick accumulator). */
   update(dtMs: number): void;
+  /** Client-facing projection of the authoritative state. */
   snapshot(): GameStateSnapshot;
+  /** Full serializable authoritative state (see state.ts). */
+  getState(): GameState;
+  /**
+   * Replace the entire game state. The input is validated (trust boundary):
+   * a future server may feed this with state received from storage or a
+   * peer process. Rebuilding from state does not change simulation rules.
+   */
+  loadState(state: GameState): void;
   subscribe(listener: (s: GameStateSnapshot) => void): () => void;
   destroy(): void;
 }
@@ -73,6 +109,13 @@ export function createGame(): GameHandle {
   let power: number = CONFIG.power.default;
   let listeners: ((s: GameStateSnapshot) => void)[] = [];
 
+  /**
+   * Which pawn the local client controls — a pure presentation concern that
+   * the engine reports in snapshots. In phase 1 there is exactly one pawn;
+   * in the multiplayer phase this becomes client configuration.
+   */
+  const LOCAL_PAWN_ID = "p0";
+
   const FIXED_DT = CONFIG.simulation.fixedTimestepMs;
   let accumulator = 0;
 
@@ -88,40 +131,123 @@ export function createGame(): GameHandle {
     for (const l of listeners) l(s);
   }
 
-  function snapshot(): GameStateSnapshot {
-    const active = activePawnId(turn);
-    const pawns: PawnSnapshot[] = players.map((p) => {
-      const body = bodies.get(p.id);
-      const pos = body ? physics.position(body) : { x: p.spawnX, y: p.spawnY };
-      const vel = body ? physics.velocity(body) : { x: 0, y: 0 };
-      return {
-        id: p.id,
-        position: { x: pos.x, y: pos.y },
-        velocity: { x: vel.x, y: vel.y },
-        radius: p.radius,
-        eliminated: p.eliminated,
-        isMoving: turn.phase === "moving" && p.id === active,
-        colorIndex: p.colorIndex,
-      };
-    });
+  // ────────────────────────────────────────────────────────────────────────
+  // Authoritative state I/O (serialization boundary)
+  // ────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Collect the complete authoritative state as plain, JSON-serializable
+   * data. Matter.js bodies are read through the physics facade and reduced
+   * to kinematics; no engine internals leak out.
+   */
+  function getState(): GameState {
     return {
       phase: turn.phase,
-      pawns,
-      localPawnId: "p0",
       power,
-      aimDirection: aim.active ? { ...aim.direction } : null,
-      isAiming: aim.active && turn.phase === "aiming",
-      activePawnId: active,
+      aim: { active: aim.active, direction: { ...aim.direction } },
+      turn: {
+        queue: [...turn.queue],
+        activeIndex: turn.activeIndex,
+        settleTicks: turn.settleTicks,
+      },
+      pawns: players.map((p): PawnState => {
+        const body = bodies.get(p.id);
+        const k = body
+          ? physics.bodyState(body)
+          : {
+              position: { x: p.spawnX, y: p.spawnY },
+              velocity: { x: 0, y: 0 },
+              angle: 0,
+              angularVelocity: 0,
+            };
+        return {
+          id: p.id,
+          name: p.name,
+          colorIndex: p.colorIndex,
+          radius: p.radius,
+          spawnX: p.spawnX,
+          spawnY: p.spawnY,
+          eliminated: p.eliminated,
+          position: { ...k.position },
+          velocity: { ...k.velocity },
+          angle: k.angle,
+          angularVelocity: k.angularVelocity,
+        };
+      }),
     };
+  }
+
+  /**
+   * Replace the entire state. Bodies are reused where pawn ids match and
+   * created/removed otherwise, so the engine is fully state-driven — a
+   * future server can boot a match from a deserialized state (including
+   * multi-pawn states). The rim pass-over collision flag needs no
+   * serialization: it is re-derived from position + velocity before every
+   * tick (see tickSimulation).
+   */
+  function loadState(next: GameState) {
+    const s = validateGameState(next); // throws on malformed input
+
+    const wanted = new Map(s.pawns.map((p) => [p.id, p]));
+    for (const [id, body] of bodies) {
+      if (!wanted.has(id)) {
+        physics.removePawnBody(body);
+        bodies.delete(id);
+      }
+    }
+
+    players.length = 0;
+    for (const p of s.pawns) {
+      let body = bodies.get(p.id);
+      if (!body) {
+        body = physics.createPawnBody(p.id, p.position.x, p.position.y, p.radius);
+        bodies.set(p.id, body);
+      }
+      physics.setBodyState(body, {
+        position: { x: p.position.x, y: p.position.y },
+        velocity: { x: p.velocity.x, y: p.velocity.y },
+        angle: p.angle,
+        angularVelocity: p.angularVelocity,
+      });
+      // Clean slate; tickSimulation re-derives the pass-over decision.
+      physics.setCollidesWithWalls(body, true);
+      players.push({
+        id: p.id,
+        name: p.name,
+        colorIndex: p.colorIndex,
+        radius: p.radius,
+        spawnX: p.spawnX,
+        spawnY: p.spawnY,
+        eliminated: p.eliminated,
+      });
+    }
+
+    turn.phase = s.phase;
+    turn.queue = [...s.turn.queue];
+    turn.activeIndex = s.turn.activeIndex;
+    turn.settleTicks = s.turn.settleTicks;
+    aim.active = s.aim.active;
+    aim.direction = { ...s.aim.direction };
+    power = s.power;
+    accumulator = 0;
+
+    emit();
+  }
+
+  /** Client-facing projection of the authoritative state. */
+  function snapshot(): GameStateSnapshot {
+    return projectSnapshot(getState(), LOCAL_PAWN_ID);
   }
 
   function setPhase(next: GamePhase) {
     turn.phase = next;
   }
 
+  // ────────────────────────────────────────────────────────────────────────
+  // Command handling (player intentions)
+  // ────────────────────────────────────────────────────────────────────────
+
   function onAim(x: number, y: number) {
-    if (turn.phase !== "aiming") return;
     const active = activePawnId(turn);
     const body = active ? bodies.get(active) : undefined;
     if (!body) return;
@@ -134,7 +260,6 @@ export function createGame(): GameHandle {
   }
 
   function onSetPower(value: number) {
-    if (turn.phase !== "aiming") return;
     power = Math.max(CONFIG.power.min, Math.min(CONFIG.power.max, Math.round(value)));
   }
 
@@ -173,6 +298,46 @@ export function createGame(): GameHandle {
     setPhase("aiming");
     emit();
   }
+
+  /**
+   * Validate and apply a command. Structural validation is total (untrusted
+   * input safe); phase gating mirrors the classic engine rules and yields
+   * a "wrong-phase" rejection instead of a silent no-op, so a future server
+   * can acknowledge commands precisely.
+   */
+  function applyCommand(command: GameCommand): CommandResult {
+    const validation = validateCommand(command);
+    if (!validation.ok) return validation;
+
+    switch (command.type) {
+      case "aim":
+        if (turn.phase !== "aiming") return { ok: false, reason: "wrong-phase" };
+        onAim(command.x, command.y);
+        emit();
+        return { ok: true };
+      case "setPower":
+        if (turn.phase !== "aiming") return { ok: false, reason: "wrong-phase" };
+        onSetPower(command.power);
+        emit();
+        return { ok: true };
+      case "confirmLaunch":
+        if (turn.phase !== "aiming") return { ok: false, reason: "wrong-phase" };
+        onConfirmLaunch(); // emits on success
+        return { ok: true };
+      case "reset":
+        onReset(); // accepted in every phase; emits
+        return { ok: true };
+    }
+  }
+
+  /** Legacy alias for the client bridge — result discarded. */
+  function dispatch(action: GameCommand) {
+    applyCommand(action);
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Simulation
+  // ────────────────────────────────────────────────────────────────────────
 
   /** Return control to the aiming state for the next turn. */
   function beginAiming() {
@@ -261,25 +426,6 @@ export function createGame(): GameHandle {
     emit();
   }
 
-  function dispatch(action: GameAction) {
-    switch (action.type) {
-      case "aim":
-        onAim(action.x, action.y);
-        emit();
-        break;
-      case "setPower":
-        onSetPower(action.power);
-        emit();
-        break;
-      case "confirmLaunch":
-        onConfirmLaunch();
-        break;
-      case "reset":
-        onReset();
-        break;
-    }
-  }
-
   function subscribe(listener: (s: GameStateSnapshot) => void) {
     // Push the current state immediately so a freshly mounted UI (e.g. the
     // React app) never has to wait for the next event to render something.
@@ -298,5 +444,14 @@ export function createGame(): GameHandle {
   // Emit initial state.
   emit();
 
-  return { dispatch, update, snapshot, subscribe, destroy };
+  return {
+    applyCommand,
+    dispatch,
+    update,
+    snapshot,
+    getState,
+    loadState,
+    subscribe,
+    destroy,
+  };
 }

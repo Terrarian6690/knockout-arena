@@ -36,27 +36,54 @@ always share the same game state.
 | Module          | Responsibility                                            |
 | --------------- | --------------------------------------------------------- |
 | `config.ts`     | Every tunable number (physics, balance, sizes, colors).   |
-| `types.ts`      | Shared types & the `GameAction` union (UI → engine).      |
+| `commands.ts`   | Player-intent commands + structural validation (network-safe). |
+| `types.ts`      | Client-facing view types (snapshot contracts).            |
+| `state.ts`      | Serializable authoritative `GameState` + validation + JSON boundary. |
+| `project.ts`    | Pure projection `GameState` → `GameStateSnapshot`.        |
 | `arena.ts`      | Circular arena model + boundary math (server-safe).       |
 | `player.ts`     | Pawn model + color palette.                               |
 | `aiming.ts`     | Aim direction + launch-velocity math.                     |
-| `turnLogic.ts`  | Turn state machine + phase (aim → move → settle).    |
+| `turnLogic.ts`  | Turn state machine + phase (aim → move → settle).         |
 | `physics.ts`    | The *only* place that knows Matter.js (swap-friendly).    |
-| `game.ts`       | Orchestrator: owns state, turns, and physics.             |
+| `game.ts`       | Orchestrator: commands → fixed ticks → state/snapshots.   |
 | `renderer.ts`   | Pure canvas drawing from a snapshot.                      |
 | `useGame.ts`    | React hook bridging engine → UI + the RAF loop.           |
+| `index.ts`      | Public engine API surface (for a future headless server). |
+
+### Multiplayer readiness (architecture only — no networking yet)
+
+The engine already follows the intended server-authoritative flow:
+
+```
+command (player intent) → validateCommand → engine.applyCommand
+  → engine.update (fixed 60 Hz ticks) → engine.getState()
+  → serializeGameState (JSON) → [future transport]
+  → deserializeGameState → engine.loadState → projectSnapshot → render
+```
+
+- **Commands are intentions only.** There is no command to eliminate a pawn,
+  change the phase, resolve a collision, or declare a winner — those outcomes
+  are computed exclusively inside the engine.
+- **`GameState` is plain JSON data** (no Matter.js internals, no functions)
+  and contains everything needed to reconstruct a match, including
+  mid-flight kinematics; reconstruction continues deterministically.
+- **The engine is state-driven**: `loadState` can adopt arbitrary
+  (validated) states, including multi-pawn ones — turn order already rotates.
+- **Ownership**: the future server validates and applies commands, simulates,
+  and broadcasts states; clients only send commands and render snapshots.
+  `useGame.ts` remains the single client integration point.
 
 ### Extension points for multiplayer
 
-- **More pawns**: add entries to the `players` array in `game.ts`; turn order is
-  already driven by `turnLogic.ts`'s queue.
+- **More pawns**: the engine is state-driven — `engine.loadState()` accepts
+  multi-pawn states and `turnLogic.ts`'s queue already rotates turn order.
 - **Simultaneous turns**: `turnLogic.ts` documents where a "everyone aims, then
   everyone resolves" flag slots in.
-- **Bots**: bots only need to produce the same `GameAction`s (an aim + power +
+- **Bots**: bots only need to produce the same `GameCommand`s (an aim + power +
   confirm) — reusing `aiming.ts` helpers.
-- **Server authority**: a network module would drive `game.dispatch()` from server
-  messages and read `game.snapshot()` for state; `types.ts` shapes are already
-  serializable and engine-agnostic.
+- **Server authority**: a network module would feed validated commands into
+  `game.applyCommand()`, step `game.update()` on a fixed clock, and broadcast
+  `serializeGameState(game.getState())`; clients `loadState()` and render.
 
 ## Controls
 

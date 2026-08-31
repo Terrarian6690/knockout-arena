@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { computeTransform, render } from "../game/renderer";
 import { createArena } from "../game/arena";
-import type { GameAction, GameStateSnapshot } from "../game/types";
+import type { GameCommand } from "../game/commands";
+import type { GameStateSnapshot } from "../game/types";
 
 /**
  * Canvas view for the arena. Receives the authoritative game state from App
@@ -12,7 +13,7 @@ interface ArenaGameProps {
   /** Snapshot of the shared game instance. */
   snapshot: GameStateSnapshot;
   /** Dispatches input actions to the shared game instance. */
-  dispatch: (action: GameAction) => void;
+  dispatch: (action: GameCommand) => void;
   /** Ref of the canvas element (owned by the shared useGame hook). */
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   /** Measured canvas CSS size (owned by the shared useGame hook). */
@@ -71,7 +72,7 @@ export function ArenaGame({
 
   function handlePointer(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = worldPoint(e);
-    const action: GameAction = { type: "aim", x: p.x, y: p.y };
+    const action: GameCommand = { type: "aim", x: p.x, y: p.y };
     dispatch(action);
   }
 

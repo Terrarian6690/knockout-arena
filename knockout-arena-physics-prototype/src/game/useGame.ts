@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createGame, type GameHandle } from "./game";
-import type { GameAction, GameStateSnapshot } from "./types";
+import type { GameCommand } from "./commands";
+import type { GameStateSnapshot } from "./types";
 
 /**
  * React hook bridging the engine core to the UI.
@@ -51,7 +52,7 @@ export function useGame() {
   }, []);
 
   const dispatch = useMemo(() => {
-    return (action: GameAction) => gameRef.current?.dispatch(action);
+    return (action: GameCommand) => gameRef.current?.dispatch(action);
   }, []);
 
   // Observe the canvas size for hi-DPI rendering. Depends on the snapshot
