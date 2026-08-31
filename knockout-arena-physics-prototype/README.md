@@ -78,5 +78,18 @@ always share the same game state.
 ```bash
 npm install
 npm run dev       # local dev
-npm run build     # production build (single-file dist/index.html)
+npm test          # engine test suite (Vitest, node environment)
+npm run build     # typecheck + production build (single-file dist/index.html)
 ```
+
+## Tests
+
+The engine regression suite lives in `src/game/__tests__/` and runs with
+**Vitest** in a **node environment** — no DOM — which doubles as a guard that
+the engine stays headless (a `dom-free.test.ts` fails the build if any engine
+module starts using browser APIs; `useGame.ts` is the only client-side module).
+Covered: pure-function math (arena, aiming, turn logic, config, players), the
+Matter.js facade (physics), and full game-orchestrator behavior — phases,
+launch/turn rules, movement/friction/settling, geometric elimination, rim
+pass-over, reset, determinism, and frame-rate independence (identical
+trajectories at 30/60/120/144 Hz).

@@ -63,9 +63,14 @@ export const PLAYER_STROKES: string[] = [
 ];
 
 export function playerColor(index: number): string {
-  return PLAYER_COLORS[index % PLAYER_COLORS.length];
+  return PLAYER_COLORS[wrapIndex(index, PLAYER_COLORS.length)];
 }
 
 export function playerStroke(index: number): string {
-  return PLAYER_STROKES[index % PLAYER_STROKES.length];
+  return PLAYER_STROKES[wrapIndex(index, PLAYER_STROKES.length)];
+}
+
+/** Array index wrapped into [0, len) — safe for negative and huge indices. */
+function wrapIndex(index: number, len: number): number {
+  return ((index % len) + len) % len;
 }
