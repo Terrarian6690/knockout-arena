@@ -16,6 +16,8 @@ export interface Vec2 {
 export interface PawnSnapshot {
   /** Stable id within the match. */
   id: string;
+  /** Display name (e.g. for the winner announcement). */
+  name: string;
   position: Vec2;
   velocity: Vec2;
   /** Radius in world units. */
@@ -24,6 +26,8 @@ export interface PawnSnapshot {
   eliminated: boolean;
   /** Whether this pawn is currently moving (during a turn). */
   isMoving: boolean;
+  /** Whether this pawn belongs to the local player (client projection only). */
+  isLocal: boolean;
   /** Color key (index into the player palette). */
   colorIndex: number;
 }
@@ -32,36 +36,45 @@ export interface PawnSnapshot {
  * The explicit phase of a match. The engine is in exactly one phase at a
  * time and every input is gated by it:
  *
- *   aiming     — the active pawn may aim and pick a power level (1 launch).
- *   moving     — the launch is resolving; physics runs until the pawn settles.
- *   eliminated — the pawn left the arena; only `reset` is accepted.
+ *   aiming   - the active pawn's player may aim and pick a power level
+ *              (one launch per turn).
+ *   moving   - the launch is resolving; physics runs until the mover
+ *              settles. Eliminations of ANY pawn can happen while moving
+ *              (a mover can knock opponents over the rim).
+ *   finished - terminal: at most one pawn remains active. `winnerId`
+ *              identifies the survivor, or null when nobody survived
+ *              (e.g. a single-player loss). Only `reset` is accepted.
  *
- * A separate "finished / match over" phase is deliberately deferred to the
- * multiplayer phase: single-player has no win condition beyond elimination,
- * so adding it now would only create an unreachable state.
+ * Elimination is NOT a phase: it is a per-pawn flag. A match continues
+ * after eliminations while two or more active pawns remain.
  */
-export type GamePhase = "aiming" | "moving" | "eliminated";
+export type GamePhase = "aiming" | "moving" | "finished";
 
 /**
  * Immutable-ish summary of game state fed to the UI each frame. This is a
  * CLIENT-FACING PROJECTION of GameState (see state.ts): it adds presentation
- * flags (isMoving, isAiming, localPawnId) and omits reconstruction details.
- * It is what a future networked client will render from.
+ * flags (isMoving, isAiming, isLocal) and omits reconstruction details.
+ *
+ * The engine itself produces only the spectator projection
+ * (localPawnId: null); local perspective is added by the client calling
+ * projectSnapshot(state, localPawnId) - the engine never knows who is "me".
  */
 export interface GameStateSnapshot {
   phase: GamePhase;
   pawns: PawnSnapshot[];
-  /** The pawn id controlled locally (only one in phase 1). */
+  /**
+   * The pawn this projection is localized to, or null for the engine's own
+   * spectator view. Supplied by the CLIENT, never chosen by the engine.
+   */
   localPawnId: string | null;
-  /** Selected power level (1..5). */
+  /** Winner pawn id once the match is finished (null = no survivor). */
+  winnerId: string | null;
+  /** The ACTIVE pawn's selected power level (1..5). */
   power: number;
-  /** Aim direction as a unit vector, or null when not aiming. */
+  /** The ACTIVE pawn's aim direction as a unit vector, or null when unset. */
   aimDirection: Vec2 | null;
-  /** Whether there is an aim target to draw. */
+  /** Whether the active pawn has an aim target to draw. */
   isAiming: boolean;
-  /** Which pawn currently acts (index for turn order later). */
+  /** Which pawn currently acts. */
   activePawnId: string | null;
 }
-
-/** Callback used by the engine to push state to the UI. */
-export type StateListener = (state: GameStateSnapshot) => void;

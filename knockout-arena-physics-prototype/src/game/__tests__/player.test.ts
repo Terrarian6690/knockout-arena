@@ -25,6 +25,22 @@ describe("createPlayer", () => {
     expect(p.spawnY).toBe(110);
     expect(p.eliminated).toBe(false);
   });
+
+  // UPDATED for the N-player model: aim + power now live on each player so
+  // selections persist across other players' turns and a server can apply
+  // commands to the correct pawn.
+  it("starts with the default power and an inactive aim (per-pawn controls)", () => {
+    const p = createPlayer({
+      id: "p1",
+      name: "Player 2",
+      colorIndex: 1,
+      spawnX: 450,
+      spawnY: 590,
+    });
+    expect(p.power).toBe(CONFIG.power.default);
+    expect(p.aim.active).toBe(false);
+    expect(p.aim.direction).toEqual({ x: 0, y: -1 });
+  });
 });
 
 describe("color palettes", () => {

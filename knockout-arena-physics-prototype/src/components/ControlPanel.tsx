@@ -23,7 +23,7 @@ export function ControlPanel({
   onReset,
 }: ControlPanelProps) {
   const aiming = phase === "aiming";
-  const eliminated = phase === "eliminated";
+  const finished = phase === "finished";
 
   return (
     <div className="flex flex-col items-center justify-center gap-4 border-t border-white/10 bg-white/[0.02] px-4 py-4 sm:flex-row sm:gap-8 sm:py-5">
@@ -41,7 +41,7 @@ export function ControlPanel({
       </div>
 
       <div className="flex items-center gap-3">
-        {!eliminated ? (
+        {!finished ? (
           <button
             type="button"
             onClick={onLaunch}

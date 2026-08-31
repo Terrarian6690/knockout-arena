@@ -72,6 +72,24 @@ export interface PhysicsWorld {
    * colliding with it so the pawn can leave the floor.
    */
   setCollidesWithWalls(body: Matter.Body, enabled: boolean): void;
+  /**
+   * Toggle whether a body participates in ANY collision. Used to make an
+   * eliminated pawn a non-collidable "ghost": it stays in the world (frozen,
+   * still rendered where it left the arena) but neither blocks nor is pushed
+   * by the remaining pawns. Restored by reset/loadState.
+   */
+  setGhost(body: Matter.Body, ghosted: boolean): void;
+  /**
+   * Bring a pawn to its canonical resting state at the end of a turn: stop
+   * it (velocity + solver buffers zeroed) and, if its center ended up
+   * overlapping the rim, project it back onto the floor. A settled pawn
+   * therefore never keeps a penetrating contact alive — which is what makes
+   * "settled" a deterministic, serializable state boundary (Matter's
+   * warm-started contact corrections would otherwise keep nudging the body
+   * microscopically on every later step, invisibly in velocity but
+   * differently between a live engine and a reconstructed one).
+   */
+  settleOnFloor(body: Matter.Body, pawnRadius: number): void;
   /** Subscribe to collision events (fires for each colliding pair). */
   onCollision(cb: (a: Matter.Body, b: Matter.Body) => void): void;
   /** Tear down the world and remove all engine event listeners. */
@@ -198,6 +216,35 @@ export function createPhysicsWorld(): PhysicsWorld {
   function stop(body: Matter.Body) {
     Body.setVelocity(body, { x: 0, y: 0 });
     Body.setAngularVelocity(body, 0);
+    clearSolverBuffers(body);
+  }
+
+  /**
+   * Zero Matter's warm-start correction buffers on a body.
+   *
+   * Matter caches positional corrections from previous collision steps
+   * (`positionImpulse`, `constraintImpulse`) and re-applies them on every
+   * Engine.update — moving the body's position (and positionPrev, so the
+   * reported velocity stays 0). A body that was "stopped" mid-contact would
+   * therefore keep creeping microscopically forever, and a RECONSTRUCTED
+   * body (fresh buffers) would diverge from the original one that still
+   * carries the cache — breaking deterministic state transfer.
+   *
+   * Clearing the buffers at the semantic "this body is now at rest / inert"
+   * points (stop, ghosting) makes those points clean serialization
+   * boundaries: both a live engine and a reconstructed one restart the
+   * contact solver from scratch, so they stay bit-identical.
+   */
+  function clearSolverBuffers(body: Matter.Body) {
+    const buffered = body as Matter.Body & {
+      positionImpulse: { x: number; y: number };
+      constraintImpulse: { x: number; y: number; angle: number };
+    };
+    buffered.positionImpulse.x = 0;
+    buffered.positionImpulse.y = 0;
+    buffered.constraintImpulse.x = 0;
+    buffered.constraintImpulse.y = 0;
+    buffered.constraintImpulse.angle = 0;
   }
 
   function bodyState(body: Matter.Body): BodyKinematics {
@@ -217,9 +264,37 @@ export function createPhysicsWorld(): PhysicsWorld {
   }
 
   function setCollidesWithWalls(body: Matter.Body, enabled: boolean) {
+    if (body.collisionFilter.mask === 0) return; // ghosts stay inert
     body.collisionFilter.mask = enabled
       ? CAT_PAWN | CAT_WALL
       : CAT_PAWN;
+  }
+
+  function setGhost(body: Matter.Body, ghosted: boolean) {
+    body.collisionFilter.mask = ghosted ? 0 : CAT_PAWN | CAT_WALL;
+    if (ghosted) {
+      // A ghost must be truly frozen: drop any cached collision corrections
+      // (see clearSolverBuffers) so nothing nudges it after elimination.
+      clearSolverBuffers(body);
+    }
+  }
+
+  function settleOnFloor(body: Matter.Body, pawnRadius: number) {
+    // The wall ring is inset by 1 unit inside the floor edge (see
+    // buildBoundary), so a pawn's surface touches it when its center is at
+    // floorRadius - pawnRadius - 1 from the arena center.
+    const contactDist = floorRadius(arena) - pawnRadius - 1;
+    const dx = body.position.x - arena.centerX;
+    const dy = body.position.y - arena.centerY;
+    const dist = Math.hypot(dx, dy);
+    if (dist > contactDist) {
+      const scale = contactDist / dist;
+      Body.setPosition(body, {
+        x: arena.centerX + dx * scale,
+        y: arena.centerY + dy * scale,
+      });
+    }
+    stop(body);
   }
 
   // Keep a reference to the collision listener so destroy() can remove it.
@@ -262,6 +337,8 @@ export function createPhysicsWorld(): PhysicsWorld {
     bodyState,
     setBodyState,
     setCollidesWithWalls,
+    setGhost,
+    settleOnFloor,
     onCollision,
     destroy,
   };

@@ -1,14 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createGame, type GameHandle } from "./game";
-import type { GameCommand } from "./commands";
+import { withPlayerId, type PlayerIntent } from "./commands";
+import { projectSnapshot } from "./project";
 import type { GameStateSnapshot } from "./types";
+
+/**
+ * The local player id used by this client. Purely a CLIENT concern: the
+ * engine itself has no notion of a local player. In the multiplayer phase
+ * this becomes the seat assigned by the session/room handshake.
+ */
+const LOCAL_PLAYER_ID = "p0";
 
 /**
  * React hook bridging the engine core to the UI.
  *
  * The engine (`GameHandle`) is framework-agnostic and lives outside React's
- * render cycle; this hook creates it, runs an animation-frame loop, and mirrors
- * its immutable snapshots into React state for rendering.
+ * render cycle; this hook creates it, runs an animation-frame loop, and
+ * projects its authoritative state into React state for rendering.
+ *
+ * The engine pushes RAW GameState (server-ready); this hook is where the
+ * local perspective is attached, by projecting each state with the client's
+ * own player id. Player intents are likewise converted into full commands
+ * here — exactly where a future network layer will attach the authenticated
+ * identity instead.
  *
  * IMPORTANT: the app must have exactly ONE useGame() instance (in App.tsx),
  * because each call creates an independent engine. Children receive the state
@@ -29,7 +43,10 @@ export function useGame() {
     const game = createGame();
     gameRef.current = game;
 
-    const unsubscribe = game.subscribe(setSnapshot);
+    // Project every authoritative state update into this client's view.
+    const unsubscribe = game.subscribe((state) =>
+      setSnapshot(projectSnapshot(state, LOCAL_PLAYER_ID))
+    );
 
     let raf = 0;
     let last = performance.now();
@@ -52,7 +69,8 @@ export function useGame() {
   }, []);
 
   const dispatch = useMemo(() => {
-    return (action: GameCommand) => gameRef.current?.dispatch(action);
+    return (intent: PlayerIntent) =>
+      gameRef.current?.dispatch(withPlayerId(intent, LOCAL_PLAYER_ID));
   }, []);
 
   // Observe the canvas size for hi-DPI rendering. Depends on the snapshot

@@ -5,16 +5,19 @@ import { ControlPanel } from "./components/ControlPanel";
 import { EliminationOverlay } from "./components/EliminationOverlay";
 
 /**
- * Knockout Arena — Phase 1 single-player prototype.
+ * Knockout Arena — single-player prototype on the N-player engine.
  *
  * Layout:
- *   Header (title + phase)
+ *   Header (title + phase / winner badge)
  *   ArenaGame (canvas, fills available space)
  *   ControlPanel (power selector + launch/reset)
  *
  * There is exactly ONE game instance in the whole app: it is created here by
  * useGame() and handed down to the children as props. The canvas and the
  * controls therefore always read from — and write to — the same game state.
+ *
+ * The engine underneath is player-count agnostic; this client simply plays
+ * the "p0" seat of a one-player match (see useGame's LOCAL_PLAYER_ID).
  */
 export default function App() {
   const { snapshot, dispatch, canvasRef, canvasSize } = useGame();
@@ -27,9 +30,14 @@ export default function App() {
     );
   }
 
+  const finished = snapshot.phase === "finished";
+  const winner = finished
+    ? snapshot.pawns.find((p) => p.id === snapshot.winnerId) ?? null
+    : null;
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased">
-      <Header phase={snapshot.phase} />
+      <Header phase={snapshot.phase} winnerName={winner?.name ?? null} />
 
       <main className="relative flex min-h-0 flex-1">
         <ArenaGame
@@ -39,8 +47,11 @@ export default function App() {
           canvasSize={canvasSize}
         />
 
-        {snapshot.phase === "eliminated" && (
-          <EliminationOverlay onReset={() => dispatch({ type: "reset" })} />
+        {finished && (
+          <EliminationOverlay
+            won={snapshot.winnerId === snapshot.localPawnId}
+            onReset={() => dispatch({ type: "reset" })}
+          />
         )}
       </main>
 

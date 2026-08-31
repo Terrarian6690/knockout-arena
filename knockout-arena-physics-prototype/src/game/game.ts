@@ -3,7 +3,7 @@ import { CONFIG } from "./config";
 import { createPhysicsWorld, type PhysicsWorld } from "./physics";
 import { spawnPositionAtAngle, isPawnOutOfBounds, floorRadius } from "./arena";
 import { createPlayer, type Player } from "./player";
-import { createAimState, aimAt, launchVelocity, type AimState } from "./aiming";
+import { createAimState, aimAt, launchVelocity } from "./aiming";
 import {
   createTurnState,
   advanceTurn,
@@ -11,11 +11,8 @@ import {
   checkSettled,
   type TurnState,
 } from "./turnLogic";
-import type {
-  GameStateSnapshot,
-  GamePhase,
-} from "./types";
-import { validateCommand, type CommandResult, type GameCommand } from "./commands";
+import type { GameStateSnapshot } from "./types";
+import { validateCommand, type CommandRejection, type CommandResult, type GameCommand } from "./commands";
 import {
   validateGameState,
   type GameState,
@@ -26,12 +23,13 @@ import { projectSnapshot } from "./project";
 /**
  * Core game engine (orchestrator) — the authoritative simulation.
  *
- * Owns the game state, turn logic, and physics. It exposes:
+ * Owns the game state, turn logic, and physics for ANY number of players
+ * (single-player is simply a one-player match). It exposes:
  *   - applyCommand(command) — validate + apply a player INTENT
  *   - update(dtMs) — advance one frame (called from a RAF or a server loop)
  *   - getState()/loadState() — full serializable state (reconstruction I/O)
- *   - snapshot() — client-facing projection for rendering
- *   - subscribe(listener) — state-change notifications
+ *   - snapshot() — client-facing spectator projection for rendering
+ *   - subscribe(listener) — raw authoritative state notifications
  *
  * Intended ownership model for the future multiplayer server:
  *
@@ -39,9 +37,11 @@ import { projectSnapshot } from "./project";
  *   → getState → serializeGameState → send to clients
  *
  * The engine never accepts outcomes from outside: elimination, phase
- * transitions, collisions and settling are computed here and only here.
- * Clients (the React bridge in the UI layer) send commands and render
- * snapshots.
+ * transitions, collisions and settling are computed here and only here. It
+ * also has NO notion of a "local" player — every command names the player
+ * that issued it (validated against roster + turn), and projection to a
+ * local perspective is the caller's job (see projectSnapshot). Clients (the
+ * React bridge in the UI layer) send commands and render projections.
  *
  * It deliberately does NOT know about React, canvas, or networking.
  *
@@ -50,11 +50,30 @@ import { projectSnapshot } from "./project";
  * physics behaves identically regardless of display refresh rate. All
  * per-tick decisions (elimination, settling) happen inside those fixed ticks.
  */
+
+/** Description of one participant when creating a match. */
+export interface PlayerSpec {
+  /** Unique pawn id within the match (e.g. "p0", "p1"). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Palette index; defaults to the player's seat index. */
+  colorIndex?: number;
+}
+
+/** Options for createGame. */
+export interface GameOptions {
+  /** Participants; defaults to a single local-style player "p0". */
+  players?: PlayerSpec[];
+}
+
 export interface GameHandle {
   /**
    * Validate and apply a player command. Returns acceptance or a
    * machine-readable rejection reason — a future server can forward this
-   * verbatim as the command acknowledgement.
+   * verbatim as the command acknowledgement. The command's playerId is
+   * verified against the roster, the elimination state and whose turn it is;
+   * client-supplied ids are never trusted beyond that check.
    */
   applyCommand(command: GameCommand): CommandResult;
   /**
@@ -65,7 +84,10 @@ export interface GameHandle {
   dispatch(action: GameCommand): void;
   /** Advance the game by one animation frame (fixed-tick accumulator). */
   update(dtMs: number): void;
-  /** Client-facing projection of the authoritative state. */
+  /**
+   * Client-facing SPECTATOR projection of the authoritative state (no local
+   * perspective). Call projectSnapshot(state, id) for a localized view.
+   */
   snapshot(): GameStateSnapshot;
   /** Full serializable authoritative state (see state.ts). */
   getState(): GameState;
@@ -75,27 +97,52 @@ export interface GameHandle {
    * peer process. Rebuilding from state does not change simulation rules.
    */
   loadState(state: GameState): void;
-  subscribe(listener: (s: GameStateSnapshot) => void): () => void;
+  /**
+   * Subscribe to the raw authoritative GameState (server-ready). The engine
+   * pushes the current state immediately; every later change re-emits.
+   * Rendering clients project it themselves (see projectSnapshot).
+   */
+  subscribe(listener: (state: GameState) => void): () => void;
   destroy(): void;
 }
 
-export function createGame(): GameHandle {
+const DEFAULT_PLAYERS: PlayerSpec[] = [
+  { id: "p0", name: "Player 1", colorIndex: 0 },
+];
+
+export function createGame(options?: GameOptions): GameHandle {
+  const specs = options?.players ?? DEFAULT_PLAYERS;
+  if (specs.length === 0) {
+    throw new Error("createGame: at least one player is required");
+  }
+  const seenIds = new Set<string>();
+  for (const spec of specs) {
+    if (typeof spec.id !== "string" || spec.id.length === 0) {
+      throw new Error("createGame: player ids must be non-empty strings");
+    }
+    if (seenIds.has(spec.id)) {
+      throw new Error(`createGame: duplicate player id ${spec.id}`);
+    }
+    seenIds.add(spec.id);
+  }
+
   const physics: PhysicsWorld = createPhysicsWorld();
   const arena = physics.arena;
 
-  // Single player for phase 1, spawned near the top edge of the arena.
-  const spawnAngle = -Math.PI / 2;
-  const [spawnX, spawnY] = spawnPositionAtAngle(arena, spawnAngle);
-
-  const players: Player[] = [
-    createPlayer({
-      id: "p0",
-      name: "Player 1",
-      colorIndex: 0,
+  // Deterministic circular spawns: seat i sits at angle -π/2 + i·2π/N
+  // (player 1 at the top edge — identical to the classic single-player
+  // spawn — and the rest distributed evenly around the rim).
+  const players: Player[] = specs.map((spec, i) => {
+    const spawnAngle = -Math.PI / 2 + (i * 2 * Math.PI) / specs.length;
+    const [spawnX, spawnY] = spawnPositionAtAngle(arena, spawnAngle);
+    return createPlayer({
+      id: spec.id,
+      name: spec.name,
+      colorIndex: spec.colorIndex ?? i,
       spawnX,
       spawnY,
-    }),
-  ];
+    });
+  });
 
   // Map player id -> physics body.
   const bodies = new Map<string, Matter.Body>();
@@ -104,31 +151,76 @@ export function createGame(): GameHandle {
   }
 
   const turn: TurnState = createTurnState(players.map((p) => p.id));
-  const aim: AimState = createAimState();
+  /** Winner pawn id once finished (null while running / no survivor). */
+  let winner: string | null = null;
 
-  let power: number = CONFIG.power.default;
-  let listeners: ((s: GameStateSnapshot) => void)[] = [];
-
-  /**
-   * Which pawn the local client controls — a pure presentation concern that
-   * the engine reports in snapshots. In phase 1 there is exactly one pawn;
-   * in the multiplayer phase this becomes client configuration.
-   */
-  const LOCAL_PAWN_ID = "p0";
+  let listeners: ((s: GameState) => void)[] = [];
 
   const FIXED_DT = CONFIG.simulation.fixedTimestepMs;
   let accumulator = 0;
 
-  function eliminatePawn(player: Player, body: Matter.Body) {
-    player.eliminated = true;
-    physics.stop(body);
-    setPhase("eliminated");
-    emit();
+  /** Is the pawn with this id eliminated (unknown ids count as gone). */
+  function isEliminatedId(pawnId: string): boolean {
+    return players.find((p) => p.id === pawnId)?.eliminated ?? true;
   }
 
   function emit() {
-    const s = snapshot();
+    const s = getState();
     for (const l of listeners) l(s);
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Match lifecycle: elimination, finishing, turn resolution
+  // ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Knock a pawn out: flag it, freeze it and turn it into a non-collidable
+   * ghost. The body stays in the world (rendered where it left the arena,
+   * part of the historical state) but neither blocks nor is pushed by
+   * anyone. Elimination is NOT a phase: the match continues while two or
+   * more pawns remain active.
+   */
+  function eliminatePawn(player: Player, body: Matter.Body) {
+    player.eliminated = true;
+    physics.stop(body);
+    physics.setGhost(body, true);
+  }
+
+  /**
+   * End the match. `winnerId` is the last pawn standing, or null when
+   * nobody survived (e.g. a single-player loss). Remaining pawns are brought
+   * to their canonical resting state so the terminal state is stable and
+   * serializes cleanly.
+   */
+  function finishMatch(winnerId: string | null) {
+    winner = winnerId;
+    setPhase("finished");
+    for (const p of players) {
+      if (p.eliminated) continue;
+      const body = bodies.get(p.id);
+      if (body) physics.settleOnFloor(body, p.radius);
+    }
+  }
+
+  /**
+   * Resolve the end of a turn (motion over). Either the match finishes —
+   * exactly one pawn remains in a multi-pawn roster — or control passes to
+   * the next pawn still in the match. A single-pawn match NEVER finishes on
+   * its own: the lone pawn simply aims again.
+   */
+  function resolveTurnEnd() {
+    const alive = players.filter((p) => !p.eliminated);
+    if (players.length >= 2 && alive.length === 1) {
+      finishMatch(alive[0].id);
+      return;
+    }
+    const next = advanceTurn(turn, isEliminatedId);
+    if (next === null) {
+      // Every pawn is gone (normally caught during ticks; safety net).
+      finishMatch(null);
+      return;
+    }
+    setPhase("aiming");
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -138,13 +230,14 @@ export function createGame(): GameHandle {
   /**
    * Collect the complete authoritative state as plain, JSON-serializable
    * data. Matter.js bodies are read through the physics facade and reduced
-   * to kinematics; no engine internals leak out.
+   * to kinematics; no engine internals leak out. Per-pawn aim + power are
+   * part of the state, so a server can apply each player's commands to the
+   * correct pawn after reconstruction.
    */
   function getState(): GameState {
     return {
       phase: turn.phase,
-      power,
-      aim: { active: aim.active, direction: { ...aim.direction } },
+      winnerId: winner,
       turn: {
         queue: [...turn.queue],
         activeIndex: turn.activeIndex,
@@ -168,6 +261,11 @@ export function createGame(): GameHandle {
           spawnX: p.spawnX,
           spawnY: p.spawnY,
           eliminated: p.eliminated,
+          power: p.power,
+          aim: {
+            active: p.aim.active,
+            direction: { ...p.aim.direction },
+          },
           position: { ...k.position },
           velocity: { ...k.velocity },
           angle: k.angle,
@@ -180,10 +278,23 @@ export function createGame(): GameHandle {
   /**
    * Replace the entire state. Bodies are reused where pawn ids match and
    * created/removed otherwise, so the engine is fully state-driven — a
-   * future server can boot a match from a deserialized state (including
-   * multi-pawn states). The rim pass-over collision flag needs no
-   * serialization: it is re-derived from position + velocity before every
-   * tick (see tickSimulation).
+   * future server can boot a match from a deserialized N-player state.
+   * Eliminated pawns are restored as ghosts; the rim pass-over collision
+   * flag needs no serialization (it is re-derived from position + velocity
+   * before every tick, see tickSimulation).
+   *
+   * The state is then NORMALIZED against the match rules — defensively, and
+   * without changing how a locally simulated match would continue:
+   *   - with no pawn left the match ends immediately with no winner (the
+   *     tick loop would reach the same verdict on the next step);
+   *   - a live "aiming" state must have a valid actor and a runnable match:
+   *     with a single survivor in a multi-pawn roster that pawn has won, and
+   *     if the pawn whose turn it is was eliminated, rotation moves to the
+   *     next pawn still standing;
+   *   - "moving" states are left to resolve naturally: the turn ends when
+   *     every survivor settles, exactly like an uninterrupted simulation
+   *     (an eliminated mover mid-flight is legal — the flight still belongs
+   *     to that turn).
    */
   function loadState(next: GameState) {
     const s = validateGameState(next); // throws on malformed input
@@ -209,8 +320,12 @@ export function createGame(): GameHandle {
         angle: p.angle,
         angularVelocity: p.angularVelocity,
       });
-      // Clean slate; tickSimulation re-derives the pass-over decision.
-      physics.setCollidesWithWalls(body, true);
+      // Eliminated pawns come back as ghosts; alive pawns get a clean
+      // collision slate (tickSimulation re-derives the pass-over decision).
+      physics.setGhost(body, p.eliminated);
+      if (!p.eliminated) {
+        physics.setCollidesWithWalls(body, true);
+      }
       players.push({
         id: p.id,
         name: p.name,
@@ -219,6 +334,11 @@ export function createGame(): GameHandle {
         spawnX: p.spawnX,
         spawnY: p.spawnY,
         eliminated: p.eliminated,
+        power: p.power,
+        aim: {
+          active: p.aim.active,
+          direction: { ...p.aim.direction },
+        },
       });
     }
 
@@ -226,20 +346,38 @@ export function createGame(): GameHandle {
     turn.queue = [...s.turn.queue];
     turn.activeIndex = s.turn.activeIndex;
     turn.settleTicks = s.turn.settleTicks;
-    aim.active = s.aim.active;
-    aim.direction = { ...s.aim.direction };
-    power = s.power;
+    winner = s.winnerId ?? null;
     accumulator = 0;
+
+    // Normalize to the match rules (see doc comment).
+    if (turn.phase !== "finished") {
+      const alive = players.filter((p) => !p.eliminated);
+      if (alive.length === 0) {
+        finishMatch(null);
+      } else if (turn.phase === "aiming") {
+        if (players.length >= 2 && alive.length === 1) {
+          finishMatch(alive[0].id);
+        } else {
+          const active = activePawnId(turn);
+          if (active === null || isEliminatedId(active)) {
+            if (advanceTurn(turn, isEliminatedId) === null) {
+              finishMatch(null); // unreachable given alive.length >= 2; safety
+            }
+          }
+        }
+      }
+      // phase "moving": let the tick loop resolve the turn naturally.
+    }
 
     emit();
   }
 
-  /** Client-facing projection of the authoritative state. */
+  /** Spectator projection of the authoritative state (no local player). */
   function snapshot(): GameStateSnapshot {
-    return projectSnapshot(getState(), LOCAL_PAWN_ID);
+    return projectSnapshot(getState(), null);
   }
 
-  function setPhase(next: GamePhase) {
+  function setPhase(next: GameState["phase"]) {
     turn.phase = next;
   }
 
@@ -247,53 +385,79 @@ export function createGame(): GameHandle {
   // Command handling (player intentions)
   // ────────────────────────────────────────────────────────────────────────
 
-  function onAim(x: number, y: number) {
+  /**
+   * Ownership gate for action commands: the sender must be a known player
+   * who is still in the match AND whose turn it is. Rejection precedence:
+   * unknown-player → wrong-phase (match finished) → wrong-player; the
+   * caller additionally checks phase-specific rules (e.g. aiming only).
+   * A future server performs this same check after authenticating the
+   * session that owns playerId — client pawn ids are never trusted.
+   */
+  function ownershipGate(
+    playerId: string
+  ): { ok: true; player: Player } | { ok: false; reason: CommandRejection } {
+    const player = players.find((p) => p.id === playerId);
+    if (!player) {
+      return { ok: false, reason: "unknown-player" };
+    }
+    if (turn.phase === "finished") {
+      return { ok: false, reason: "wrong-phase" };
+    }
     const active = activePawnId(turn);
-    const body = active ? bodies.get(active) : undefined;
+    if (player.eliminated || player.id !== active) {
+      return { ok: false, reason: "wrong-player" };
+    }
+    return { ok: true, player };
+  }
+
+  function onAim(player: Player, x: number, y: number) {
+    const body = bodies.get(player.id);
     if (!body) return;
     const pos = physics.position(body);
     const dir = aimAt({ x: pos.x, y: pos.y }, { x, y });
     if (dir) {
-      aim.direction = dir;
-      aim.active = true;
+      player.aim.direction = dir;
+      player.aim.active = true;
     }
   }
 
-  function onSetPower(value: number) {
-    power = Math.max(CONFIG.power.min, Math.min(CONFIG.power.max, Math.round(value)));
+  function onSetPower(player: Player, value: number) {
+    player.power = Math.max(
+      CONFIG.power.min,
+      Math.min(CONFIG.power.max, Math.round(value))
+    );
   }
 
-  function onConfirmLaunch() {
-    if (turn.phase !== "aiming") return; // exactly one launch per turn
-    const active = activePawnId(turn);
-    const body = active ? bodies.get(active) : undefined;
+  function onConfirmLaunch(player: Player) {
+    const body = bodies.get(player.id);
     if (!body) return;
 
-    const dir = aim.active ? aim.direction : { x: 0, y: -1 };
-    const vel = launchVelocity(dir, power);
+    const dir = player.aim.active ? player.aim.direction : { x: 0, y: -1 };
+    const vel = launchVelocity(dir, player.power);
     physics.applyImpulse(body, vel.x, vel.y);
-    aim.active = false; // the aim was consumed by this launch
+    player.aim.active = false; // the aim was consumed by this launch
     turn.settleTicks = 0;
     accumulator = 0;
     setPhase("moving");
-    emit();
   }
 
   function onReset() {
     for (const p of players) {
       const body = bodies.get(p.id);
       if (body) {
-        // Reposition the body to spawn, zero velocity, restore rim collision.
+        // Reposition the body to spawn, zero velocity, restore collisions.
         Matter.Body.setPosition(body, { x: p.spawnX, y: p.spawnY });
         physics.stop(body);
+        physics.setGhost(body, false);
         physics.setCollidesWithWalls(body, true);
       }
       p.eliminated = false;
+      p.power = CONFIG.power.default;
+      p.aim = createAimState();
     }
     turn.activeIndex = 0;
     turn.settleTicks = 0;
-    aim.active = false;
-    power = CONFIG.power.default;
+    winner = null;
     accumulator = 0;
     setPhase("aiming");
     emit();
@@ -301,29 +465,39 @@ export function createGame(): GameHandle {
 
   /**
    * Validate and apply a command. Structural validation is total (untrusted
-   * input safe); phase gating mirrors the classic engine rules and yields
-   * a "wrong-phase" rejection instead of a silent no-op, so a future server
-   * can acknowledge commands precisely.
+   * input safe); ownership + phase gating mirror the engine rules and yield
+   * machine-readable rejections instead of silent no-ops, so a future
+   * server can acknowledge commands precisely.
    */
   function applyCommand(command: GameCommand): CommandResult {
     const validation = validateCommand(command);
     if (!validation.ok) return validation;
 
     switch (command.type) {
-      case "aim":
+      case "aim": {
+        const gate = ownershipGate(command.playerId);
+        if (!gate.ok) return gate;
         if (turn.phase !== "aiming") return { ok: false, reason: "wrong-phase" };
-        onAim(command.x, command.y);
+        onAim(gate.player, command.x, command.y);
         emit();
         return { ok: true };
-      case "setPower":
+      }
+      case "setPower": {
+        const gate = ownershipGate(command.playerId);
+        if (!gate.ok) return gate;
         if (turn.phase !== "aiming") return { ok: false, reason: "wrong-phase" };
-        onSetPower(command.power);
+        onSetPower(gate.player, command.power);
         emit();
         return { ok: true };
-      case "confirmLaunch":
+      }
+      case "confirmLaunch": {
+        const gate = ownershipGate(command.playerId);
+        if (!gate.ok) return gate;
         if (turn.phase !== "aiming") return { ok: false, reason: "wrong-phase" };
-        onConfirmLaunch(); // emits on success
+        onConfirmLaunch(gate.player); // emits below
+        emit();
         return { ok: true };
+      }
       case "reset":
         onReset(); // accepted in every phase; emits
         return { ok: true };
@@ -339,36 +513,73 @@ export function createGame(): GameHandle {
   // Simulation
   // ────────────────────────────────────────────────────────────────────────
 
-  /** Return control to the aiming state for the next turn. */
-  function beginAiming() {
-    advanceTurn(turn); // single pawn: wraps back to the same actor
-    aim.active = false;
-    setPhase("aiming");
-  }
-
   /**
    * One fixed simulation tick.
    *
-   * 1. Rim pass-over decision — BEFORE stepping (a pure function of position
-   *    and velocity, so it is fully deterministic): the rim is a low lip. A
-   *    pawn whose outward radial speed is at least `knockoutSpeed` as it
-   *    reaches the rim flies over it (wall collision disabled for that pawn);
-   *    slower or glancing contacts bounce off normally. The decision zone is
-   *    widened by two max-speed steps so it always happens at least one tick
-   *    before contact, and once a pawn's center is past the rim the walls
-   *    stay off until reset.
+   * 1. Rim pass-over decision — BEFORE stepping, for EVERY pawn still in
+   *    the match (a pure function of position and velocity, so it is fully
+   *    deterministic): the rim is a low lip. A pawn whose outward radial
+   *    speed is at least `knockoutSpeed` as it reaches the rim flies over
+   *    it (wall collision disabled for that pawn); slower or glancing
+   *    contacts bounce off normally. The decision zone is widened by two
+   *    max-speed steps so it always happens at least one tick before
+   *    contact, and once a pawn's center is past the rim the walls stay off
+   *    until reset. This applies to shoved opponents too — knocking another
+   *    pawn over the rim is the core mechanic.
    * 2. Step the physics by the fixed delta.
-   * 3. Decide elimination (pure geometry) and settling from the result.
+   * 3. Elimination pass — pure arena geometry, checked for EVERY alive
+   *    pawn. Several pawns can leave the floor on the same tick. When no
+   *    pawn survives, the match ends immediately with no winner.
+   * 4. Settle: the turn resolves when every remaining pawn has come to
+   *    rest (or the timeout fires) — shoved opponents must stop gliding
+   *    too before control passes on. Every pawn is then brought to its
+   *    canonical resting state (see physics.settleOnFloor): stopped AND
+   *    projected back onto the floor if it overlapped the rim, so a
+   *    settled state serializes and reconstructs deterministically.
    */
   function tickSimulation() {
-    const active = activePawnId(turn);
-    const body = active ? bodies.get(active) : undefined;
-    const player = players.find((p) => p.id === active);
-    if (!body || !player) {
-      beginAiming();
+    for (const p of players) {
+      if (p.eliminated) continue;
+      const body = bodies.get(p.id);
+      if (!body) continue;
+      updateRimPassOver(p, body);
+    }
+
+    physics.step(FIXED_DT);
+    turn.settleTicks += 1;
+
+    for (const p of players) {
+      if (p.eliminated) continue;
+      const body = bodies.get(p.id);
+      if (!body) continue;
+      const posAfter = physics.position(body);
+      if (isPawnOutOfBounds(arena, posAfter.x, posAfter.y, p.radius)) {
+        eliminatePawn(p, body);
+      }
+    }
+    if (!players.some((p) => !p.eliminated)) {
+      finishMatch(null); // everybody is out — immediate end, no survivor
       return;
     }
 
+    const alive = players.filter((p) => !p.eliminated);
+    const allSettled = alive.every((p) => {
+      const body = bodies.get(p.id);
+      if (!body) return true;
+      const v = physics.velocity(body);
+      return checkSettled(Math.hypot(v.x, v.y), turn.settleTicks).settled;
+    });
+    if (allSettled) {
+      for (const p of alive) {
+        const body = bodies.get(p.id);
+        if (body) physics.settleOnFloor(body, p.radius);
+      }
+      resolveTurnEnd();
+    }
+  }
+
+  /** Re-derive the rim pass-over collision decision for one pawn. */
+  function updateRimPassOver(player: Player, body: Matter.Body) {
     const rimContact = floorRadius(arena) - player.radius;
     const unlockZone = rimContact - CONFIG.launch.maxSpeed * 2 - 1;
     const pos = physics.position(body);
@@ -381,25 +592,6 @@ export function createGame(): GameHandle {
       dist > unlockZone && outwardSpeed >= CONFIG.launch.knockoutSpeed;
     const alreadyPastRim = dist > rimContact;
     physics.setCollidesWithWalls(body, !fliesOverRim && !alreadyPastRim);
-
-    physics.step(FIXED_DT);
-    turn.settleTicks += 1;
-
-    // Authoritative elimination check: pure arena geometry, every tick. The
-    // pawn must have completely left the playable floor.
-    const posAfter = physics.position(body);
-    if (isPawnOutOfBounds(arena, posAfter.x, posAfter.y, player.radius)) {
-      eliminatePawn(player, body);
-      return;
-    }
-
-    const velAfter = physics.velocity(body);
-    const speed = Math.hypot(velAfter.x, velAfter.y);
-    const { settled } = checkSettled(speed, turn.settleTicks);
-    if (settled) {
-      physics.stop(body);
-      beginAiming();
-    }
   }
 
   /**
@@ -426,10 +618,10 @@ export function createGame(): GameHandle {
     emit();
   }
 
-  function subscribe(listener: (s: GameStateSnapshot) => void) {
+  function subscribe(listener: (state: GameState) => void) {
     // Push the current state immediately so a freshly mounted UI (e.g. the
     // React app) never has to wait for the next event to render something.
-    listener(snapshot());
+    listener(getState());
     listeners.push(listener);
     return () => {
       listeners = listeners.filter((l) => l !== listener);

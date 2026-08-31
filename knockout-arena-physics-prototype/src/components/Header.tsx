@@ -1,18 +1,37 @@
 import type { GamePhase } from "../game/types";
 
-/** Minimal top bar with the game title and a phase badge. */
+/**
+ * Minimal top bar with the game title and a phase badge. Once a match is
+ * finished the badge announces the winner (a multi-player concern already
+ * supported by the engine) or the knockout.
+ */
 interface HeaderProps {
   phase: GamePhase;
+  /** Winner display name when the match finished with a survivor. */
+  winnerName: string | null;
 }
 
-const PHASE_BADGE: Record<GamePhase, { label: string; className: string }> = {
+const PHASE_BADGE: Record<Exclude<GamePhase, "finished">, { label: string; className: string }> = {
   aiming: { label: "Aim your knockout", className: "bg-emerald-500/15 text-emerald-300 border-emerald-400/30" },
   moving: { label: "In motion…", className: "bg-amber-500/15 text-amber-300 border-amber-400/30" },
-  eliminated: { label: "Knocked out!", className: "bg-red-500/15 text-red-300 border-red-400/30" },
 };
 
-export function Header({ phase }: HeaderProps) {
-  const badge = PHASE_BADGE[phase];
+const FINISHED_WIN_BADGE = {
+  label: "Winner!",
+  className: "bg-emerald-500/15 text-emerald-300 border-emerald-400/30",
+};
+const FINISHED_LOSS_BADGE = {
+  label: "Knocked out!",
+  className: "bg-red-500/15 text-red-300 border-red-400/30",
+};
+
+export function Header({ phase, winnerName }: HeaderProps) {
+  const badge =
+    phase === "finished"
+      ? winnerName
+        ? { ...FINISHED_WIN_BADGE, label: `🏆 ${winnerName} wins!` }
+        : FINISHED_LOSS_BADGE
+      : PHASE_BADGE[phase];
   return (
     <header className="flex items-center justify-between px-4 py-3 sm:px-6">
       <div className="flex items-center gap-3">

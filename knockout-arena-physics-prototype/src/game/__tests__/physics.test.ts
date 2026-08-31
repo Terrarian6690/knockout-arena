@@ -189,6 +189,90 @@ describe("rim collisions", () => {
   });
 });
 
+describe("ghosts and canonical rest (N-player support)", () => {
+  it("setGhost removes the body from ALL collisions; un-ghosting restores them", () => {
+    const physics = createPhysicsWorld();
+    const body = physics.createPawnBody("p0", 450, 350, PAWN_R);
+    physics.setGhost(body, true);
+    expect(body.collisionFilter.mask).toBe(0);
+    physics.setGhost(body, false);
+    expect(body.collisionFilter.mask).toBe(0x0001 | 0x0002); // pawn | wall
+    physics.destroy();
+  });
+
+  it("a ghost does not collide with anything while another pawn sweeps past it", () => {
+    const physics = createPhysicsWorld();
+    const mover = physics.createPawnBody("mover", 450, 300, PAWN_R);
+    const ghost = physics.createPawnBody("ghost", 450, 350, PAWN_R);
+    physics.setGhost(ghost, true);
+
+    physics.applyImpulse(mover, 0, 2.5); // straight through the ghost's spot
+    let passedThrough = false;
+    for (let i = 0; i < 60; i++) {
+      physics.step(DT);
+      const p = physics.position(mover);
+      if (p.y > 350) passedThrough = true; // mover crossed the ghost's center
+      expect(physics.velocity(mover).y).toBeGreaterThan(0.5); // unimpeded
+    }
+    expect(passedThrough).toBe(true);
+    // The ghost never moved.
+    expect(physics.position(ghost)).toEqual({ x: 450, y: 350 });
+    physics.destroy();
+  });
+
+  it("settleOnFloor stops the body and clears Matter's warm-start buffers", () => {
+    const physics = createPhysicsWorld();
+    const body = physics.createPawnBody("p0", 450, 350, PAWN_R);
+    physics.applyImpulse(body, 3, 0);
+    physics.settleOnFloor(body, PAWN_R);
+    expect(physics.velocity(body)).toEqual({ x: 0, y: 0 });
+    // A moving body's cached positional corrections must not survive a stop
+    // (they would keep nudging the "stopped" body on every later step).
+    const buffered = body as Matter.Body & {
+      positionImpulse: { x: number; y: number };
+    };
+    expect(buffered.positionImpulse).toEqual({ x: 0, y: 0 });
+    physics.destroy();
+  });
+
+  it("settleOnFloor projects a rim-penetrating pawn back onto the floor", () => {
+    const physics = createPhysicsWorld();
+    // End the turn slightly inside the rim (a leftover penetration from the
+    // contact solver): center at floorRadius - radius + 0.2.
+    const y = CONFIG.arena.centerY + floorRadius(physics.arena) - PAWN_R + 0.2;
+    const body = physics.createPawnBody("p0", CONFIG.arena.centerX, y, PAWN_R);
+    physics.settleOnFloor(body, PAWN_R);
+    const d = dist(physics.position(body).x, physics.position(body).y);
+    expect(d).toBeLessThanOrEqual(floorRadius(physics.arena) - PAWN_R - 1 + 1e-9);
+    physics.destroy();
+  });
+
+  it("settleOnFloor leaves pawns that rest fully inside the floor untouched", () => {
+    const physics = createPhysicsWorld();
+    const body = physics.createPawnBody("p0", 450, 350, PAWN_R);
+    physics.settleOnFloor(body, PAWN_R);
+    expect(physics.position(body)).toEqual({ x: 450, y: 350 });
+    physics.destroy();
+  });
+
+  it("a settled pawn resting on the floor stays exactly frozen while others fly", () => {
+    const physics = createPhysicsWorld();
+    // Pawn resting exactly at the wall contact circle (no penetration → no
+    // contact pair → no solver nudging on later steps).
+    const y = CONFIG.arena.centerY + floorRadius(physics.arena) - PAWN_R - 1;
+    const resting = physics.createPawnBody("rest", CONFIG.arena.centerX, y, PAWN_R);
+    physics.settleOnFloor(resting, PAWN_R);
+    const other = physics.createPawnBody("other", 450, 150, PAWN_R);
+    physics.applyImpulse(other, 0, 0.9); // an unrelated flight elsewhere
+
+    for (let i = 0; i < 120; i++) {
+      physics.step(DT);
+      expect(physics.position(resting)).toEqual({ x: CONFIG.arena.centerX, y });
+    }
+    physics.destroy();
+  });
+});
+
 describe("onCollision", () => {
   it("reports pawn-on-rim contacts with both bodies", () => {
     const physics = createPhysicsWorld();

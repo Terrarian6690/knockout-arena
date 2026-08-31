@@ -12,6 +12,14 @@ const DT = CONFIG.simulation.fixedTimestepMs;
 const FLOOR = CONFIG.arena.radius - CONFIG.arena.wallThickness;
 const PAWN_R = CONFIG.pawn.radius;
 
+/**
+ * UPDATED for the N-player model:
+ *   - commands carry playerId (the crafted two-pawn scenario must send p1's
+ *     commands with playerId "p1" during p1's turn);
+ *   - the terminal phase is "finished" (the old "eliminated" phase is gone);
+ *   - per-pawn aim/power and winnerId are part of the serialized state.
+ */
+
 /** Drive the game loop until the phase leaves "moving" (or maxFrames). */
 function pump(g: ReturnType<typeof createGame>, maxFrames: number): number {
   for (let i = 0; i < maxFrames; i++) {
@@ -33,14 +41,14 @@ describe("getState — serializable authoritative state", () => {
 
   it("contains everything needed for reconstruction", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", x: 500, y: 300 });
-    g.dispatch({ type: "setPower", power: 4 });
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "aim", playerId: "p0", x: 500, y: 300 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 4 });
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     g.update(DT);
     const s = g.getState();
 
     expect(s.phase).toBe("moving");
-    expect(s.power).toBe(4);
+    expect(s.pawns[0].power).toBe(4); // per-pawn power
     expect(s.turn.queue).toEqual(["p0"]);
     expect(s.turn.settleTicks).toBe(1);
     const pawn = s.pawns[0];
@@ -52,6 +60,12 @@ describe("getState — serializable authoritative state", () => {
     // Domain data present so the player model can be rebuilt.
     expect(pawn.spawnX).toBe(450);
     expect(pawn.name).toBe("Player 1");
+    // Per-pawn controls present so a server can apply commands per player.
+    // The aim was consumed by the launch but the last direction is kept.
+    expect(pawn.aim.active).toBe(false);
+    expect(Math.hypot(pawn.aim.direction.x, pawn.aim.direction.y)).toBeCloseTo(1, 9);
+    // Winner is null while the match runs.
+    expect(s.winnerId).toBeNull();
     g.destroy();
   });
 });
@@ -59,9 +73,9 @@ describe("getState — serializable authoritative state", () => {
 describe("loadState — reconstruction", () => {
   it("reproduces the exact snapshot after a state transfer", () => {
     const a = createGame();
-    a.dispatch({ type: "aim", x: 500, y: 300 });
-    a.dispatch({ type: "setPower", power: 3 });
-    a.dispatch({ type: "confirmLaunch" });
+    a.dispatch({ type: "aim", playerId: "p0", x: 500, y: 300 });
+    a.dispatch({ type: "setPower", playerId: "p0", power: 3 });
+    a.dispatch({ type: "confirmLaunch", playerId: "p0" });
     for (let i = 0; i < 20; i++) a.update(DT);
 
     const b = createGame();
@@ -73,9 +87,9 @@ describe("loadState — reconstruction", () => {
 
   it("reproduces snapshots through a JSON wire", () => {
     const a = createGame();
-    a.dispatch({ type: "aim", x: 450, y: 40 });
-    a.dispatch({ type: "setPower", power: 5 });
-    a.dispatch({ type: "confirmLaunch" });
+    a.dispatch({ type: "aim", playerId: "p0", x: 450, y: 40 });
+    a.dispatch({ type: "setPower", playerId: "p0", power: 5 });
+    a.dispatch({ type: "confirmLaunch", playerId: "p0" });
     for (let i = 0; i < 15; i++) a.update(DT);
 
     const b = createGame();
@@ -88,7 +102,7 @@ describe("loadState — reconstruction", () => {
   it("reconstructs every phase", () => {
     // Aiming with an active aim.
     const aiming = createGame();
-    aiming.dispatch({ type: "aim", x: 500, y: 300 });
+    aiming.dispatch({ type: "aim", playerId: "p0", x: 500, y: 300 });
     const b1 = createGame();
     b1.loadState(aiming.getState());
     expect(b1.snapshot()).toEqual(aiming.snapshot());
@@ -97,9 +111,9 @@ describe("loadState — reconstruction", () => {
 
     // Moving, mid-flight.
     const moving = createGame();
-    moving.dispatch({ type: "aim", x: 450, y: 400 });
-    moving.dispatch({ type: "setPower", power: 5 });
-    moving.dispatch({ type: "confirmLaunch" });
+    moving.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 });
+    moving.dispatch({ type: "setPower", playerId: "p0", power: 5 });
+    moving.dispatch({ type: "confirmLaunch", playerId: "p0" });
     for (let i = 0; i < 33; i++) moving.update(DT);
     expect(moving.getState().phase).toBe("moving");
     const b2 = createGame();
@@ -108,17 +122,17 @@ describe("loadState — reconstruction", () => {
     b2.destroy();
     moving.destroy();
 
-    // Eliminated.
-    const eliminated = createGame();
-    eliminated.dispatch({ type: "setPower", power: 5 });
-    eliminated.dispatch({ type: "confirmLaunch" });
-    pump(eliminated, 700);
-    expect(eliminated.getState().phase).toBe("eliminated");
+    // Finished (lone pawn flew out — no survivor).
+    const finished = createGame();
+    finished.dispatch({ type: "setPower", playerId: "p0", power: 5 });
+    finished.dispatch({ type: "confirmLaunch", playerId: "p0" });
+    pump(finished, 700);
+    expect(finished.getState().phase).toBe("finished");
     const b3 = createGame();
-    b3.loadState(eliminated.getState());
-    expect(b3.snapshot()).toEqual(eliminated.snapshot());
+    b3.loadState(finished.getState());
+    expect(b3.snapshot()).toEqual(finished.snapshot());
     b3.destroy();
-    eliminated.destroy();
+    finished.destroy();
   });
 
   it("throws on malformed state (trust boundary)", () => {
@@ -137,9 +151,9 @@ describe("loadState — reconstruction", () => {
   it("continues deterministically after reconstruction (the core guarantee)", () => {
     // Original run.
     const a = createGame();
-    a.dispatch({ type: "aim", x: 460, y: 380 });
-    a.dispatch({ type: "setPower", power: 4 });
-    a.dispatch({ type: "confirmLaunch" });
+    a.dispatch({ type: "aim", playerId: "p0", x: 460, y: 380 });
+    a.dispatch({ type: "setPower", playerId: "p0", power: 4 });
+    a.dispatch({ type: "confirmLaunch", playerId: "p0" });
     for (let i = 0; i < 40; i++) a.update(DT); // mid-flight
     const checkpoint = a.getState();
 
@@ -166,9 +180,9 @@ describe("loadState — reconstruction", () => {
 
   it("continues deterministically from an elimination checkpoint", () => {
     const a = createGame();
-    a.dispatch({ type: "aim", x: 450, y: 40 });
-    a.dispatch({ type: "setPower", power: 5 });
-    a.dispatch({ type: "confirmLaunch" });
+    a.dispatch({ type: "aim", playerId: "p0", x: 450, y: 40 });
+    a.dispatch({ type: "setPower", playerId: "p0", power: 5 });
+    a.dispatch({ type: "confirmLaunch", playerId: "p0" });
     for (let i = 0; i < 5; i++) a.update(DT); // just after launch, heading out
 
     const b = createGame();
@@ -176,25 +190,26 @@ describe("loadState — reconstruction", () => {
     pump(a, 700);
     pump(b, 700);
     expect(b.getState()).toEqual(a.getState());
-    expect(b.snapshot().phase).toBe("eliminated");
+    expect(b.snapshot().phase).toBe("finished");
+    expect(b.getState().winnerId).toBeNull();
     a.destroy();
     b.destroy();
   });
 
   it("supports continued play from a reconstructed aiming state", () => {
     const a = createGame();
-    a.dispatch({ type: "aim", x: 450, y: 400 });
-    a.dispatch({ type: "setPower", power: 2 });
-    a.dispatch({ type: "confirmLaunch" });
+    a.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 });
+    a.dispatch({ type: "setPower", playerId: "p0", power: 2 });
+    a.dispatch({ type: "confirmLaunch", playerId: "p0" });
     pump(a, 700); // settled somewhere mid-arena
 
     const b = createGame();
     b.loadState(a.getState());
     // Both continue with the same scripted commands.
     for (const g of [a, b]) {
-      g.dispatch({ type: "aim", x: 500, y: 350 });
-      g.dispatch({ type: "setPower", power: 3 });
-      g.dispatch({ type: "confirmLaunch" });
+      g.dispatch({ type: "aim", playerId: "p0", x: 500, y: 350 });
+      g.dispatch({ type: "setPower", playerId: "p0", power: 3 });
+      g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     }
     for (let i = 0; i < 300; i++) {
       a.update(DT);
@@ -206,7 +221,7 @@ describe("loadState — reconstruction", () => {
   });
 });
 
-describe("loadState — state-driven engine (multi-pawn future-proofing)", () => {
+describe("loadState — state-driven engine (N-player states)", () => {
   it("adopts a two-pawn state and rotates turns correctly", () => {
     const g = createGame();
     const base = g.getState();
@@ -233,17 +248,17 @@ describe("loadState — state-driven engine (multi-pawn future-proofing)", () =>
     expect(g.snapshot().activePawnId).toBe("p0");
 
     // p0 launches toward the center and settles → turn advances to p1.
-    g.dispatch({ type: "aim", x: 450, y: 350 });
-    g.dispatch({ type: "setPower", power: 2 });
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 350 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 2 });
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     pump(g, 700);
     expect(g.snapshot().phase).toBe("aiming");
     expect(g.snapshot().activePawnId).toBe("p1");
 
     // p1 launches as well → turn wraps back to p0.
-    g.dispatch({ type: "aim", x: 450, y: 350 });
-    g.dispatch({ type: "setPower", power: 1 });
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "aim", playerId: "p1", x: 450, y: 350 });
+    g.dispatch({ type: "setPower", playerId: "p1", power: 1 });
+    g.dispatch({ type: "confirmLaunch", playerId: "p1" });
     pump(g, 700);
     expect(g.snapshot().activePawnId).toBe("p0");
     g.destroy();
@@ -292,9 +307,9 @@ describe("engine behavior is unchanged by the architecture", () => {
     // state transfer the reconstructed engine must still eliminate it (the
     // pass-over decision is re-derived from position + velocity each tick).
     const a = createGame();
-    a.dispatch({ type: "aim", x: 450, y: 40 });
-    a.dispatch({ type: "setPower", power: 5 });
-    a.dispatch({ type: "confirmLaunch" });
+    a.dispatch({ type: "aim", playerId: "p0", x: 450, y: 40 });
+    a.dispatch({ type: "setPower", playerId: "p0", power: 5 });
+    a.dispatch({ type: "confirmLaunch", playerId: "p0" });
     // Find the tick where the pawn is past the rim contact circle.
     let checkpoint: GameState | null = null;
     for (let i = 0; i < 60; i++) {
@@ -311,7 +326,7 @@ describe("engine behavior is unchanged by the architecture", () => {
     const b = createGame();
     b.loadState(checkpoint!);
     pump(b, 200);
-    expect(b.snapshot().phase).toBe("eliminated");
+    expect(b.snapshot().phase).toBe("finished");
     expect(
       Math.hypot(
         b.snapshot().pawns[0].position.x - CONFIG.arena.centerX,
@@ -327,9 +342,9 @@ describe("engine behavior is unchanged by the architecture", () => {
       const g = createGame();
       const send = (cmd: GameCommand) =>
         via === "dispatch" ? g.dispatch(cmd) : g.applyCommand(cmd);
-      send({ type: "aim", x: 470, y: 390 });
-      send({ type: "setPower", power: 4 });
-      send({ type: "confirmLaunch" });
+      send({ type: "aim", playerId: "p0", x: 470, y: 390 });
+      send({ type: "setPower", playerId: "p0", power: 4 });
+      send({ type: "confirmLaunch", playerId: "p0" });
       const trace: number[] = [];
       for (let i = 0; i < 120; i++) {
         g.update(DT);

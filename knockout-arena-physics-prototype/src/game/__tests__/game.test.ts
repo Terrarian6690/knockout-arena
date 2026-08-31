@@ -2,15 +2,33 @@ import { describe, expect, it } from "vitest";
 import { CONFIG, launchSpeedFor } from "../config";
 import { createArena, floorRadius } from "../arena";
 import { createGame, type GameHandle } from "../game";
+import { projectSnapshot } from "../project";
+import type { GameState } from "../state";
 import type { GameStateSnapshot } from "../types";
+
+/**
+ * UPDATED for the N-player engine, single-player behavior preserved:
+ *   - every dispatch carries playerId "p0" (the default roster's only seat) —
+ *     commands are attributable to a player now;
+ *   - the "eliminated" PHASE is gone: elimination is a per-pawn flag and a
+ *     lone pawn flying out ENDS the match ("finished", winnerId null). Each
+ *     changed expectation below is intentional and annotated;
+ *   - subscribe() now delivers the raw authoritative GameState (server-ready)
+ *     instead of a projection; the engine's snapshot() is the spectator view.
+ */
 
 const DT = CONFIG.simulation.fixedTimestepMs; // 1000/60
 const FLOOR = floorRadius(createArena()); // playable floor radius (264)
 const PAWN_R = CONFIG.pawn.radius; // 16
-/** Spawn of the single phase-1 pawn: just inside the top rim. */
+/** Spawn of the single default pawn: just inside the top rim. */
 const SPAWN = { x: CONFIG.arena.centerX, y: 110 };
 
-const pawnOf = (s: GameStateSnapshot) => s.pawns[0];
+/** First pawn of a snapshot (projection) or of raw authoritative state. */
+function pawnOf(s: GameStateSnapshot): GameStateSnapshot["pawns"][number];
+function pawnOf(s: GameState): GameState["pawns"][number];
+function pawnOf(s: GameStateSnapshot | GameState) {
+  return s.pawns[0];
+}
 const distFromCenter = (p: { x: number; y: number }) =>
   Math.hypot(p.x - CONFIG.arena.centerX, p.y - CONFIG.arena.centerY);
 
@@ -28,16 +46,16 @@ function pump(g: GameHandle, maxFrames: number, dt: number = DT): number {
 
 /** Launch inward (downward from the top spawn) — safe, always settles. */
 function launchInward(g: GameHandle, power: number) {
-  g.dispatch({ type: "aim", x: CONFIG.arena.centerX, y: CONFIG.arena.centerY });
-  g.dispatch({ type: "setPower", power });
-  g.dispatch({ type: "confirmLaunch" });
+  g.dispatch({ type: "aim", playerId: "p0", x: CONFIG.arena.centerX, y: CONFIG.arena.centerY });
+  g.dispatch({ type: "setPower", playerId: "p0", power });
+  g.dispatch({ type: "confirmLaunch", playerId: "p0" });
 }
 
 /** Launch straight at the nearby top rim. */
 function launchAtRim(g: GameHandle, power: number) {
-  g.dispatch({ type: "aim", x: CONFIG.arena.centerX, y: 40 });
-  g.dispatch({ type: "setPower", power });
-  g.dispatch({ type: "confirmLaunch" });
+  g.dispatch({ type: "aim", playerId: "p0", x: CONFIG.arena.centerX, y: 40 });
+  g.dispatch({ type: "setPower", playerId: "p0", power });
+  g.dispatch({ type: "confirmLaunch", playerId: "p0" });
 }
 
 describe("initial game state", () => {
@@ -60,11 +78,19 @@ describe("initial game state", () => {
     g.destroy();
   });
 
-  it("identifies the local and active pawn", () => {
+  it("has no local pawn in the engine's own (spectator) projection", () => {
+    // UPDATED: the engine no longer knows about a local player; the default
+    // game's snapshot is a spectator view. The client attaches identity via
+    // projectSnapshot (checked right below).
     const g = createGame();
     const s = g.snapshot();
-    expect(s.localPawnId).toBe("p0");
+    expect(s.localPawnId).toBeNull();
     expect(s.activePawnId).toBe("p0");
+    expect(s.pawns.every((p) => !p.isLocal)).toBe(true);
+
+    const local = projectSnapshot(g.getState(), "p0");
+    expect(local.localPawnId).toBe("p0");
+    expect(local.pawns[0].isLocal).toBe(true);
     g.destroy();
   });
 
@@ -80,7 +106,7 @@ describe("initial game state", () => {
 describe("aiming", () => {
   it("sets a unit aim direction toward the target", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", x: CONFIG.arena.centerX, y: 400 });
+    g.dispatch({ type: "aim", playerId: "p0", x: CONFIG.arena.centerX, y: 400 });
     const s = g.snapshot();
     expect(s.isAiming).toBe(true);
     expect(s.aimDirection).toEqual({ x: 0, y: 1 }); // straight down from spawn
@@ -89,15 +115,15 @@ describe("aiming", () => {
 
   it("updates the direction as the target moves", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", x: 450, y: 400 }); // down
-    g.dispatch({ type: "aim", x: 450, y: 40 }); // up
+    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 }); // down
+    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 40 }); // up
     expect(g.snapshot().aimDirection).toEqual({ x: 0, y: -1 });
     g.destroy();
   });
 
   it("measures the direction from the pawn, not the world origin", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", x: 0, y: 0 }); // world origin, up-left of spawn
+    g.dispatch({ type: "aim", playerId: "p0", x: 0, y: 0 }); // world origin, up-left of spawn
     const dir = g.snapshot().aimDirection!;
     expect(dir.x).toBeLessThan(0);
     expect(dir.y).toBeLessThan(0);
@@ -107,8 +133,8 @@ describe("aiming", () => {
 
   it("keeps the previous aim when the target is degenerate", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", x: 450, y: 400 });
-    g.dispatch({ type: "aim", x: SPAWN.x, y: SPAWN.y }); // on the pawn itself
+    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 });
+    g.dispatch({ type: "aim", playerId: "p0", x: SPAWN.x, y: SPAWN.y }); // on the pawn itself
     expect(g.snapshot().aimDirection).toEqual({ x: 0, y: 1 });
     g.destroy();
   });
@@ -118,7 +144,7 @@ describe("power selection", () => {
   it("accepts every level in the configured range", () => {
     const g = createGame();
     for (let p = CONFIG.power.min; p <= CONFIG.power.max; p++) {
-      g.dispatch({ type: "setPower", power: p });
+      g.dispatch({ type: "setPower", playerId: "p0", power: p });
       expect(g.snapshot().power).toBe(p);
     }
     g.destroy();
@@ -126,23 +152,23 @@ describe("power selection", () => {
 
   it("clamps values above the maximum", () => {
     const g = createGame();
-    g.dispatch({ type: "setPower", power: 99 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 99 });
     expect(g.snapshot().power).toBe(CONFIG.power.max);
     g.destroy();
   });
 
   it("clamps values below the minimum", () => {
     const g = createGame();
-    g.dispatch({ type: "setPower", power: -3 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: -3 });
     expect(g.snapshot().power).toBe(CONFIG.power.min);
     g.destroy();
   });
 
   it("rounds fractional powers", () => {
     const g = createGame();
-    g.dispatch({ type: "setPower", power: 2.4 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 2.4 });
     expect(g.snapshot().power).toBe(2);
-    g.dispatch({ type: "setPower", power: 2.6 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 2.6 });
     expect(g.snapshot().power).toBe(3);
     g.destroy();
   });
@@ -151,9 +177,9 @@ describe("power selection", () => {
 describe("valid launch", () => {
   it("applies the aim direction scaled by the power's launch speed", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", x: 450, y: 400 }); // straight down
-    g.dispatch({ type: "setPower", power: 4 });
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 }); // straight down
+    g.dispatch({ type: "setPower", playerId: "p0", power: 4 });
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
 
     const v = pawnOf(g.snapshot()).velocity;
     expect(Math.hypot(v.x, v.y)).toBeCloseTo(launchSpeedFor(4), 6);
@@ -164,8 +190,8 @@ describe("valid launch", () => {
 
   it("falls back to the default direction when no aim was set", () => {
     const g = createGame();
-    g.dispatch({ type: "setPower", power: 5 });
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 5 });
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     const v = pawnOf(g.snapshot()).velocity;
     expect(v.x).toBeCloseTo(0, 9);
     expect(v.y).toBeLessThan(0); // default (0,-1): straight at the top rim
@@ -174,8 +200,8 @@ describe("valid launch", () => {
 
   it("switches to the moving phase and consumes the aim", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", x: 450, y: 400 });
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 });
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     const s = g.snapshot();
     expect(s.phase).toBe("moving");
     expect(s.isAiming).toBe(false);
@@ -197,7 +223,7 @@ describe("launch once per turn", () => {
     const run = (doubleDispatch: boolean) => {
       const g = createGame();
       launchInward(g, 2);
-      if (doubleDispatch) g.dispatch({ type: "confirmLaunch" });
+      if (doubleDispatch) g.dispatch({ type: "confirmLaunch", playerId: "p0" });
       const trace: Array<{ x: number; y: number }> = [];
       for (let i = 0; i < 60; i++) {
         g.update(DT);
@@ -213,11 +239,11 @@ describe("launch once per turn", () => {
     const g = createGame();
     launchInward(g, 3);
     g.update(DT);
-    let speed = Math.hypot(...Object.values(pawnOf(g.snapshot()).velocity) as [number, number]);
+    let speed = Math.hypot(...(Object.values(pawnOf(g.snapshot()).velocity) as [number, number]));
     for (let i = 0; i < 40; i++) {
-      g.dispatch({ type: "confirmLaunch" });
+      g.dispatch({ type: "confirmLaunch", playerId: "p0" });
       g.update(DT);
-      const next = Math.hypot(...Object.values(pawnOf(g.snapshot()).velocity) as [number, number]);
+      const next = Math.hypot(...(Object.values(pawnOf(g.snapshot()).velocity) as [number, number]));
       expect(next).toBeLessThanOrEqual(speed + 1e-9);
       speed = next;
     }
@@ -283,16 +309,18 @@ describe("phase transitions", () => {
     g.destroy();
   });
 
-  it("walks aiming → moving → eliminated on a rim fly-over", () => {
+  it("walks aiming → moving → finished on a rim fly-over", () => {
+    // UPDATED expectation ("eliminated" → "finished"): a lone pawn leaving
+    // the arena ends the match; elimination itself is a per-pawn flag.
     const g = createGame();
     launchAtRim(g, 5);
     expect(g.snapshot().phase).toBe("moving");
     pump(g, 700);
-    expect(g.snapshot().phase).toBe("eliminated");
+    expect(g.snapshot().phase).toBe("finished");
     g.destroy();
   });
 
-  it("walks eliminated → aiming on reset", () => {
+  it("walks finished → aiming on reset", () => {
     const g = createGame();
     launchAtRim(g, 5);
     pump(g, 700);
@@ -308,7 +336,7 @@ describe("elimination (geometric rule)", () => {
     launchAtRim(g, 5);
     const frames = pump(g, 700);
     const s = g.snapshot();
-    expect(s.phase).toBe("eliminated");
+    expect(s.phase).toBe("finished"); // lone pawn out → match over
     expect(pawnOf(s).eliminated).toBe(true);
     expect(distFromCenter(pawnOf(s).position)).toBeGreaterThan(FLOOR + PAWN_R);
     expect(frames).toBeLessThan(120); // a fly-over resolves quickly
@@ -334,7 +362,7 @@ describe("elimination (geometric rule)", () => {
     launchAtRim(g, 5);
     for (let i = 0; i < 120; i++) {
       g.update(DT);
-      if (g.snapshot().phase === "eliminated") break;
+      if (g.snapshot().phase === "finished") break;
     }
     // While still "moving", the pawn never fully left the floor…
     for (const entry of seen) {
@@ -344,7 +372,7 @@ describe("elimination (geometric rule)", () => {
     }
     // …and the eliminating frame is strictly outside it.
     const last = seen[seen.length - 1];
-    expect(last.phase).toBe("eliminated");
+    expect(last.phase).toBe("finished");
     expect(last.dist).toBeGreaterThan(FLOOR + PAWN_R);
     g.destroy();
   });
@@ -355,13 +383,14 @@ describe("elimination (geometric rule)", () => {
     const off = { x: Math.sin(Math.PI / 6), y: -Math.cos(Math.PI / 6) };
     g.dispatch({
       type: "aim",
+      playerId: "p0",
       x: SPAWN.x + off.x * 300,
       y: SPAWN.y + off.y * 300,
     });
-    g.dispatch({ type: "setPower", power: 5 });
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 5 });
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     pump(g, 700);
-    expect(g.snapshot().phase).toBe("eliminated");
+    expect(g.snapshot().phase).toBe("finished");
     g.destroy();
   });
 });
@@ -464,9 +493,9 @@ describe("repeated turns", () => {
 
 describe("deterministic simulation", () => {
   const script = (g: GameHandle) => {
-    g.dispatch({ type: "aim", x: 500, y: 300 });
-    g.dispatch({ type: "setPower", power: 3 });
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "aim", playerId: "p0", x: 500, y: 300 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 3 });
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     for (let i = 0; i < 120; i++) g.update(DT);
   };
 
@@ -557,7 +586,7 @@ describe("rim pass-over behavior", () => {
       const g = createGame();
       launchAtRim(g, power);
       pump(g, 700);
-      const out = g.snapshot().phase === "eliminated";
+      const out = g.snapshot().phase === "finished";
       expect(out).toBe(expectOut);
       g.destroy();
     }
@@ -568,9 +597,9 @@ describe("rim pass-over behavior", () => {
     // Aim along the rim (tangentially): the pawn hugs the wall without the
     // outward speed to clear it, so it must never slip out.
     const tangential = { x: 150, y: 110 }; // roughly along the top rim
-    g.dispatch({ type: "aim", x: tangential.x, y: tangential.y });
-    g.dispatch({ type: "setPower", power: 3 });
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "aim", playerId: "p0", x: tangential.x, y: tangential.y });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 3 });
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     pump(g, 700);
     const s = g.snapshot();
     expect(pawnOf(s).eliminated).toBe(false);
@@ -583,7 +612,7 @@ describe("invalid actions during moving", () => {
   it("ignores aim changes mid-flight", () => {
     const g = createGame();
     launchInward(g, 3);
-    g.dispatch({ type: "aim", x: 100, y: 500 });
+    g.dispatch({ type: "aim", playerId: "p0", x: 100, y: 500 });
     const s = g.snapshot();
     expect(s.aimDirection).toBeNull();
     expect(s.isAiming).toBe(false);
@@ -593,7 +622,7 @@ describe("invalid actions during moving", () => {
   it("ignores power changes mid-flight", () => {
     const g = createGame();
     launchInward(g, 2);
-    g.dispatch({ type: "setPower", power: 5 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 5 });
     expect(g.snapshot().power).toBe(2);
     g.destroy();
   });
@@ -603,9 +632,9 @@ describe("invalid actions during moving", () => {
       const g = createGame();
       launchInward(g, 3);
       if (interfere) {
-        g.dispatch({ type: "aim", x: 100, y: 100 });
-        g.dispatch({ type: "setPower", power: 5 });
-        g.dispatch({ type: "confirmLaunch" });
+        g.dispatch({ type: "aim", playerId: "p0", x: 100, y: 100 });
+        g.dispatch({ type: "setPower", playerId: "p0", power: 5 });
+        g.dispatch({ type: "confirmLaunch", playerId: "p0" });
       }
       const trace: number[] = [];
       for (let i = 0; i < 80; i++) {
@@ -619,7 +648,9 @@ describe("invalid actions during moving", () => {
   });
 });
 
-describe("invalid actions during eliminated", () => {
+describe("invalid actions after the match finished", () => {
+  // UPDATED group ("eliminated" phase → "finished" match): the single pawn
+  // flying out now ends the match instead of pausing in an eliminated phase.
   const eliminatedGame = () => {
     const g = createGame();
     launchAtRim(g, 5);
@@ -630,34 +661,34 @@ describe("invalid actions during eliminated", () => {
   it("rejects further launches until reset", () => {
     const g = eliminatedGame();
     const frozen = { ...pawnOf(g.snapshot()).position };
-    g.dispatch({ type: "confirmLaunch" });
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     g.update(DT);
-    expect(g.snapshot().phase).toBe("eliminated");
+    expect(g.snapshot().phase).toBe("finished");
     expect(pawnOf(g.snapshot()).position).toEqual(frozen);
     g.destroy();
   });
 
-  it("ignores aim and power changes while eliminated", () => {
+  it("ignores aim and power changes after finishing", () => {
     const g = eliminatedGame();
-    g.dispatch({ type: "aim", x: 450, y: 400 });
-    g.dispatch({ type: "setPower", power: 1 });
+    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 1 });
     const s = g.snapshot();
-    expect(s.phase).toBe("eliminated");
+    expect(s.phase).toBe("finished");
     expect(s.power).toBe(5); // unchanged from the eliminating launch
     expect(s.aimDirection).toBeNull();
     g.destroy();
   });
 
-  it("ignores updates while eliminated (no background simulation)", () => {
+  it("ignores updates after finishing (no background simulation)", () => {
     const g = eliminatedGame();
     const frozen = { ...pawnOf(g.snapshot()).position };
     for (let i = 0; i < 120; i++) g.update(DT);
-    expect(g.snapshot().phase).toBe("eliminated");
+    expect(g.snapshot().phase).toBe("finished");
     expect(pawnOf(g.snapshot()).position).toEqual(frozen);
     g.destroy();
   });
 
-  it("accepts reset from the eliminated phase", () => {
+  it("accepts reset from the finished phase", () => {
     const g = eliminatedGame();
     g.dispatch({ type: "reset" });
     expect(g.snapshot().phase).toBe("aiming");
@@ -714,12 +745,16 @@ describe("update loop hygiene", () => {
 });
 
 describe("subscribe / destroy", () => {
-  it("pushes the current state immediately on subscribe", () => {
+  it("pushes the current authoritative state immediately on subscribe", () => {
+    // UPDATED: subscribe delivers the raw GameState (server-ready), not a
+    // client projection. Reason: the engine no longer has a local player;
+    // every listener projects for its own viewer (see useGame).
     const g = createGame();
-    let latest: GameStateSnapshot | null = null;
+    let latest: GameState | null = null;
     g.subscribe((s) => (latest = s));
     expect(latest).not.toBeNull();
     expect(latest!.phase).toBe("aiming");
+    expect(latest!.pawns.map((p) => p.id)).toEqual(["p0"]);
     g.destroy();
   });
 
@@ -728,7 +763,7 @@ describe("subscribe / destroy", () => {
     let calls = 0;
     const unsub = g.subscribe(() => calls++);
     unsub();
-    g.dispatch({ type: "setPower", power: 5 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 5 });
     expect(calls).toBe(1); // only the initial push
     g.destroy();
   });

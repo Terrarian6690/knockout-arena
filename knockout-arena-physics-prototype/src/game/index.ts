@@ -9,10 +9,15 @@
  *   - config/arena/aiming/… internals — reachable via their modules if
  *     needed, but the stable surface is what is listed below.
  */
-export { createGame, type GameHandle } from "./game";
-export type { GameCommand, CommandResult, CommandRejection } from "./commands";
-export { validateCommand } from "./commands";
-export type { GameState, PawnState } from "./state";
+export { createGame, type GameHandle, type GameOptions, type PlayerSpec } from "./game";
+export type {
+  GameCommand,
+  PlayerIntent,
+  CommandResult,
+  CommandRejection,
+} from "./commands";
+export { validateCommand, withPlayerId } from "./commands";
+export type { GameState, PawnState, PawnAimState } from "./state";
 export {
   validateGameState,
   serializeGameState,

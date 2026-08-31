@@ -1,4 +1,5 @@
 import { CONFIG } from "./config";
+import { createAimState, type AimState } from "./aiming";
 
 /**
  * Player / pawn model.
@@ -7,10 +8,14 @@ import { CONFIG } from "./config";
  * The actual physics body is created by `physics.ts` (Matter.js), keeping the
  * domain logic clean and separable from the physics implementation.
  *
+ * Each player owns their own aim + power selection: they persist across
+ * other players' turns and are consumed at launch, so a future server can
+ * apply "aim"/"setPower" commands to exactly the pawn that issued them.
+ *
  * Later phases will attach an authoritative owner id, bot flag, etc. here.
  */
 export interface Player {
-  /** Stable id (in phase 1 there is exactly one: "p0"). */
+  /** Stable id ("p0", "p1", ... — one per participant). */
   id: string;
   name: string;
   colorIndex: number;
@@ -20,6 +25,10 @@ export interface Player {
   spawnY: number;
   /** Runtime flags, mutated by the engine as turns progress. */
   eliminated: boolean;
+  /** This player's selected power level (1..5). */
+  power: number;
+  /** This player's aim selection. */
+  aim: AimState;
 }
 
 export interface PlayerInput {
@@ -39,6 +48,8 @@ export function createPlayer(input: PlayerInput): Player {
     spawnX: input.spawnX,
     spawnY: input.spawnY,
     eliminated: false,
+    power: CONFIG.power.default,
+    aim: createAimState(),
   };
 }
 

@@ -5,12 +5,13 @@ import type { GamePhase } from "./types";
  * Turn logic state machine — the single source of truth for the game phase.
  *
  * The phase lives on `TurnState` and every other module (game.ts, renderer,
- * UI) reads it from here; nothing keeps a duplicate copy. In phase 1 this is
- * trivial (a single pawn: aim → launch → settle or eliminate), but the
- * structure is designed to grow into a full multiplayer turn order:
- *  - a queue of participant ids
- *  - simultaneous-turn flags (all players aim, then all resolve)
- *  - bot participants that select a target + power procedurally
+ * UI) reads it from here; nothing keeps a duplicate copy.
+ *
+ * The queue holds the FULL roster in stable turn order for the whole match
+ * (replay-friendly, indices never shift). Rotation skips eliminated pawns at
+ * runtime via the isEliminated predicate, so who acts next is a pure function
+ * of (queue, activeIndex, eliminated flags) — deterministic and identical on
+ * any host that loads the same state.
  *
  * Keeping phase + turn order here (rather than in game.ts) means the
  * multiplayer ruleset can evolve independently of physics/rendering.
@@ -20,7 +21,7 @@ export type TurnPhase = GamePhase;
 export interface TurnState {
   /** Current phase. game.ts transitions it; everything else reads it. */
   phase: TurnPhase;
-  /** Pawn ids in turn order. Single-player uses ["p0"]. */
+  /** ALL pawn ids in turn order (including eliminated pawns). */
   queue: string[];
   /** Index of the currently acting pawn in the queue. */
   activeIndex: number;
@@ -41,11 +42,30 @@ export function activePawnId(turn: TurnState): string | null {
   return turn.queue[turn.activeIndex] ?? null;
 }
 
-/** Advance to the next actor. Returns true if we wrapped around. */
-export function advanceTurn(turn: TurnState): boolean {
-  turn.activeIndex = (turn.activeIndex + 1) % turn.queue.length;
-  turn.settleTicks = 0;
-  return turn.activeIndex === 0;
+/**
+ * Advance to the next pawn that is still in the match, skipping eliminated
+ * pawns deterministically (stable queue order, wrap-around). Returns the new
+ * active pawn id, or null when every pawn is eliminated.
+ *
+ * Note: the pawn at the CURRENT activeIndex is never re-selected by this
+ * function while any other pawn is active — even after wrapping, rotation
+ * always moves at least one seat forward.
+ */
+export function advanceTurn(
+  turn: TurnState,
+  isEliminated: (pawnId: string) => boolean
+): string | null {
+  const n = turn.queue.length;
+  for (let step = 1; step <= n; step++) {
+    const index = (turn.activeIndex + step) % n;
+    const id = turn.queue[index];
+    if (!isEliminated(id)) {
+      turn.activeIndex = index;
+      turn.settleTicks = 0;
+      return id;
+    }
+  }
+  return null; // every pawn in the queue is eliminated
 }
 
 export interface SettleResult {
