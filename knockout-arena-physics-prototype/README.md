@@ -2,8 +2,9 @@
 
 A browser-based 2D multiplayer game (currently a **single-player prototype on
 an N-player-ready engine** — "Phase 1" (N-player engine), "Phase 2" (clean
-engine↔client package boundary) and "Phase 3" (headless authoritative server
-host) of the multiplayer prep are done).
+engine↔client package boundary), "Phase 3" (headless authoritative server
+host) and "Phase 4" (rooms, sessions and the server-assigned identity chain)
+of the multiplayer prep are done).
 
 ## Overview
 
@@ -84,16 +85,59 @@ always share the same game state.
 | `App.tsx` / `main.tsx`     | App shell + Vite entry point.                        |
 | `components/*`             | Header, arena canvas, control bar, elimination overlay, power selector. |
 
-### Server (`src/server/`) — headless authoritative host
+### Server (`src/server/`) — rooms, sessions, headless authority
 
-| Module        | Responsibility                                             |
-| ------------- | ---------------------------------------------------------- |
-| `index.ts`    | Public server barrel.                                      |
-| `gameHost.ts` | `createGameHost()` — the authoritative owner of one match.  |
+| Module          | Responsibility                                              |
+| --------------- | ----------------------------------------------------------- |
+| `index.ts`      | Public server barrel.                                       |
+| `session.ts`    | `Session` — opaque connection identity (the trust root).    |
+| `gameHost.ts`   | `createGameHost()` — the authoritative owner of one match.   |
+| `roomManager.ts`| `createRoomManager()` — rooms, seats p0..p3, lifecycle, identity stamping. |
+| `gameServer.ts` | `createGameServer()` — the facade the transport attaches to. |
 
-The `GameHost` is the first real piece of the multiplayer server. It owns
-exactly one engine `GameHandle` (created from a **server-supplied roster**)
-and adds the hosting concerns around it — nothing else:
+The server is layered: **session** (who is connected) → **room** (who plays in
+which match, on which seat) → **GameHost** (the match itself) → **engine**
+(the rules). Each layer only knows the one below it; the engine knows nothing
+about any of them (enforced by tests).
+
+#### The identity chain
+
+The client is **never** trusted to choose its playerId:
+
+```
+connection/session  →  server-assigned playerId  →  room membership
+                    →  GameHost.submitCommand(playerId, command)
+```
+
+- `connect()` issues an opaque `Session` (unguessable token — the interim
+  credential until real authentication exists).
+- `createRoom(session)` seats the creator as `p0`; `joinRoom(session, roomId)`
+  takes the **lowest free seat** (`p1`, `p2`, `p3` — max 4, duplicates
+  impossible by construction).
+- `submitCommand(session, command)` **rebuilds** the command from known intent
+  fields only, stamped with the session's seat: whatever `playerId` (or any
+  other field) the client sent is dropped at the boundary. Ownership can
+  never be forged.
+- `reset` is privileged: players submitting it get `unauthorized`; only the
+  server path `resetMatch(roomId)` (for the future host/vote policy) resets.
+
+#### Room lifecycle (minimal — no matchmaking)
+
+```
+waiting  ──startMatch (2..4 seated)──▶  playing  ──match ends──▶  finished
+   │                                       │                        │
+   │ seats join/leave freely               │ roster frozen;         │ rematch =
+   │                                       │ leavers vacate         │ resetMatch
+   └── last player leaves → room removed ◀─┴── last player leaves ───┘
+```
+
+Starting a match creates the room's one `GameHost` from the **stable roster**
+(occupied seats at start time) and starts its fixed 60 Hz loop. Room state
+transitions are derived from the match state pushes — no room-side game
+logic. Empty rooms are removed automatically (and sweepable via
+`removeEmptyRooms()`).
+
+#### GameHost (unchanged from the previous milestone)
 
 - **Commands** — `submitCommand(raw: unknown)` runs the engine's total
   structural validator, then the engine's ownership/phase rules, and returns
@@ -110,24 +154,27 @@ and adds the hosting concerns around it — nothing else:
   loop primitive — deterministic tests, replays and bots use it directly.
 - **Snapshots** — the host subscribes to the engine and caches the latest
   `serializeGameState()` wire snapshot; `serializedState()` returns it and
-  `onStateChange(cb)` pushes it on every change (the future transport's
-  broadcast hook).
+  `onStateChange(cb)` pushes it on every change. Rooms forward these pushes
+  to every seated session via `onRoomState(session, cb)` — the transport's
+  broadcast hook.
 
 The intended transport flow (already the shape of the code):
 
 ```
-receive command (wire)  →  host.submitCommand()   // server validation + engine rules
-                        →  host fixed ticks       // 60 Hz, exactly 1000/60 ms
-                        →  serializeGameState()   // cached on every change
-                        →  host.onStateChange()   // the transport broadcasts
+receive command (wire)  →  gameServer.submitCommand(session, cmd)   // identity from the session
+                        →  host fixed ticks                        // 60 Hz, exactly 1000/60 ms
+                        →  serializeGameState()                    // cached on every change
+                        →  onRoomState(session, cb)                // the transport broadcasts
 ```
 
 ### Future transport (WebSocket — not built yet)
 
-No networking exists yet, by design. When the WebSocket layer arrives it will
-only need: a connection registry mapping authenticated sessions to seats, a
-room manager creating one `GameHost` per room, and the two glue functions
-above (message → `submitCommand`, `onStateChange` → broadcast).
+No networking exists yet, by design. The identity chain, session registry,
+room manager and broadcast hooks are all in place, so the WebSocket layer
+will only need to add: the socket ↔ session wiring (a session per
+connection, `disconnect()` on close), a message router for the room
+operations, real authentication replacing the interim token credential,
+and reconnection policy (reattaching a session to a vacated seat).
 
 ### The match model (N players)
 
@@ -188,10 +235,10 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
   deterministically. At every turn boundary pawns are brought to a canonical
   resting state (stopped, no rim overlap), which is what keeps
   reconstruction bit-identical even after wall contacts.
-- **Ownership**: the server (`src/server/gameHost.ts`) validates and applies
-  commands, simulates on a fixed clock, and exposes serialized states for
-  broadcasting; clients only send commands and render snapshots.
-  `useGame.ts` remains the single client integration point.
+- **Ownership**: the server (`src/server/`) validates and applies commands
+  with the session's seat identity, simulates on a fixed clock, and exposes
+  serialized states for broadcasting; clients only send commands and render
+  snapshots. `useGame.ts` remains the single client integration point.
 
 ### Extension points for multiplayer
 
@@ -202,12 +249,12 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
   everyone resolves" flag slots in.
 - **Bots**: bots only need to produce the same `GameCommand`s (a playerId +
   aim + power + confirm) — reusing `aiming.ts` helpers.
-- **Server authority**: implemented headless — `createGameHost()` feeds
-  validated commands into `game.applyCommand()`, steps `game.update()` on a
-  fixed 60 Hz clock, and caches `serializeGameState(game.getState())` for
-  broadcasting. What is left for the transport milestone: a connection
-  registry mapping authenticated sessions to seats, a room manager (one host
-  per room), and the WebSocket glue itself.
+- **Server authority**: implemented headless — `createGameServer()` issues
+  sessions, manages rooms (each owning one `createGameHost()`), stamps every
+  command with the session's seat, steps `game.update()` on a fixed 60 Hz
+  clock, and broadcasts `serializeGameState()` snapshots. What is left for
+  the transport milestone: the WebSocket glue, real authentication and
+  reconnection policy.
 
 ## Controls
 
@@ -274,4 +321,18 @@ The **server** has its own suites in `src/server/__tests__/`:
 - `server-boundary.test.ts` — the server package is DOM-free, imports no
   React/client code, reaches the engine only via its barrel (never
   `matter-js` directly), and imports no networking modules (this milestone
-  is transport-less).
+  is transport-less). Additionally: the room/session modules drive gameplay
+  only through `GameHost` (never `createGame`/matter-js directly), and the
+  engine remains unaware of rooms/sessions/server (no such imports, no such
+  barrel exports).
+- `roomManager.test.ts` — driven entirely through the `createGameServer()`
+  facade, the way the future transport will: session issuance and
+  disconnect, the identity chain (session → room → server-assigned
+  p0/p1/p2/p3 by join order, lowest free seat, fifth player rejected),
+  command ownership (commands applied with the session's identity; forged
+  `playerId`s and unknown fields stripped; malformed input never crashes),
+  room lifecycle (waiting → playing → finished via the real 60 Hz loop,
+  stable roster at start, joins blocked once playing, mid-match leaves
+  vacate seats, empty-room cleanup), privileged reset (players rejected as
+  `unauthorized`, server path works), independent simultaneous rooms, and
+  the `onRoomState` broadcast hook.

@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import * as engine from "../../game";
 
 /**
  * Architectural guard for the server package (src/server).
@@ -74,6 +75,13 @@ const FORBIDDEN_MODULE_PATTERN =
   /^(?:node:)?(?:http|https|http2|net|dgram|tls|dns|child_process|cluster|ws|socket\.io|engine\.io|express|fastify|cors|uws|mqtt|amqplib)$/;
 
 const files = serverSourceFiles(serverDir);
+/** Server modules that manage rooms/sessions — everything but the host. */
+const roomManagementFiles = files.filter(
+  (f) => path.basename(f) !== "gameHost.ts"
+);
+/** The engine package directory (for the unawareness guard). */
+const gameDir = path.join(path.dirname(serverDir), "game");
+const engineFiles = readdirSync(gameDir).filter((f) => f.endsWith(".ts"));
 
 describe("server package boundary", () => {
   it("has server files to guard (sanity)", () => {
@@ -144,5 +152,52 @@ describe("server package boundary", () => {
 
   it("the server package is importable without a DOM (this suite runs in node)", () => {
     expect(typeof globalThis.window).toBe("undefined");
+  });
+
+  it("has room-management modules to guard (sanity)", () => {
+    expect(roomManagementFiles.length).toBeGreaterThanOrEqual(3); // session, roomManager, gameServer (+ barrel)
+  });
+
+  it.each(roomManagementFiles.map((f) => path.relative(serverDir, f)))(
+    "room module %s drives gameplay only through GameHost (no engine duplication)",
+    (relFile) => {
+      const source = readFileSync(path.join(serverDir, relFile), "utf8");
+      // The room/session layer must not create engines or touch physics:
+      // all gameplay flows through createGameHost. (\bcreateGame\b does not
+      // match "createGameHost" — the word boundary sees the following H.)
+      expect(source, `${relFile} must not call createGame directly`).not.toMatch(
+        /\bcreateGame\b/
+      );
+      expect(source, `${relFile} must not touch matter-js`).not.toMatch(
+        /from\s+["']matter-js["']/
+      );
+    }
+  );
+
+  it("RoomManager owns matches through GameHost", () => {
+    const source = readFileSync(path.join(serverDir, "roomManager.ts"), "utf8");
+    expect(source).toMatch(/\bcreateGameHost\b/);
+    expect(source).toMatch(/from\s+["']\.\/gameHost["']/);
+  });
+
+  it("the engine remains unaware of rooms, sessions and networking", () => {
+    // No engine module imports anything from the server or client layers…
+    for (const file of engineFiles) {
+      const source = readFileSync(path.join(gameDir, file), "utf8");
+      for (const spec of importSpecifiers(source)) {
+        expect(
+          /(?:server|client|room|session)/i.test(spec),
+          `${file} must not import "${spec}" — the engine cannot depend on ` +
+            `the multiplayer layers built on top of it`
+        ).toBe(false);
+      }
+    }
+    // …and the engine's public API exposes no room/session surface.
+    for (const key of Object.keys(engine)) {
+      expect(
+        /room|session|server/i.test(key),
+        `the engine barrel must not export "${key}"`
+      ).toBe(false);
+    }
   });
 });
