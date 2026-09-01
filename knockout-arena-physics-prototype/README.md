@@ -1,8 +1,9 @@
 # Knockout Arena
 
 A browser-based 2D multiplayer game (currently a **single-player prototype on
-an N-player-ready engine** — "Phase 1" (N-player engine) and "Phase 2"
-(clean engine↔client package boundary) of the multiplayer prep are done).
+an N-player-ready engine** — "Phase 1" (N-player engine), "Phase 2" (clean
+engine↔client package boundary) and "Phase 3" (headless authoritative server
+host) of the multiplayer prep are done).
 
 ## Overview
 
@@ -29,14 +30,18 @@ mover can shove *opponents* over the rim — that is the core mechanic.
 - **Matter.js** for deterministic 2D physics
 - **Vite** + **Tailwind CSS**
 
-## Architecture: engine / client / (future) server
+## Architecture: engine / server / client
 
-The codebase is split into two strictly separated packages in place:
+The codebase is split into three strictly separated packages in place:
 
 ```
 src/game/    ← the ENGINE: a headless, deterministic simulation package.
                No React, no DOM, no Vite — matter-js is its only dependency.
                Everything outside imports it through ONE module: src/game/index.ts.
+src/server/  ← the SERVER: a headless authoritative GameHost that owns one
+               match, runs it on a fixed 60 Hz Node timer loop, validates
+               commands and exposes serialized snapshots. Transport-less by
+               design — no WebSocket/HTTP anywhere yet.
 src/client/  ← the CLIENT: the React app (hook, canvas renderer, components).
                Consumes the engine only via its public barrel "../game".
 ```
@@ -79,13 +84,50 @@ always share the same game state.
 | `App.tsx` / `main.tsx`     | App shell + Vite entry point.                        |
 | `components/*`             | Header, arena canvas, control bar, elimination overlay, power selector. |
 
-### Future server
+### Server (`src/server/`) — headless authoritative host
 
-The engine was shaped so a server can be dropped in without touching it: the
-server would import the same barrel (`src/game/index.ts`), validate and apply
-commands, step `game.update()` on a fixed clock, and broadcast
-`serializeGameState(game.getState())`. The architectural tests below already
-guarantee that importing the engine can never pull in React, Vite or UI code.
+| Module        | Responsibility                                             |
+| ------------- | ---------------------------------------------------------- |
+| `index.ts`    | Public server barrel.                                      |
+| `gameHost.ts` | `createGameHost()` — the authoritative owner of one match.  |
+
+The `GameHost` is the first real piece of the multiplayer server. It owns
+exactly one engine `GameHandle` (created from a **server-supplied roster**)
+and adds the hosting concerns around it — nothing else:
+
+- **Commands** — `submitCommand(raw: unknown)` runs the engine's total
+  structural validator, then the engine's ownership/phase rules, and returns
+  the machine-readable `CommandResult` (acknowledgement-ready). Malformed or
+  hostile input is rejected as `invalid-command`; the host never crashes on
+  wire input and never installs client state — clients can only ever send
+  intents.
+- **Fixed 60 Hz simulation** — `start()`/`stop()` drive a Node timer loop
+  (`setInterval`, never the browser frame loop). Wall-clock time only decides
+  HOW MANY ticks are due; every tick advances the simulation by exactly
+  `CONFIG.simulation.fixedTimestepMs` (1000/60 ms), so jitter never leaks into
+  the physics. After a stall the loop catches up at most a configurable number
+  of fixed ticks and drops the rest (anti-spiral). `tick()` is exposed as the
+  loop primitive — deterministic tests, replays and bots use it directly.
+- **Snapshots** — the host subscribes to the engine and caches the latest
+  `serializeGameState()` wire snapshot; `serializedState()` returns it and
+  `onStateChange(cb)` pushes it on every change (the future transport's
+  broadcast hook).
+
+The intended transport flow (already the shape of the code):
+
+```
+receive command (wire)  →  host.submitCommand()   // server validation + engine rules
+                        →  host fixed ticks       // 60 Hz, exactly 1000/60 ms
+                        →  serializeGameState()   // cached on every change
+                        →  host.onStateChange()   // the transport broadcasts
+```
+
+### Future transport (WebSocket — not built yet)
+
+No networking exists yet, by design. When the WebSocket layer arrives it will
+only need: a connection registry mapping authenticated sessions to seats, a
+room manager creating one `GameHost` per room, and the two glue functions
+above (message → `submitCommand`, `onStateChange` → broadcast).
 
 ### The match model (N players)
 
@@ -146,8 +188,9 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
   deterministically. At every turn boundary pawns are brought to a canonical
   resting state (stopped, no rim overlap), which is what keeps
   reconstruction bit-identical even after wall contacts.
-- **Ownership**: the future server validates and applies commands, simulates,
-  and broadcasts states; clients only send commands and render snapshots.
+- **Ownership**: the server (`src/server/gameHost.ts`) validates and applies
+  commands, simulates on a fixed clock, and exposes serialized states for
+  broadcasting; clients only send commands and render snapshots.
   `useGame.ts` remains the single client integration point.
 
 ### Extension points for multiplayer
@@ -159,9 +202,12 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
   everyone resolves" flag slots in.
 - **Bots**: bots only need to produce the same `GameCommand`s (a playerId +
   aim + power + confirm) — reusing `aiming.ts` helpers.
-- **Server authority**: a network module would feed validated commands into
-  `game.applyCommand()`, step `game.update()` on a fixed clock, and broadcast
-  `serializeGameState(game.getState())`; clients `loadState()` and render.
+- **Server authority**: implemented headless — `createGameHost()` feeds
+  validated commands into `game.applyCommand()`, steps `game.update()` on a
+  fixed 60 Hz clock, and caches `serializeGameState(game.getState())` for
+  broadcasting. What is left for the transport milestone: a connection
+  registry mapping authenticated sessions to seats, a room manager (one host
+  per room), and the WebSocket glue itself.
 
 ## Controls
 
@@ -213,3 +259,19 @@ Three suites guard the **package boundary** itself:
   canary for the type-only exports (`npm run build` runs `tsc` first).
 - `src/client/__tests__/client-boundary.test.ts` — client files may import
   the engine only as the barrel (`../game`), never deep engine modules.
+
+The **server** has its own suites in `src/server/__tests__/`:
+
+- `gameHost.test.ts` — lifecycle (start/stop/destroy, idempotency), the
+  fixed-timestep loop (each tick provably advances exactly
+  `fixedTimestepMs` — host state stays bit-identical to a raw engine replica
+  fed the same fixed ticks, even under real-time jitter and catch-up after a
+  missed wakeup), command handling through the host only (unknown-player,
+  wrong-player, malformed/hostile input that never crashes, client state
+  payloads rejected), snapshot exposure/broadcast semantics, reset, whole
+  2/3/4-player matches to a winner, and deterministic replay from the
+  command log on both a fresh host and a raw engine.
+- `server-boundary.test.ts` — the server package is DOM-free, imports no
+  React/client code, reaches the engine only via its barrel (never
+  `matter-js` directly), and imports no networking modules (this milestone
+  is transport-less).
