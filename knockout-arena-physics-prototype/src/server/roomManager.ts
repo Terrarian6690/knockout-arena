@@ -56,6 +56,12 @@ export interface RoomInfo {
   readonly state: RoomState;
   /** Occupied seats in seat order (vacated match seats stay listed). */
   readonly seats: readonly RoomSeatInfo[];
+  /**
+   * Seat id of the room host (the creating session), or null once the
+   * creator is no longer seated. Used by transports to authorize
+   * match-level actions (e.g. only the host may start the match).
+   */
+  readonly hostPlayerId: string | null;
 }
 
 export type SeatResult =
@@ -108,6 +114,8 @@ interface RoomEntry {
   seats: Array<string | null>;
   /** Seats vacated after the match started — the roster is frozen. */
   vacated: Set<number>;
+  /** The creating session's token — the room host (see RoomInfo.hostPlayerId). */
+  hostToken: string;
   host: GameHost | null;
   detachHost: (() => void) | null;
   /** State listeners (the transport broadcast hook), per session token. */
@@ -187,7 +195,16 @@ export function createRoomManager(): RoomManager {
         seats.push({ playerId: `p${i}`, connected: false });
       }
     }
-    return { id: room.id, state: room.state, seats };
+    // The host is whoever the creating session is seated as right now;
+    // null once the creator has left (the room then has no host until it
+    // is removed — transports document their policy on top of this).
+    const hostSeat = room.seats.indexOf(room.hostToken);
+    return {
+      id: room.id,
+      state: room.state,
+      seats,
+      hostPlayerId: hostSeat === -1 ? null : `p${hostSeat}`,
+    };
   }
 
   function destroyRoom(room: RoomEntry): void {
@@ -221,6 +238,7 @@ export function createRoomManager(): RoomManager {
       state: "waiting",
       seats: [null, null, null, null],
       vacated: new Set(),
+      hostToken: token, // the creator is the room host
       host: null,
       detachHost: null,
       listeners: [],

@@ -10,6 +10,11 @@ import {
   type StartResult,
 } from "./roomManager";
 import type { SerializedStateListener } from "./gameHost";
+import {
+  deserializeGameState,
+  projectSnapshot,
+  type GameStateSnapshot,
+} from "../game";
 
 /**
  * The game server facade — the transport-neutral API a future WebSocket
@@ -69,6 +74,16 @@ export interface GameServer {
   submitCommand(session: unknown, command: unknown): ServerCommandResult;
   /** Subscribe a seated session to its room's serialized match state. */
   onRoomState(session: unknown, listener: SerializedStateListener): () => void;
+  /**
+   * Like onRoomState, but each push is projected for THE SESSION'S OWN pawn
+   * using the engine's viewer-local projection (projectSnapshot) — the
+   * natural read model for a per-client transport. The authoritative state
+   * itself is never altered or exposed per-viewer.
+   */
+  onRoomView(
+    session: unknown,
+    listener: (view: GameStateSnapshot) => void
+  ): () => void;
   /** Destroy rooms with no connected players; returns the count removed. */
   removeEmptyRooms(): number;
   /** Number of live rooms. */
@@ -161,6 +176,24 @@ export function createGameServer(): GameServer {
     return manager.onRoomState(s.token, listener);
   }
 
+  function onRoomView(
+    session: unknown,
+    listener: (view: GameStateSnapshot) => void
+  ): () => void {
+    const s = resolve(session);
+    if (!s || typeof listener !== "function") return () => {};
+    // Capture the seat at subscription time: subscriptions are per
+    // room-membership (leaving removes them), so the seat stays valid for
+    // the subscription's lifetime and re-subscribing after rejoining picks
+    // up the new seat.
+    const seat = manager.resolveSeat(s.token);
+    if (!seat) return () => {};
+    return manager.onRoomState(s.token, (serialized) => {
+      // Reuses the engine's own projection — no view logic lives here.
+      listener(projectSnapshot(deserializeGameState(serialized), seat.playerId));
+    });
+  }
+
   function removeEmptyRooms(): number {
     return manager.removeEmptyRooms();
   }
@@ -190,6 +223,7 @@ export function createGameServer(): GameServer {
     resetMatch,
     submitCommand,
     onRoomState,
+    onRoomView,
     removeEmptyRooms,
     roomCount,
     sessionCount,

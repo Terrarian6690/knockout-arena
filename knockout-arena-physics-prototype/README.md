@@ -3,8 +3,9 @@
 A browser-based 2D multiplayer game (currently a **single-player prototype on
 an N-player-ready engine** — "Phase 1" (N-player engine), "Phase 2" (clean
 engine↔client package boundary), "Phase 3" (headless authoritative server
-host) and "Phase 4" (rooms, sessions and the server-assigned identity chain)
-of the multiplayer prep are done).
+host), "Phase 4" (rooms, sessions and the server-assigned identity chain)
+and "Phase 5" (real-time WebSocket transport) of the multiplayer prep are
+done).
 
 ## Overview
 
@@ -29,6 +30,7 @@ mover can shove *opponents* over the rim — that is the core mechanic.
 - **React** for UI
 - **HTML Canvas** for rendering
 - **Matter.js** for deterministic 2D physics
+- **ws** for the authoritative server's WebSocket transport
 - **Vite** + **Tailwind CSS**
 
 ## Architecture: engine / server / client
@@ -39,10 +41,9 @@ The codebase is split into three strictly separated packages in place:
 src/game/    ← the ENGINE: a headless, deterministic simulation package.
                No React, no DOM, no Vite — matter-js is its only dependency.
                Everything outside imports it through ONE module: src/game/index.ts.
-src/server/  ← the SERVER: a headless authoritative GameHost that owns one
-               match, runs it on a fixed 60 Hz Node timer loop, validates
-               commands and exposes serialized snapshots. Transport-less by
-               design — no WebSocket/HTTP anywhere yet.
+src/server/  ← the SERVER: sessions → rooms → authoritative GameHosts on a
+               fixed 60 Hz Node timer loop, plus a WebSocket transport
+               adapter (protocol v1) around the GameServer facade.
 src/client/  ← the CLIENT: the React app (hook, canvas renderer, components).
                Consumes the engine only via its public barrel "../game".
 ```
@@ -87,18 +88,21 @@ always share the same game state.
 
 ### Server (`src/server/`) — rooms, sessions, headless authority
 
-| Module          | Responsibility                                              |
-| --------------- | ----------------------------------------------------------- |
-| `index.ts`      | Public server barrel.                                       |
-| `session.ts`    | `Session` — opaque connection identity (the trust root).    |
-| `gameHost.ts`   | `createGameHost()` — the authoritative owner of one match.   |
-| `roomManager.ts`| `createRoomManager()` — rooms, seats p0..p3, lifecycle, identity stamping. |
-| `gameServer.ts` | `createGameServer()` — the facade the transport attaches to. |
+| Module                 | Responsibility                                              |
+| ---------------------- | ----------------------------------------------------------- |
+| `index.ts`             | Public server barrel.                                       |
+| `session.ts`           | `Session` — opaque connection identity (the trust root).    |
+| `gameHost.ts`          | `createGameHost()` — the authoritative owner of one match.   |
+| `roomManager.ts`       | `createRoomManager()` — rooms, seats p0..p3, lifecycle, identity stamping, host identity. |
+| `gameServer.ts`        | `createGameServer()` — the session-facing facade (+ `onRoomView` viewer projection). |
+| `protocol.ts`          | The wire protocol (v1): pure parsing + message building.    |
+| `webSocketTransport.ts`| `createWebSocketTransport()` — the ws adapter around the facade. |
 
 The server is layered: **session** (who is connected) → **room** (who plays in
 which match, on which seat) → **GameHost** (the match itself) → **engine**
 (the rules). Each layer only knows the one below it; the engine knows nothing
-about any of them (enforced by tests).
+about any of them, and only the transport adapter knows that WebSockets
+exist (all enforced by tests).
 
 #### The identity chain
 
@@ -164,17 +168,53 @@ The intended transport flow (already the shape of the code):
 receive command (wire)  →  gameServer.submitCommand(session, cmd)   // identity from the session
                         →  host fixed ticks                        // 60 Hz, exactly 1000/60 ms
                         →  serializeGameState()                    // cached on every change
-                        →  onRoomState(session, cb)                // the transport broadcasts
+                        →  onRoomView(session, cb)                 // per-viewer projection → broadcast
 ```
 
-### Future transport (WebSocket — not built yet)
+#### WebSocket transport (protocol v1)
 
-No networking exists yet, by design. The identity chain, session registry,
-room manager and broadcast hooks are all in place, so the WebSocket layer
-will only need to add: the socket ↔ session wiring (a session per
-connection, `disconnect()` on close), a message router for the room
-operations, real authentication replacing the interim token credential,
-and reconnection policy (reattaching a session to a vacated seat).
+`createWebSocketTransport({ port, gameServer? })` starts a standalone `ws`
+server; each connection becomes exactly one Session and the socket IS the
+connection identity (the session token never leaves the server). The
+transport is a pure translator — wire message → server API call, server
+event → wire message — with no gameplay logic, no engine imports and no
+game loop of its own.
+
+Every message (both directions) carries `{ "protocolVersion": 1, "type": … }`.
+Malformed JSON, arrays, null, primitives, unknown types, wrong versions and
+strict-envelope violations are rejected with a clean `error` message; the
+connection stays alive.
+
+Client → server: `create_room` · `join_room {roomId}` · `leave_room` ·
+`start_match` · `command {command}` (the command's `playerId` — and every
+unknown field — is discarded; identity comes from the session's seat).
+
+Server → client: `welcome {roomId, playerId, roomState, roster, hostPlayerId}` ·
+`room_state {roomId, roomState, roster, hostPlayerId}` ·
+`snapshot {state}` (the engine's `GameStateSnapshot`, projected for the
+receiving client's own pawn via `projectSnapshot` — the same view model the
+single-player client renders) · `match_finished {winnerId}` ·
+`error {code, message}`.
+
+**Authorization (v1 policy, deliberately minimal):** the room creator is the
+room host; only the host may start the match (others get `unauthorized`).
+`reset` is not exposed over the wire at all — `resetMatch()` stays a
+server-side operation until rematch authorization is designed.
+
+**Backpressure:** snapshots are full-state and high-frequency, so a socket
+whose outbound buffer exceeds the high-water mark (256 KiB default) simply
+stops receiving snapshots until it drains — stale intermediates are dropped
+and the next sent snapshot always carries the newest authoritative state.
+Commands are never dropped, and a slow client can never affect the
+simulation or other clients.
+
+### Remaining work (transport now exists — auth and resilience next)
+
+Real authentication (replacing the interim session token), reconnection
+(reattaching a session to a vacated seat), disconnected-player turn
+timeouts, rematch/vote policy on top of `resetMatch`, a browser client that
+speaks protocol v1 (the shipped client still runs the engine locally), and
+rate limiting / abuse guards.
 
 ### The match model (N players)
 
@@ -199,7 +239,7 @@ and reconnection policy (reattaching a session to a vacated seat).
   they persist across other players' turns and are consumed at launch. The UI
   always shows the *active* pawn's controls.
 
-### Multiplayer readiness (architecture only — no networking yet)
+### Multiplayer readiness (server-authoritative; auth/reconnection pending)
 
 The engine already follows the intended server-authoritative flow:
 
@@ -276,10 +316,14 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
 
 ```bash
 npm install
-npm run dev       # local dev
-npm test          # engine test suite (Vitest, node environment)
+npm run dev       # local dev (single-player client — runs the engine locally)
+npm test          # full suite: engine + server + transport (Vitest, node environment)
 npm run build     # typecheck + production build (single-file dist/index.html)
 ```
+
+The multiplayer server is a library for now: `createWebSocketTransport()`
+(from `src/server`) starts the protocol-v1 server on a port of your choice —
+there is no long-running server entry script yet, by design.
 
 ## Tests
 
@@ -320,11 +364,13 @@ The **server** has its own suites in `src/server/__tests__/`:
   command log on both a fresh host and a raw engine.
 - `server-boundary.test.ts` — the server package is DOM-free, imports no
   React/client code, reaches the engine only via its barrel (never
-  `matter-js` directly), and imports no networking modules (this milestone
-  is transport-less). Additionally: the room/session modules drive gameplay
-  only through `GameHost` (never `createGame`/matter-js directly), and the
-  engine remains unaware of rooms/sessions/server (no such imports, no such
-  barrel exports).
+  `matter-js` directly), and is networked ONLY in the transport adapter
+  (plain `ws`; the gameplay-bearing modules — session, GameHost,
+  RoomManager, GameServer — stay transport-free). Additionally: the
+  room/session modules drive gameplay only through `GameHost` (never
+  `createGame`/matter-js directly), the transport talks only to server
+  APIs (never the engine), the engine remains unaware of
+  rooms/sessions/server/WebSockets, and GameHost remains transport-neutral.
 - `roomManager.test.ts` — driven entirely through the `createGameServer()`
   facade, the way the future transport will: session issuance and
   disconnect, the identity chain (session → room → server-assigned
@@ -336,3 +382,19 @@ The **server** has its own suites in `src/server/__tests__/`:
   vacate seats, empty-room cleanup), privileged reset (players rejected as
   `unauthorized`, server path works), independent simultaneous rooms, and
   the `onRoomState` broadcast hook.
+- `transport.test.ts` — the wire protocol and connection logic over FAKE
+  sockets (the same `createTransportCore` the real server runs):
+  connection/session lifecycle and idempotent cleanup, full protocol
+  validation (versions, malformed JSON/arrays/null/primitives, unknown
+  types, strict envelopes), room operations, seat assignment and forged
+  playerIds, command routing with engine rejections passed through,
+  viewer-projected snapshot broadcasts (room-isolated), host-only start
+  authorization, disconnect handling (mid-flight disconnect still resolves
+  the match), and the backpressure policy (drops for backed-up sockets,
+  newest state on drain, no blocking of healthy members).
+- `transport.e2e.test.ts` — the same flows over REAL `ws` sockets on an
+  ephemeral port: real connections become sessions, the full
+  create/join/start/command/snapshot round trip with per-viewer
+  projection, malformed wire input never dropping the connection,
+  disconnect notifications, a whole match to `match_finished` over the
+  wire, and clean transport teardown.

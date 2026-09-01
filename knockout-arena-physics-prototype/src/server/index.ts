@@ -4,14 +4,16 @@
  * The server consumes the engine ONLY through its barrel (../game) and is
  * layered as:
  *
- *   session.ts     connection identity (the root of the trust chain)
- *   gameHost.ts    one authoritative match (owns the engine GameHandle)
- *   roomManager.ts rooms: seats p0..p3, lifecycle, identity stamping
- *   gameServer.ts  the facade the future transport attaches to
+ *   session.ts            connection identity (the root of the trust chain)
+ *   gameHost.ts           one authoritative match (owns the engine GameHandle)
+ *   roomManager.ts        rooms: seats p0..p3, lifecycle, identity stamping
+ *   gameServer.ts         the session-facing facade
+ *   protocol.ts           the wire protocol (v1) — pure parsing/building
+ *   webSocketTransport.ts the ws adapter around the facade
  *
- * The primary entry point is createGameServer(); createRoomManager() and
- * createGameHost() remain available for lower-level reuse. No networking
- * exists in this package — the WebSocket layer will be built on top.
+ * The primary entry points are createGameServer() (transport-neutral) and
+ * createWebSocketTransport() (real-time wire). The engine stays unaware of
+ * all of this; the transport contains no gameplay logic.
  */
 export {
   createGameHost,
@@ -40,3 +42,27 @@ export {
   type GameServer,
 } from "./gameServer";
 export { createSession, isSession, type Session } from "./session";
+export {
+  PROTOCOL_VERSION,
+  type ClientMessage,
+  type ClientMessageRejection,
+  type ParsedClientMessage,
+  describeError,
+  errorMessage,
+  matchFinishedMessage,
+  parseClientMessage,
+  roomStateMessage,
+  snapshotMessage,
+  welcomeMessage,
+  ERROR_DESCRIPTIONS,
+} from "./protocol";
+export {
+  createTransportCore,
+  createWebSocketTransport,
+  type ConnectionHandle,
+  type TransportCore,
+  type TransportOptions,
+  type TransportSocket,
+  type WebSocketTransport,
+  type WebSocketTransportOptions,
+} from "./webSocketTransport";
