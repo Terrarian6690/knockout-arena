@@ -1,8 +1,4 @@
-import { CONFIG } from "./config";
-import { floorRadius, type Arena } from "./arena";
-import { playerColor, playerStroke } from "./player";
-import { indicatorLength } from "./aiming";
-import type { GameStateSnapshot } from "./types";
+import { CONFIG, floorRadius, playerColor, playerStroke, indicatorLength, type Arena, type GameStateSnapshot } from "../game";
 
 /**
  * Rendering module — pure canvas drawing, no game logic.

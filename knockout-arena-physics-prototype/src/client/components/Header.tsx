@@ -1,4 +1,4 @@
-import type { GamePhase } from "../game/types";
+import type { GamePhase } from "../../game";
 
 /**
  * Minimal top bar with the game title and a phase badge. Once a match is

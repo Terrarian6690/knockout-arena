@@ -1,7 +1,8 @@
 # Knockout Arena
 
 A browser-based 2D multiplayer game (currently a **single-player prototype on
-an N-player-ready engine** — "Phase 1" of the multiplayer prep is done).
+an N-player-ready engine** — "Phase 1" (N-player engine) and "Phase 2"
+(clean engine↔client package boundary) of the multiplayer prep are done).
 
 ## Overview
 
@@ -28,18 +29,35 @@ mover can shove *opponents* over the rim — that is the core mechanic.
 - **Matter.js** for deterministic 2D physics
 - **Vite** + **Tailwind CSS**
 
-## Project structure (`src/game/`)
+## Architecture: engine / client / (future) server
+
+The codebase is split into two strictly separated packages in place:
+
+```
+src/game/    ← the ENGINE: a headless, deterministic simulation package.
+               No React, no DOM, no Vite — matter-js is its only dependency.
+               Everything outside imports it through ONE module: src/game/index.ts.
+src/client/  ← the CLIENT: the React app (hook, canvas renderer, components).
+               Consumes the engine only via its public barrel "../game".
+```
 
 The engine is deliberately split from the React UI so multiplayer (rooms,
 matchmaking, server-authoritative simulation, bots) can be added later without
-rewriting the core.
+rewriting the core. The split is **in-place** (one repo, one `src/`) on
+purpose: a workspaces/monorepo extraction (`packages/game` + `apps/client` +
+`apps/server`) stays purely mechanical *because* `src/game` is already fully
+self-contained — when the server lands, moving the folder and adding a
+package.json is all it takes.
 
 There is exactly **one** game instance in the app: `App.tsx` creates it via
 `useGame()` and passes the state down as props, so the canvas and the controls
 always share the same game state.
 
+### Engine (`src/game/`)
+
 | Module          | Responsibility                                            |
 | --------------- | --------------------------------------------------------- |
+| `index.ts`      | **Public API surface** — the only module consumers may import. |
 | `config.ts`     | Every tunable number (physics, balance, sizes, colors).   |
 | `commands.ts`   | Player-attributed intent commands + `PlayerIntent`/`withPlayerId` + structural validation (network-safe). |
 | `types.ts`      | Client-facing view types (snapshot contracts).            |
@@ -51,9 +69,23 @@ always share the same game state.
 | `turnLogic.ts`  | Turn state machine: full-roster queue + elimination-aware rotation. |
 | `physics.ts`    | The *only* place that knows Matter.js (swap-friendly).    |
 | `game.ts`       | Orchestrator: commands → fixed ticks → state; match lifecycle (elimination, finishing, winner). |
-| `renderer.ts`   | Pure canvas drawing from a snapshot.                      |
-| `useGame.ts`    | React hook bridging engine → UI + the RAF loop; owns the client's local player id. |
-| `index.ts`      | Public engine API surface (for a future headless server). |
+
+### Client (`src/client/`)
+
+| Module                     | Responsibility                                       |
+| -------------------------- | ---------------------------------------------------- |
+| `useGame.ts`               | React hook bridging engine → UI + the RAF loop; owns the client's local player id. |
+| `renderer.ts`              | Pure canvas drawing from a snapshot.                 |
+| `App.tsx` / `main.tsx`     | App shell + Vite entry point.                        |
+| `components/*`             | Header, arena canvas, control bar, elimination overlay, power selector. |
+
+### Future server
+
+The engine was shaped so a server can be dropped in without touching it: the
+server would import the same barrel (`src/game/index.ts`), validate and apply
+commands, step `game.update()` on a fixed clock, and broadcast
+`serializeGameState(game.getState())`. The architectural tests below already
+guarantee that importing the engine can never pull in React, Vite or UI code.
 
 ### The match model (N players)
 
@@ -104,6 +136,10 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
   (`projectSnapshot(state, myPawnId)`) — the client's `useGame.ts` does this
   with its own `LOCAL_PLAYER_ID`, which is exactly where a future session
   handshake will plug in.
+- **The engine is a sealed package.** All client code imports it through the
+  public barrel `src/game/index.ts` (enforced by tests — no deep imports into
+  engine internals), so swapping the local orchestrator for a remote one
+  changes one integration point, not every module.
 - **`GameState` is plain JSON data** (no Matter.js internals, no functions)
   and contains everything needed to reconstruct a match, including
   mid-flight kinematics and per-pawn aim/power; reconstruction continues
@@ -155,16 +191,25 @@ npm run build     # typecheck + production build (single-file dist/index.html)
 ## Tests
 
 The engine regression suite lives in `src/game/__tests__/` and runs with
-**Vitest** in a **node environment** — no DOM — which doubles as a guard that
-the engine stays headless (a `dom-free.test.ts` fails the build if any engine
-module starts using browser APIs; `useGame.ts` is the only client-side module).
-Covered: pure-function math (arena, aiming, turn logic, config, players), the
-Matter.js facade (physics, incl. ghosts and canonical rest), full
-game-orchestrator behavior — phases, launch/turn rules, movement/friction/
-settling, geometric elimination, rim pass-over, reset, determinism, and
-frame-rate independence (identical trajectories at 30/60/120/144 Hz) — and,
-in `match.test.ts`, whole **N-player matches** (2/3/4-player rotation,
-physical knockouts of non-active pawns, self-elimination, consecutive
-eliminations, winner/no-winner detection, command ownership, per-pawn
-aim/power, loadState normalization, serialization/replay determinism, and
-per-viewer projection).
+**Vitest** in a **node environment** — no DOM. Covered: pure-function math
+(arena, aiming, turn logic, config, players), the Matter.js facade (physics,
+incl. ghosts and canonical rest), full game-orchestrator behavior — phases,
+launch/turn rules, movement/friction/settling, geometric elimination, rim
+pass-over, reset, determinism, and frame-rate independence (identical
+trajectories at 30/60/120/144 Hz) — and, in `match.test.ts`, whole
+**N-player matches** (2/3/4-player rotation, physical knockouts of non-active
+pawns, self-elimination, consecutive eliminations, winner/no-winner
+detection, command ownership, per-pawn aim/power, loadState normalization,
+serialization/replay determinism, and per-viewer projection).
+
+Three suites guard the **package boundary** itself:
+
+- `src/game/__tests__/dom-free.test.ts` — every engine module is DOM-free,
+  imports no React, and is fully self-contained: engine code may only import
+  sibling modules and `matter-js`. The engine directory contains no client
+  modules at all (`useGame.ts`/`renderer.ts` live in `src/client`).
+- `src/game/__tests__/api.test.ts` — the public barrel exposes **exactly** the
+  intended runtime exports (pinned as a sorted list) plus a compile-time
+  canary for the type-only exports (`npm run build` runs `tsc` first).
+- `src/client/__tests__/client-boundary.test.ts` — client files may import
+  the engine only as the barrel (`../game`), never deep engine modules.

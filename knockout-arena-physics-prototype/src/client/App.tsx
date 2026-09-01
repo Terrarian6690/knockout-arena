@@ -1,4 +1,4 @@
-import { useGame } from "./game/useGame";
+import { useGame } from "./useGame";
 import { Header } from "./components/Header";
 import { ArenaGame } from "./components/ArenaGame";
 import { ControlPanel } from "./components/ControlPanel";

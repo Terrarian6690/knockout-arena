@@ -1,8 +1,6 @@
 import { useEffect, useRef } from "react";
-import { computeTransform, render } from "../game/renderer";
-import { createArena } from "../game/arena";
-import type { PlayerIntent } from "../game/commands";
-import type { GameStateSnapshot } from "../game/types";
+import { computeTransform, render } from "../renderer";
+import { createArena, type PlayerIntent, type GameStateSnapshot } from "../../game";
 
 /**
  * Canvas view for the arena. Receives the authoritative game state from App

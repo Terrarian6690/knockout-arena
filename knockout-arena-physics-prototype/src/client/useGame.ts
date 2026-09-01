@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createGame, type GameHandle } from "./game";
-import { withPlayerId, type PlayerIntent } from "./commands";
-import { projectSnapshot } from "./project";
-import type { GameStateSnapshot } from "./types";
+import {
+  createGame,
+  withPlayerId,
+  projectSnapshot,
+  type GameHandle,
+  type PlayerIntent,
+  type GameStateSnapshot,
+} from "../game";
 
 /**
  * The local player id used by this client. Purely a CLIENT concern: the

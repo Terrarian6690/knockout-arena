@@ -1,7 +1,6 @@
-import { CONFIG } from "../game/config";
+import { CONFIG, type GamePhase } from "../../game";
 import { PowerSelector } from "./PowerSelector";
 import { cn } from "../utils/cn";
-import type { GamePhase } from "../game/types";
 
 /**
  * Bottom control bar: power selector, current selection readout, and the

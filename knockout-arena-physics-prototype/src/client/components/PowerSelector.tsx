@@ -1,4 +1,4 @@
-import { CONFIG } from "../game/config";
+import { CONFIG } from "../../game";
 import { cn } from "../utils/cn";
 
 /**
