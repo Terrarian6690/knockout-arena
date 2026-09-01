@@ -3,9 +3,9 @@
 A browser-based 2D multiplayer game (currently a **single-player prototype on
 an N-player-ready engine** — "Phase 1" (N-player engine), "Phase 2" (clean
 engine↔client package boundary), "Phase 3" (headless authoritative server
-host), "Phase 4" (rooms, sessions and the server-assigned identity chain)
-and "Phase 5" (real-time WebSocket transport) of the multiplayer prep are
-done).
+host), "Phase 4" (rooms, sessions and the server-assigned identity chain),
+"Phase 5" (real-time WebSocket transport) and "Phase 6" (the browser-side
+network client speaking protocol v1) of the multiplayer prep are done).
 
 ## Overview
 
@@ -14,8 +14,10 @@ with the mouse, chooses a power level (1–5), and launches to knock opponents
 out of the arena. The engine underneath is **player-count agnostic**: a match
 is a roster of pawns (1..N), per-pawn aim/power, per-pawn elimination, a
 deterministic turn rotation over the survivors, and a finished phase with a
-winner. The shipped client plays a one-player match (the `"p0"` seat); no
-networking yet.
+winner. The shipped UI still plays a one-player match (the `"p0"` seat) on a
+locally running engine; the multiplayer browser client (`src/client/network/`)
+exists and is fully tested, waiting to be wired into React by the lobby-UI
+milestone.
 
 The simulation runs at a **fixed 60 Hz timestep** (the render loop exchanges
 real frame time for fixed ticks), so physics behaves identically on any
@@ -83,6 +85,7 @@ always share the same game state.
 | -------------------------- | ---------------------------------------------------- |
 | `useGame.ts`               | React hook bridging engine → UI + the RAF loop; owns the client's local player id. |
 | `renderer.ts`              | Pure canvas drawing from a snapshot.                 |
+| `network/`                 | The multiplayer client: protocol v1 parsing/building, WebSocket lifecycle, external-store state (see below). No UI. |
 | `App.tsx` / `main.tsx`     | App shell + Vite entry point.                        |
 | `components/*`             | Header, arena canvas, control bar, elimination overlay, power selector. |
 
@@ -208,12 +211,56 @@ and the next sent snapshot always carries the newest authoritative state.
 Commands are never dropped, and a slow client can never affect the
 simulation or other clients.
 
-### Remaining work (transport now exists — auth and resilience next)
+#### Browser network client (protocol v1)
+
+`src/client/network/` is the browser's end of the wire — a thin,
+**non-authoritative** view of the server:
+
+| Module              | Responsibility                                              |
+| ------------------- | ----------------------------------------------------------- |
+| `types.ts`          | `NetworkClientState`, `WebSocketLike` (the DOM boundary), `ReconnectPolicy`. |
+| `protocolClient.ts` | Pure message building/parsing for protocol v1 — the client's mirror of `src/server/protocol.ts` (each side owns its end; the client never imports server code, keeping it out of the bundle). |
+| `websocketClient.ts`| `createNetworkClient()` — connection lifecycle, state handling, sending, reconnection. |
+
+- **State, not simulation.** `createNetworkClient({ url, socketFactory?, reconnect? })`
+  exposes `getState()` + `subscribe()` — the exact `useSyncExternalStore`
+  contract — over one immutable `NetworkClientState`:
+  `status` (`disconnected / connecting / connected / reconnecting / closed`),
+  `roomId`, `playerId`, `roomState`, `roster`, `hostPlayerId`, the latest
+  **server snapshot**, `winnerId`, `lastError` and `reconnectAttempt`.
+  Snapshots **replace** the previous state (no merging, no prediction, no
+  interpolation, no engine calls, no second `GameState` type — the snapshot
+  payload is the engine's own `GameStateSnapshot`, type-only imported).
+- **Methods**: `connect()` / `close()` / `createRoom()` / `joinRoom(id)` /
+  `leaveRoom()` / `startMatch()` / `submitCommand(intent)`. Commands are
+  rebuilt from intent fields only — a `playerId` (or any extra field) a
+  caller tries to attach is dropped **before the wire**, and `reset` is
+  refused outright (it is not a client operation).
+- **Reconnection, honestly.** An unexpected drop clears the room/seat state
+  (the server has no seat-reconnection protocol yet, so nothing pretends the
+  seat survived), then retries with bounded exponential backoff
+  (`ReconnectPolicy` — replaceable once reattachment exists). An explicit
+  `close()` is terminal and never reconnects. No room is ever created
+  automatically, and nothing is sent while not connected.
+- **Lifecycle safety**: per-socket identity guards ignore stale events, a
+  double `connect()` never creates a second socket, malformed server
+  messages surface as `lastError` instead of throwing, and no state changes
+  after a permanent close.
+- **Testability**: the native `WebSocket` sits behind the tiny `WebSocketLike`
+  interface, so the whole core runs (and is tested) without a DOM — over fake
+  sockets in unit tests, and over an in-memory socket pair into the REAL
+  `createGameServer()` + `createTransportCore()` stack in the integration
+  suite. Nothing in `src/game/` knows WebSockets exist; the shipped UI still
+  runs the local engine until the lobby/multiplayer screens task wires this
+  client into React.
+
+### Remaining work (client transport now exists — auth and UI wiring next)
 
 Real authentication (replacing the interim session token), reconnection
 (reattaching a session to a vacated seat), disconnected-player turn
-timeouts, rematch/vote policy on top of `resetMatch`, a browser client that
-speaks protocol v1 (the shipped client still runs the engine locally), and
+timeouts, rematch/vote policy on top of `resetMatch`, React wiring for the
+shipped network client (lobby/room UI, rendering server snapshots — the
+`src/client/network/` core is ready for `useSyncExternalStore`), and
 rate limiting / abuse guards.
 
 ### The match model (N players)
@@ -246,7 +293,7 @@ The engine already follows the intended server-authoritative flow:
 ```
 command (player intent + playerId) → validateCommand → engine.applyCommand
   → engine.update (fixed 60 Hz ticks) → engine.getState()
-  → serializeGameState (JSON) → [future transport]
+  → serializeGameState (JSON) → WebSocket transport → network client state
   → deserializeGameState → engine.loadState → projectSnapshot → render
 ```
 
@@ -349,7 +396,10 @@ Three suites guard the **package boundary** itself:
   intended runtime exports (pinned as a sorted list) plus a compile-time
   canary for the type-only exports (`npm run build` runs `tsc` first).
 - `src/client/__tests__/client-boundary.test.ts` — client files may import
-  the engine only as the barrel (`../game`), never deep engine modules.
+  the engine only as the barrel (`../game`), never deep engine modules, and
+  may **never import `src/server`** (server code must stay out of the browser
+  bundle; only Node-side client tests, which live in `__tests__/`, may cross
+  that line).
 
 The **server** has its own suites in `src/server/__tests__/`:
 
@@ -398,3 +448,31 @@ The **server** has its own suites in `src/server/__tests__/`:
   projection, malformed wire input never dropping the connection,
   disconnect notifications, a whole match to `match_finished` over the
   wire, and clean transport teardown.
+
+The **browser network client** has its own suites in
+`src/client/network/__tests__/` (no DOM, no real server needed):
+
+- `protocolClient.test.ts` — pure protocol: every builder envelope exact,
+  command payloads rebuilt from intent fields only (forged `playerId`s and
+  extras dropped, `reset` refused, hostile getters never throw), and the
+  total parser: every server message shape accepted, malformed
+  JSON/null/arrays/primitives, wrong protocol versions, unknown types and
+  malformed payloads all rejected without throwing.
+- `websocketClient.test.ts` — lifecycle and state over FAKE WebSockets:
+  connect/duplicate-connect/close idempotency, explicit close never
+  reconnecting, unexpected drop → `reconnecting` with the seat honestly
+  cleared, bounded attempts when the server stays unreachable, successful
+  reconnection as a fresh session, every inbound message's state effect
+  (welcome/room_state/snapshot-replacement/match_finished/error/malformed),
+  all five senders wire-exact, commands blocked while not connected, no
+  state mutation after permanent close, stale-socket events ignored, and
+  the external-store contract (exactly-once notification, unsubscribe,
+  referential stability, a broken subscriber cannot break the client).
+- `integration.test.ts` — the full loop through an in-memory socket pair
+  into the REAL server stack (`createTransportCore` + `createGameServer` +
+  the engine): create/join/start with per-viewer projected snapshots,
+  forged-`playerId` commands applied to the sender's own pawn, non-host
+  start rejected as `unauthorized`, a whole physical match to
+  `match_finished`, unknown-room errors surfaced without breaking the
+  connection, reconnection as a fresh session, explicit close tearing the
+  server session down, and subscriber notifications through it all.

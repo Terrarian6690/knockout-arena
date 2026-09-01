@@ -92,3 +92,39 @@ describe("client / engine boundary", () => {
     expect(specs.some((s) => engineImportSuffix(s) === "")).toBe(true);
   });
 });
+
+describe("client / server boundary", () => {
+  const files = clientSourceFiles(clientDir);
+
+  it("has client files to guard (sanity)", () => {
+    expect(files.length).toBeGreaterThan(5);
+  });
+
+  it.each(files.map((f) => path.relative(clientDir, f)))(
+    "client module %s never imports server code",
+    (relFile) => {
+      const source = readFileSync(path.join(clientDir, relFile), "utf8");
+      const serverImports = importSpecifiers(source).filter((spec) =>
+        /(?:^|[/@])server(?:\/.*)?$/.test(spec)
+      );
+      // Server code must never enter the browser bundle: each side of the
+      // wire protocol owns its own end of the contract (mirroring
+      // src/server/protocol.ts), and only Node-side tests may cross this
+      // line (they live in __tests__, excluded from this scan).
+      expect(
+        serverImports,
+        `${relFile} must not import src/server — server code must stay out ` +
+          `of the browser bundle (client tests are excluded from this rule)`
+      ).toEqual([]);
+    }
+  );
+
+  it("the network client exists and stays off the server (sanity)", () => {
+    const source = readFileSync(
+      path.join(clientDir, "network", "websocketClient.ts"),
+      "utf8"
+    );
+    expect(source).toContain("createNetworkClient");
+    expect(importSpecifiers(source)).toContain("./protocolClient");
+  });
+});
