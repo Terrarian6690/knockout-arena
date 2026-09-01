@@ -177,6 +177,19 @@ describe("connection lifecycle", () => {
     expect(client.getState().status).toBe("disconnected");
   });
 
+  it("a factory that cannot create a socket fails cleanly (no crash)", () => {
+    const client = createNetworkClient({
+      url: "ws://test",
+      socketFactory: () => {
+        throw new ReferenceError("WebSocket is not defined");
+      },
+    });
+    liveClients.push(client);
+    expect(() => client.connect()).not.toThrow();
+    expect(client.connect()).toBe(false);
+    expect(client.getState().status).toBe("disconnected");
+  });
+
   it("duplicate connect() never creates a second socket", () => {
     const { client, sockets } = makeClient({});
     client.connect();

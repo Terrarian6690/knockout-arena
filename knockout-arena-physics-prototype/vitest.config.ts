@@ -12,7 +12,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // authoritative simulation (enforced by src/game/__tests__/dom-free.test.ts).
 // The client-boundary test in src/client also only reads files, so it runs
 // headlessly too. If a test needs a DOM, it belongs in a UI-level suite
-// with its own environment, not here.
+// with its own environment, not here — which is exactly what the lobby
+// component tests do: they are .test.tsx files that opt into jsdom via a
+// `// @vitest-environment jsdom` docblock, leaving every other suite in
+// the headless node environment.
 export default defineConfig({
   resolve: {
     alias: {
@@ -21,6 +24,6 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
 });

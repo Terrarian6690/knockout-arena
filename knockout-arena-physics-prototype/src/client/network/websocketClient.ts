@@ -123,8 +123,16 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     });
   }
 
-  function openSocket(isRetry: boolean): void {
-    const ws = factory(url as string);
+  function openSocket(isRetry: boolean): boolean {
+    let ws: WebSocketLike;
+    try {
+      ws = factory(url as string);
+    } catch {
+      // No usable WebSocket implementation (or a broken factory): report
+      // failure instead of crashing the caller — the status stays whatever
+      // it was, so a manual connect() can be retried later.
+      return false;
+    }
     socket = ws;
     setState({ status: isRetry ? "reconnecting" : "connecting" });
 
@@ -145,6 +153,8 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
       socket = null;
       handleDisconnect();
     });
+
+    return true;
   }
 
   function handleServerMessage(raw: string): void {
@@ -206,7 +216,11 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     pendingReconnect = setTimeout(() => {
       pendingReconnect = null;
       if (closedForever || socket !== null || state.status !== "reconnecting") return;
-      openSocket(true);
+      if (!openSocket(true)) {
+        // The socket could not even be created (e.g. no WebSocket
+        // implementation): stop retrying honestly.
+        setState({ status: "disconnected", reconnectAttempt: 0 });
+      }
     }, delay);
   }
 
@@ -235,8 +249,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
       if (state.status !== "disconnected") return false; // one connection at a time
       if (typeof urlOverride === "string" && urlOverride.length > 0) url = urlOverride;
       if (!url) return false;
-      openSocket(false);
-      return true;
+      return openSocket(false);
     },
     close(): void {
       if (closedForever) return;

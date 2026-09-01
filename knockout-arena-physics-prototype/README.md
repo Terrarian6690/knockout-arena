@@ -4,8 +4,9 @@ A browser-based 2D multiplayer game (currently a **single-player prototype on
 an N-player-ready engine** — "Phase 1" (N-player engine), "Phase 2" (clean
 engine↔client package boundary), "Phase 3" (headless authoritative server
 host), "Phase 4" (rooms, sessions and the server-assigned identity chain),
-"Phase 5" (real-time WebSocket transport) and "Phase 6" (the browser-side
-network client speaking protocol v1) of the multiplayer prep are done).
+"Phase 5" (real-time WebSocket transport), "Phase 6" (the browser-side
+network client speaking protocol v1) and "Phase 7" (the multiplayer lobby
+UI) of the multiplayer prep are done).
 
 ## Overview
 
@@ -14,10 +15,10 @@ with the mouse, chooses a power level (1–5), and launches to knock opponents
 out of the arena. The engine underneath is **player-count agnostic**: a match
 is a roster of pawns (1..N), per-pawn aim/power, per-pawn elimination, a
 deterministic turn rotation over the survivors, and a finished phase with a
-winner. The shipped UI still plays a one-player match (the `"p0"` seat) on a
-locally running engine; the multiplayer browser client (`src/client/network/`)
-exists and is fully tested, waiting to be wired into React by the lobby-UI
-milestone.
+winner. The app boots into the multiplayer lobby (create/join a room over
+the real WebSocket client); the original one-player screen lives on as the
+lobby's "practice solo" mode. Live gameplay over the wire (rendering the
+server's snapshots in the arena) is the next milestone.
 
 The simulation runs at a **fixed 60 Hz timestep** (the render loop exchanges
 real frame time for fixed ticks), so physics behaves identically on any
@@ -83,10 +84,12 @@ always share the same game state.
 
 | Module                     | Responsibility                                       |
 | -------------------------- | ---------------------------------------------------- |
-| `useGame.ts`               | React hook bridging engine → UI + the RAF loop; owns the client's local player id. |
+| `useGame.ts`               | React hook bridging engine → UI + the RAF loop; owns the client's local player id (solo mode). |
 | `renderer.ts`              | Pure canvas drawing from a snapshot.                 |
-| `network/`                 | The multiplayer client: protocol v1 parsing/building, WebSocket lifecycle, external-store state (see below). No UI. |
-| `App.tsx` / `main.tsx`     | App shell + Vite entry point.                        |
+| `network/`                 | The multiplayer client: protocol v1 parsing/building, WebSocket lifecycle, external-store state, React provider + hooks (see below). |
+| `components/lobby/*`       | The multiplayer lobby: initial screen (create/join), waiting room (roster, host, start/leave). Server-authoritative display only. |
+| `SoloGame.tsx`             | The original single-player screen (local engine), kept as the lobby's "practice solo" mode. |
+| `App.tsx` / `main.tsx`     | App shell (lobby ↔ solo mode switch) + Vite entry point.                        |
 | `components/*`             | Header, arena canvas, control bar, elimination overlay, power selector. |
 
 ### Server (`src/server/`) — rooms, sessions, headless authority
@@ -221,6 +224,7 @@ simulation or other clients.
 | `types.ts`          | `NetworkClientState`, `WebSocketLike` (the DOM boundary), `ReconnectPolicy`. |
 | `protocolClient.ts` | Pure message building/parsing for protocol v1 — the client's mirror of `src/server/protocol.ts` (each side owns its end; the client never imports server code, keeping it out of the bundle). |
 | `websocketClient.ts`| `createNetworkClient()` — connection lifecycle, state handling, sending, reconnection. |
+| `react.tsx`         | `NetworkProvider` (owns exactly ONE client per mount) + `useNetworkClient()` / `useNetworkState()` (`useSyncExternalStore`) + `defaultServerUrl()`. The only place networking meets React. |
 
 - **State, not simulation.** `createNetworkClient({ url, socketFactory?, reconnect? })`
   exposes `getState()` + `subscribe()` — the exact `useSyncExternalStore`
@@ -250,18 +254,52 @@ simulation or other clients.
   interface, so the whole core runs (and is tested) without a DOM — over fake
   sockets in unit tests, and over an in-memory socket pair into the REAL
   `createGameServer()` + `createTransportCore()` stack in the integration
-  suite. Nothing in `src/game/` knows WebSockets exist; the shipped UI still
-  runs the local engine until the lobby/multiplayer screens task wires this
-  client into React.
+  suite. Nothing in `src/game/` knows WebSockets exist.
 
-### Remaining work (client transport now exists — auth and UI wiring next)
+#### The multiplayer lobby
+
+`src/client/components/lobby/` is the UI over that client — the app's entry
+screen (`App.tsx` boots into the lobby; the original single-player screen
+lives on as its "practice solo" mode). It is a display layer only: every
+room fact it shows — room id, your seat, the host, the roster, the room
+state, the winner — is server-reported data; nothing is inferred from
+client-local assumptions.
+
+- **Initial screen**: Create Room, a Room ID input + Join Room, and the
+  connection status badge (disconnected / connecting / connected /
+  reconnecting), with a manual Reconnect affordance and a "practice solo"
+  escape hatch. Actions are disabled unless the client is connected.
+- **Waiting room**: the room ID (share it), "you are `pN`" with a Host chip
+  when the server-reported host id equals your server-assigned seat, the
+  seat roster (`n / 4`, empty seats shown as placeholders, mid-match
+  leavers shown as disconnected), the room state badge, and the actions.
+  The **Start Match** button exists only for the server-reported host;
+  while awaiting the server's answer it shows "Starting…". Non-hosts see a
+  waiting note instead — and the server still authorizes the start itself:
+  an `unauthorized` rejection (or any other server error) is displayed as
+  a normal, dismissible error banner, never bypassed or retried silently.
+- **States**: waiting → starting (local pending feedback only) → playing →
+  finished (winner from `match_finished`), plus every connection state and
+  a full room (4/4 — a fifth joiner sees the server's `room-full` error).
+- **Leave Room** calls the network client's `leaveRoom()` and returns to
+  the initial screen — a view-level navigation only, because protocol v1
+  does not acknowledge the leave to the leaver. The server stays
+  authoritative: any later roster push (a fresh welcome / room_state)
+  overrides the local view, and disconnects clear the room state honestly.
+- **DOM boundary kept**: the lobby renders in jsdom component tests over
+  the REAL network client (in-memory socket pairs into the real server
+  stack, or scripted sockets for timing-sensitive states) — no real
+  network, no canvas.
+
+### Remaining work (lobby now exists — gameplay over the wire next)
 
 Real authentication (replacing the interim session token), reconnection
 (reattaching a session to a vacated seat), disconnected-player turn
-timeouts, rematch/vote policy on top of `resetMatch`, React wiring for the
-shipped network client (lobby/room UI, rendering server snapshots — the
-`src/client/network/` core is ready for `useSyncExternalStore`), and
-rate limiting / abuse guards.
+timeouts, rematch/vote policy on top of `resetMatch`, live gameplay over
+the wire (rendering the server's snapshots in the arena and sending
+intents from the lobby-created room — the lobby's "Match in progress"
+state is exactly where that plugs in), a long-running server entry
+script, and rate limiting / abuse guards.
 
 ### The match model (N players)
 
@@ -363,14 +401,18 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
 
 ```bash
 npm install
-npm run dev       # local dev (single-player client — runs the engine locally)
-npm test          # full suite: engine + server + transport (Vitest, node environment)
+npm run dev       # local dev (boots into the multiplayer lobby; "practice solo" runs the engine locally)
+npm test          # full suite: engine + server + transport + lobby UI (Vitest)
 npm run build     # typecheck + production build (single-file dist/index.html)
 ```
 
+The app boots into the lobby and connects to its own origin by default;
+`?server=ws://host:port` points it at a standalone game server instead.
 The multiplayer server is a library for now: `createWebSocketTransport()`
 (from `src/server`) starts the protocol-v1 server on a port of your choice —
-there is no long-running server entry script yet, by design.
+there is no long-running server entry script yet, by design. With no server
+reachable, the lobby honestly shows Disconnected (with a Reconnect action)
+and solo practice stays available.
 
 ## Tests
 
@@ -476,3 +518,30 @@ The **browser network client** has its own suites in
   `match_finished`, unknown-room errors surfaced without breaking the
   connection, reconnection as a fresh session, explicit close tearing the
   server session down, and subscriber notifications through it all.
+
+The **lobby UI** has jsdom component suites in `src/client/__tests__/`
+(`.test.tsx` files that opt into the jsdom environment via a docblock —
+every other suite stays headless/node; dev-only deps:
+`jsdom`, `@testing-library/react`, `@testing-library/dom`,
+`@testing-library/jest-dom`):
+
+- `lobby.test.tsx` — the initial screen: disconnected/connecting/reconnected
+  states (badge + disabled actions + manual Reconnect), connected-but-not-
+  in-room, create room (exact wire envelope + server-reported room/seat),
+  join room by typed id, empty-id guard, a server error shown normally and
+  dismissibly (unknown room), the practice-solo escape hatch, and an
+  unexpected drop → Reconnecting… → successful reconnect as a fresh
+  session.
+- `lobbyRoom.test.tsx` — the waiting room: roster rendering with empty
+  seats (1/4 → 2/4, from server broadcasts), host identification (Host/You
+  chips from server-reported ids), the host-only Start Match button
+  (non-hosts get a waiting note instead), a tampered non-host start
+  surfacing the server's `unauthorized` error, leave room (exact wire
+  envelope + return to the initial screen) and the room telling the
+  others, the "Starting…" pending state until the server answers, the
+  waiting → playing transition through the real server, the full
+  four-player room (4/4, no empty seats, fifth joiner rejected with
+  `room-full`), and the finished state with the server-reported winner.
+- `app.test.tsx` — the real app shell (nothing injected): boots into the
+  lobby, fails cleanly when no WebSocket/server exists (Disconnected, no
+  crash, actions disabled), switches to the original solo screen and back.
