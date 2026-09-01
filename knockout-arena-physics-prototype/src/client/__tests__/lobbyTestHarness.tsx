@@ -34,6 +34,17 @@ import {
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
+// The game canvas needs ResizeObserver (jsdom ships none).
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+if (typeof globalThis.ResizeObserver === "undefined") {
+  (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver =
+    ResizeObserverStub;
+}
+
 // ── the in-memory socket pair ────────────────────────────────────────────
 
 /** One connection: browser end ↔ server end, synchronous delivery. */
@@ -271,4 +282,51 @@ export const wire = {
     }),
   matchFinished: (winnerId: string | null) =>
     JSON.stringify({ protocolVersion: 1, type: "match_finished", winnerId }),
+  /**
+   * A snapshot message. `overrides` replaces top-level fields; pawns can be
+   * supplied wholesale or per-pawn overrides applied to the defaults by id.
+   */
+  snapshot: (
+    overrides: Record<string, unknown> = {},
+    pawnOverrides: Record<string, Record<string, unknown>> = {}
+  ) => {
+    const defaultPawns = [
+      pawn("p0", { isLocal: true }),
+      pawn("p1", {}),
+    ];
+    const pawns =
+      (overrides.pawns as unknown[] | undefined)?.map((p, i) =>
+        pawn(`p${i}`, p as Record<string, unknown>)
+      ) ?? defaultPawns.map((p) =>
+        pawnOverrides[p.id] ? { ...p, ...pawnOverrides[p.id] } : p
+      );
+    const state = {
+      phase: "aiming",
+      localPawnId: "p0",
+      winnerId: null,
+      power: 3,
+      aimDirection: { x: 1, y: 0 },
+      isAiming: false,
+      activePawnId: "p0",
+      ...overrides,
+      pawns,
+    };
+    return JSON.stringify({ protocolVersion: 1, type: "snapshot", state });
+  },
 };
+
+/** One pawn snapshot with sane defaults. */
+function pawn(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    name: `Player ${Number(id.slice(1)) + 1}`,
+    position: { x: 300 + Number(id.slice(1)) * 300, y: 350 },
+    velocity: { x: 0, y: 0 },
+    radius: 16,
+    eliminated: false,
+    isMoving: false,
+    isLocal: false,
+    colorIndex: Number(id.slice(1)),
+    ...overrides,
+  };
+}

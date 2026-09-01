@@ -67,7 +67,8 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
   );
 }
 
-function YouChip() {
+/** "You" chip — marks the viewer's own pawn (server-reported). */
+export function YouChip() {
   return (
     <span className="rounded-full border border-sky-400/30 bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-300">
       You
@@ -75,7 +76,8 @@ function YouChip() {
   );
 }
 
-function HostChip() {
+/** "Host" chip — marks the server-reported room host. */
+export function HostChip() {
   return (
     <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
       Host

@@ -5,11 +5,22 @@ import { cn } from "../../utils/cn";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { ErrorBanner } from "./ErrorBanner";
 import { RoomPanel } from "./RoomPanel";
+import { MultiplayerGame } from "../game/MultiplayerGame";
 
 /**
- * The multiplayer lobby — the UI over the network client.
+ * The multiplayer lobby — the UI over the network client, and the router
+ * for the whole multiplayer experience: home screen → room → live match.
  *
- * Authority rules this screen lives by:
+ * When the server moves the room into "playing"/"finished", the lobby
+ * hands the whole screen to <MultiplayerGame/> (authoritative snapshot
+ * rendering + intent sending only). The hand-back rules: the player
+ * leaves (view-level navigation, protocol v1 has no leave ack), or a
+ * reconnect completed as a fresh session with no seat (the match view
+ * must not pretend the seat survived). A drop MID-MATCH keeps the game
+ * screen mounted: the last snapshot stays visible and MultiplayerGame
+ * offers the reconnect affordance.
+ *
+ * Authority rules these screens live by:
  *   - every room fact (room id, your seat, host, roster, room state, winner)
  *     is displayed exactly as the server reported it — never inferred;
  *   - the Start Match button is shown only when the server-reported host id
@@ -33,6 +44,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
   const [leftRoom, setLeftRoom] = useState(false);
   const [startPending, setStartPending] = useState(false);
   const [dismissedError, setDismissedError] = useState(false);
+  const [matchActive, setMatchActive] = useState(false);
 
   // The server re-asserts room truth with every roster push (welcome /
   // room_state) — a fresh roster means we are seated again, so any stale
@@ -54,6 +66,24 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
 
   const inRoom = state.roomId !== null && !leftRoom;
 
+  // The server moved the room into the match → the game screen takes over.
+  useEffect(() => {
+    if (
+      inRoom &&
+      (state.roomState === "playing" || state.roomState === "finished")
+    ) {
+      setMatchActive(true);
+    }
+  }, [inRoom, state.roomState]);
+
+  // A reconnect is a fresh session: once we are connected again but no
+  // longer seated, the match view is over (the seat did not survive).
+  useEffect(() => {
+    if (matchActive && state.status === "connected" && !inRoom) {
+      setMatchActive(false);
+    }
+  }, [matchActive, state.status, inRoom]);
+
   const handleCreate = () => {
     client.createRoom();
   };
@@ -67,7 +97,10 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     // Fire-and-forget on protocol v1 (the server does not acknowledge the
     // leave to the leaver): navigate home once the send succeeded; the
     // server stays authoritative over the room either way.
-    if (client.leaveRoom()) setLeftRoom(true);
+    if (client.leaveRoom()) {
+      setLeftRoom(true);
+      setMatchActive(false);
+    }
   };
 
   const handleStart = () => {
@@ -79,6 +112,12 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
   const handleReconnect = () => {
     client.connect();
   };
+
+  // The live match takes over the whole screen (also while the room is
+  // "finished", so the result overlay is shown in context).
+  if (matchActive) {
+    return <MultiplayerGame onLeave={handleLeave} />;
+  }
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased">

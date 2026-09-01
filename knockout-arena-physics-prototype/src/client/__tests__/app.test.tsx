@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import App from "../App";
 
@@ -68,6 +75,63 @@ describe("app shell", () => {
       await screen.findByRole("button", { name: "Create Room" })
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Launch" })).toBeNull();
+  });
+
+  it("solo mode still runs the local engine (aim → launch → moving)", async () => {
+    const view = render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /Practice solo/ }));
+
+    // Local engine behavior, unchanged: pointer aim + launch drive the
+    // phase machine right here in the browser — no server involved.
+    const canvas = document.querySelector("canvas");
+    expect(canvas).not.toBeNull();
+    fireEvent.pointerDown(canvas!, { clientX: 100, clientY: 100 });
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    expect(
+      await screen.findByText("In motion…", {}, { timeout: 5000 })
+    ).toBeInTheDocument();
+
+    view.unmount();
+  });
+
+  it("solo mode does not use the multiplayer network", async () => {
+    // A stand-in environment socket that records constructions and closes.
+    let constructed = 0;
+    let closed = 0;
+    class CountingWebSocket {
+      constructor(_url: string | URL) {
+        constructed += 1;
+      }
+      close(): void {
+        closed += 1;
+      }
+      send(): void {}
+      onopen: unknown = null;
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      onclose: unknown = null;
+    }
+    const env = window as unknown as { WebSocket?: unknown };
+    env.WebSocket = CountingWebSocket;
+    try {
+      const view = render(<App />);
+      // Booting the lobby opened exactly one connection…
+      await waitFor(() => expect(constructed).toBe(1));
+      // …and entering solo mode tears the network down entirely.
+      fireEvent.click(screen.getByRole("button", { name: /Practice solo/ }));
+      expect(
+        await screen.findByRole("button", { name: "Launch" })
+      ).toBeInTheDocument();
+      expect(closed).toBe(1);
+      // No further networking happens while playing solo.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 120));
+      });
+      expect(constructed).toBe(1);
+      view.unmount();
+    } finally {
+      delete env.WebSocket; // back to the no-WebSocket environment
+    }
   });
 
   it("the lobby without a server never throws and stays coherent", () => {

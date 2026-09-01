@@ -172,7 +172,8 @@ describe("lobby room screen", () => {
       type: "start_match",
     });
 
-    // The server moves the room on → the badge follows (no local guessing).
+    // The server moves the room on → the lobby hands the screen to the
+    // multiplayer game (no local guessing).
     await act(async () => {
       sockets[0].serverMessage(
         wire.roomState(
@@ -185,21 +186,22 @@ describe("lobby room screen", () => {
         )
       );
     });
-    expect(screen.getByTestId("room-state-badge")).toHaveTextContent(
-      "Match in progress"
-    );
+    expect(screen.getByText("Multiplayer match")).toBeInTheDocument();
     expect(screen.queryByTestId("start-match")).toBeNull();
   });
 
-  it("waiting → playing through the real server", async () => {
+  it("waiting → playing through the real server: the game screen takes over", async () => {
     const { harness, host, roomId } = await seatedHost();
     await joinRoom(harness, roomId, { render: false }); // guest joins, no UI
 
     fireEvent.click(screen.getByTestId("start-match"));
 
-    expect(await screen.findByTestId("room-state-badge")).toHaveTextContent(
-      "Match in progress"
-    );
+    // The lobby hands the screen to the multiplayer game once the server
+    // reports playing — and the first authoritative snapshot arrives.
+    expect(await screen.findByText("Multiplayer match")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("turn-badge")
+    ).toHaveTextContent("Your turn — aim!");
     expect(screen.queryByTestId("start-match")).toBeNull();
     expect(host.client.getState().roomState).toBe("playing"); // server truth
   });
@@ -231,7 +233,7 @@ describe("lobby room screen", () => {
     expect(screen.queryByTestId("room-panel")).toBeNull();
   });
 
-  it("finished: the winner comes from the server's match_finished", async () => {
+  it("finished: the winner comes from the server's snapshot + match_finished", async () => {
     const { client, sockets } = createScriptedClient();
     renderLobby(client);
     await act(async () => {
@@ -262,14 +264,21 @@ describe("lobby room screen", () => {
       );
     });
 
+    // The finished snapshot arrives first, then the announcement.
     await act(async () => {
+      sockets[0].serverMessage(
+        wire.snapshot(
+          { phase: "finished", winnerId: "p0", localPawnId: "p1" },
+          { p1: { isLocal: true }, p0: { isLocal: false } }
+        )
+      );
       sockets[0].serverMessage(wire.matchFinished("p0"));
     });
 
-    expect(screen.getByTestId("room-state-badge")).toHaveTextContent("Finished");
+    expect(client.getState().roomState).toBe("finished");
     const result = screen.getByTestId("match-result");
-    expect(result).toHaveTextContent("p0 wins!");
+    expect(result).toHaveTextContent("Player 1 wins the match.");
     // The leave action is the way out (no reset button in the lobby).
-    expect(screen.getByTestId("leave-room")).toBeInTheDocument();
+    expect(screen.getByTestId("back-to-lobby")).toBeInTheDocument();
   });
 });

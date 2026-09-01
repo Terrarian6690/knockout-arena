@@ -5,8 +5,9 @@ an N-player-ready engine** — "Phase 1" (N-player engine), "Phase 2" (clean
 engine↔client package boundary), "Phase 3" (headless authoritative server
 host), "Phase 4" (rooms, sessions and the server-assigned identity chain),
 "Phase 5" (real-time WebSocket transport), "Phase 6" (the browser-side
-network client speaking protocol v1) and "Phase 7" (the multiplayer lobby
-UI) of the multiplayer prep are done).
+network client speaking protocol v1), "Phase 7" (the multiplayer lobby
+UI) and "Phase 8" (live multiplayer gameplay over the wire) of the
+multiplayer prep are done).
 
 ## Overview
 
@@ -15,10 +16,12 @@ with the mouse, chooses a power level (1–5), and launches to knock opponents
 out of the arena. The engine underneath is **player-count agnostic**: a match
 is a roster of pawns (1..N), per-pawn aim/power, per-pawn elimination, a
 deterministic turn rotation over the survivors, and a finished phase with a
-winner. The app boots into the multiplayer lobby (create/join a room over
-the real WebSocket client); the original one-player screen lives on as the
-lobby's "practice solo" mode. Live gameplay over the wire (rendering the
-server's snapshots in the arena) is the next milestone.
+winner. The app boots into the multiplayer lobby; when the host starts the
+match, the **multiplayer game screen** takes over and renders the
+authoritative snapshots the server broadcasts — the browser sends player
+intents (aim / setPower / confirmLaunch) and draws what comes back,
+running no physics of its own. The original one-player screen lives on as
+the lobby's "practice solo" mode with its local engine untouched.
 
 The simulation runs at a **fixed 60 Hz timestep** (the render loop exchanges
 real frame time for fixed ticks), so physics behaves identically on any
@@ -88,6 +91,7 @@ always share the same game state.
 | `renderer.ts`              | Pure canvas drawing from a snapshot.                 |
 | `network/`                 | The multiplayer client: protocol v1 parsing/building, WebSocket lifecycle, external-store state, React provider + hooks (see below). |
 | `components/lobby/*`       | The multiplayer lobby: initial screen (create/join), waiting room (roster, host, start/leave). Server-authoritative display only. |
+| `components/game/*`       | The multiplayer game screen: authoritative snapshot rendering (canvas via `renderer.ts`), intent-only controls, turn/rail, result overlay. No simulation. |
 | `SoloGame.tsx`             | The original single-player screen (local engine), kept as the lobby's "practice solo" mode. |
 | `App.tsx` / `main.tsx`     | App shell (lobby ↔ solo mode switch) + Vite entry point.                        |
 | `components/*`             | Header, arena canvas, control bar, elimination overlay, power selector. |
@@ -291,15 +295,50 @@ client-local assumptions.
   stack, or scripted sockets for timing-sensitive states) — no real
   network, no canvas.
 
-### Remaining work (lobby now exists — gameplay over the wire next)
+#### Multiplayer gameplay (authoritative rendering)
+
+When the server reports `roomState === "playing"` (or `"finished"`), the
+lobby hands the screen to `src/client/components/game/MultiplayerGame.tsx`.
+The browser is strictly a **terminal**: it renders the server's
+viewer-projected snapshots and sends player intents — nothing else.
+
+- **Rendering** reuses the pure canvas `renderer.ts` (the same one the solo
+  screen uses). Every pawn, position, the aim indicator, elimination tints
+  and the active-player pulse come from the latest snapshot;
+  `snapshot.localPawnId` IS the local player (the server's own projection —
+  never computed from the roster). Snapshots **replace** the picture; with
+  no new push, nothing changes (the GameHost broadcasts only on state
+  changes, so idle phases cause zero rerenders through the existing
+  external store — no second subscription system).
+- **Input gating** (`localControl.ts`, a pure function over the snapshot):
+  the local player may act only when the phase is `aiming`, they have a
+  pawn, it is the active pawn, and it is alive. Pointer position → world
+  coordinates is an INPUT calculation; the aim/power/confirmLaunch intents
+  then travel the wire and the server alone decides whether they succeed
+  (`wrong-player` / `wrong-phase` / … rejections come back as normal error
+  banners). Power shows a local pending value for responsiveness that ANY
+  fresh snapshot replaces with the authoritative one.
+- **Turn/result UI** (rail + badge + overlay) reads the snapshot: whose
+  turn, aiming/moving/finished, alive/eliminated — no local timers, no
+  turn advancement, no winner calculation. The winner is the server's
+  `match_finished` / finished-snapshot verdict (null = no-survivor draw).
+- **Disconnects mid-match** (no seat-recovery protocol yet): the last
+  authoritative snapshot stays visible under a connection banner, input is
+  refused, a reconnect action is offered, nothing simulates locally, and
+  once a reconnect completes as a fresh session the lobby takes over
+  again. There is deliberately **no reset** — `resetMatch` is server-side
+  only.
+- **Solo untouched**: `SoloGame.tsx` keeps its local engine path; entering
+  it unmounts the network provider entirely (solo never touches the wire).
+
+### Remaining work (gameplay over the wire now exists — resilience next)
 
 Real authentication (replacing the interim session token), reconnection
 (reattaching a session to a vacated seat), disconnected-player turn
-timeouts, rematch/vote policy on top of `resetMatch`, live gameplay over
-the wire (rendering the server's snapshots in the arena and sending
-intents from the lobby-created room — the lobby's "Match in progress"
-state is exactly where that plugs in), a long-running server entry
-script, and rate limiting / abuse guards.
+timeouts, rematch/vote policy on top of `resetMatch`, purely-visual
+interpolation between snapshots, a production server entry script (the
+`scripts/smoke-server.ts` dev helper is manual-test tooling, not one),
+and rate limiting / abuse guards.
 
 ### The match model (N players)
 
@@ -402,8 +441,9 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
 ```bash
 npm install
 npm run dev       # local dev (boots into the multiplayer lobby; "practice solo" runs the engine locally)
-npm test          # full suite: engine + server + transport + lobby UI (Vitest)
+npm test          # full suite: engine + server + transport + lobby + multiplayer UI (Vitest)
 npm run build     # typecheck + production build (single-file dist/index.html)
+npm run smoke     # build + serve the app AND a real protocol-v1 game server on one port (manual testing)
 ```
 
 The app boots into the lobby and connects to its own origin by default;
@@ -413,6 +453,33 @@ The multiplayer server is a library for now: `createWebSocketTransport()`
 there is no long-running server entry script yet, by design. With no server
 reachable, the lobby honestly shows Disconnected (with a Reconnect action)
 and solo practice stays available.
+
+## Manual multiplayer smoke test
+
+`npm run smoke` builds the app and serves it together with a REAL
+protocol-v1 game server (`createGameServer` + `createTransportCore` + the
+engine's GameHost — see `scripts/smoke-server.ts`) on one port, so the
+browser's default same-origin server URL just works. Then:
+
+1. Open `http://localhost:4173` in two browser windows (A and B).
+2. A: **Create Room** → the room ID is shown.
+3. B: type that room ID → **Join Room**.
+4. Both windows show the same roster (A is `p0` + Host, B is `p1`).
+5. A: **Start Match** → both windows switch to the multiplayer game screen.
+6. A (its turn): move the mouse over the arena → the aim indicator
+   follows (authoritative snapshots echo the aim).
+7. A: pick a power (1–5) → the readout follows.
+8. A: **Launch** → both windows show the same movement, phase "moving".
+9. The turn passes to B automatically (badge + highlighted rail entry).
+10. B controls ONLY its own turn (A's controls are disabled meanwhile).
+11. Knock a pawn out of the arena → both windows mark it **Out**.
+12. The match finishes → both windows show the same winner overlay.
+13. **Back to lobby** returns to the initial screen on each side.
+14. **Practice solo** still runs the fully local single-player game.
+
+Automated equivalents: `multiplayerIntegration.test.tsx` (the whole loop
+through the real server, engine and UI) and `multiplayerGame.test.tsx`
+(the screen's behavior over scripted sockets).
 
 ## Tests
 
@@ -544,4 +611,35 @@ every other suite stays headless/node; dev-only deps:
   `room-full`), and the finished state with the server-reported winner.
 - `app.test.tsx` — the real app shell (nothing injected): boots into the
   lobby, fails cleanly when no WebSocket/server exists (Disconnected, no
-  crash, actions disabled), switches to the original solo screen and back.
+  crash, actions disabled), switches to the original solo screen and back;
+  solo mode still runs the local engine (aim → launch → moving), and a
+  socket-counting environment proves solo mode tears the network down
+  (entering it unmounts the provider; no further sockets appear).
+- `multiplayerGame.test.tsx` — the game screen over SCRIPTED sockets:
+  rendering (every pawn from the snapshot, `localPawnId` taken from the
+  server's projection — the You chip is where the server says it is,
+  eliminated pawns rendered Out, new snapshots replace the picture and
+  without a push nothing changes — no client physics), turn ownership
+  (controls enabled on the local aiming turn; disabled on another
+  player's turn / while moving / when finished / when the local pawn is
+  eliminated), commands (exact aim/setPower/confirmLaunch wire envelopes,
+  pending power replaced by the authoritative value, nothing sent while
+  disconnected or in invalid phases, server rejections displayed
+  normally), match completion (winner from the snapshot, match_finished,
+  null winner = no-survivor draw, Back-to-lobby leaves the room), the
+  mid-match disconnect behavior (last snapshot visible, input refused,
+  reconnect offered, nothing simulated), and the lobby → game screen
+  transition on the server's playing state.
+- `multiplayerIntegration.test.tsx` — the FULL loop with nothing faked:
+  real GameServer + GameHost + engine + transport core + the real
+  network client + the real React UI, two clients, one match. Proves
+  player command → server engine → authoritative snapshot → client
+  rendering state, identical snapshots on both clients (per-viewer
+  projection aside), the turn passing, an elimination, an identical
+  winner verdict for both, and that the client's snapshot is untouched
+  while the server is idle (no local simulation).
+- `client-boundary.test.ts` (engine part) now resolves import targets
+  instead of matching strings, so the client's `components/game/` folder
+  is correctly recognized as client code while deep engine imports
+  (e.g. `../../game/state`) are still rejected — the barrel rule is
+  unchanged.
