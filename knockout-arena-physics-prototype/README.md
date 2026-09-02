@@ -14,9 +14,10 @@ multiplayer prep are done).
 Played on a circular arena viewed from above. The player controls a pawn, aims
 with the mouse, chooses a power level (1–5), and launches to knock opponents
 out of the arena. The engine underneath is **player-count agnostic**: a match
-is a roster of pawns (1..N), per-pawn aim/power, per-pawn elimination, a
-deterministic turn rotation over the survivors, and a finished phase with a
-winner. The app boots into the multiplayer lobby; when the host starts the
+is a roster of pawns (1..N), per-pawn aim/power/confirmation, per-pawn
+elimination, **simultaneous rounds** (every alive player chooses
+independently each round — there is no turn queue and no current player),
+and a finished phase with a winner. The app boots into the multiplayer lobby; when the host starts the
 match, the **multiplayer game screen** takes over and renders the
 authoritative snapshots the server broadcasts — the browser sends player
 intents (aim / setPower / confirmLaunch) and draws what comes back,
@@ -79,7 +80,7 @@ always share the same game state.
 | `arena.ts`      | Circular arena model + boundary math (server-safe).       |
 | `player.ts`     | Pawn model (incl. its own aim + power) + color palette.   |
 | `aiming.ts`     | Aim direction + launch-velocity math.                     |
-| `turnLogic.ts`  | Turn state machine: full-roster queue + elimination-aware rotation. |
+| `roundLogic.ts` | Round state machine: the shared phase + settle counter (simultaneous rounds — no turn queue). |
 | `physics.ts`    | The *only* place that knows Matter.js (swap-friendly).    |
 | `game.ts`       | Orchestrator: commands → fixed ticks → state; match lifecycle (elimination, finishing, winner). |
 
@@ -91,7 +92,7 @@ always share the same game state.
 | `renderer.ts`              | Pure canvas drawing from a snapshot.                 |
 | `network/`                 | The multiplayer client: protocol v1 parsing/building, WebSocket lifecycle, external-store state, React provider + hooks (see below). |
 | `components/lobby/*`       | The multiplayer lobby: initial screen (create/join), waiting room (roster, host, start/leave). Server-authoritative display only. |
-| `components/game/*`       | The multiplayer game screen: authoritative snapshot rendering (canvas via `renderer.ts`), intent-only controls, turn/rail, result overlay. No simulation. |
+| `components/game/*`       | The multiplayer game screen: authoritative snapshot rendering (canvas via `renderer.ts`), intent-only controls, round/rail, result overlay. No simulation. |
 | `SoloGame.tsx`             | The original single-player screen (local engine), kept as the lobby's "practice solo" mode. |
 | `App.tsx` / `main.tsx`     | App shell (lobby ↔ solo mode switch) + Vite entry point.                        |
 | `components/*`             | Header, arena canvas, control bar, elimination overlay, power selector. |
@@ -233,8 +234,12 @@ is the same indistinguishable `invalid-reconnect` error, so credentials
 cannot be used to probe rooms. A deliberate server-side close
 (`handle.close()` / transport teardown) bypasses the reservation and
 disconnects cleanly. Starting a match while a seat is reserved is allowed
-(occupied seats form the roster); a disconnected player's turn simply
-waits — turn timeouts are deliberately still out of scope.
+(occupied seats form the roster); a disconnected player simply stays
+unconfirmed — the early all-confirmed end waits for every ALIVE player, but
+the server's `resolveRound` (decision deadline) always resolves the round
+regardless, and a previously-confirmed move still executes while its player
+is disconnected. A real timed deadline is deliberately still out of scope
+(planned as its own task).
 
 **Backpressure:** snapshots are full-state and high-frequency, so a socket
 whose outbound buffer exceeds the high-water mark (256 KiB default) simply
@@ -347,22 +352,23 @@ viewer-projected snapshots and sends player intents — nothing else.
   external store — no second subscription system).
 - **Input gating** (`localControl.ts`, a pure function over the snapshot):
   the local player may act only when the phase is `aiming`, they have a
-  pawn, it is the active pawn, and it is alive. Pointer position → world
-  coordinates is an INPUT calculation; the aim/power/confirmLaunch intents
-  then travel the wire and the server alone decides whether they succeed
-  (`wrong-player` / `wrong-phase` / … rejections come back as normal error
-  banners). Power shows a local pending value for responsiveness that ANY
-  fresh snapshot replaces with the authoritative one.
-- **Turn/result UI** (rail + badge + overlay) reads the snapshot: whose
-  turn, aiming/moving/finished, alive/eliminated — no local timers, no
-  turn advancement, no winner calculation. The winner is the server's
+  pawn, it is alive, and it has not yet locked in its move for the current
+  round. Pointer position → world coordinates is an INPUT calculation; the
+  aim/power/confirmLaunch intents then travel the wire and the server alone
+  decides whether they succeed (`wrong-player` / `wrong-phase` /
+  `already-confirmed` / … rejections come back as normal error banners).
+  Power shows a local pending value for responsiveness that ANY fresh
+  snapshot replaces with the authoritative one.
+- **Round/result UI** (rail + badge + overlay) reads the snapshot:
+  choosing/ready/resolving, alive/eliminated — no local timers, no round
+  advancement, no winner calculation. The winner is the server's
   `match_finished` / finished-snapshot verdict (null = no-survivor draw).
 - **Disconnects mid-match (seat recovery)**: the last authoritative
   snapshot stays visible under a "Connection lost — retrying" banner, input
   is refused and nothing simulates locally — but the screen STAYS, because
   the server reserves the seat. The automatic retry presents the reconnect
   credential and the same match resumes exactly where it was (same
-  playerId, same turn, snapshots flowing again, banner gone). If the
+  playerId, same round, snapshots flowing again, banner gone). If the
   credential is rejected or expired, the room state is cleared and the
   lobby takes over again. There is deliberately **no reset** —
   `resetMatch` is server-side only.
@@ -372,8 +378,10 @@ viewer-projected snapshots and sends player intents — nothing else.
 ### Remaining work (reconnection is in — hardening next)
 
 Real authentication (replacing the interim session and reconnect
-credentials), disconnected-player turn timeouts (a reserved seat currently
-waits indefinitely), rematch/vote policy on top of `resetMatch`,
+credentials), the timed server-side round decision deadline (the manual
+`resolveRound` plumbing is in; without a timer a silent room waits
+indefinitely — nothing auto-resolves yet), rematch/vote policy on top of
+`resetMatch`,
 purely-visual interpolation between snapshots, a production server entry
 script (the `scripts/smoke-server.ts` dev helper is manual-test tooling,
 not one), and rate limiting / abuse guards.
@@ -387,19 +395,32 @@ not one), and rate limiting / abuse guards.
   a phase — it is a per-pawn flag. Any number of pawns can be eliminated
   during a single `moving` phase (a launch can knock several opponents out,
   and the mover can follow itself).
-- **Turn rotation**: the queue is the full, stable roster for the whole match
-  (replay-friendly); rotation deterministically skips eliminated pawns.
+- **Simultaneous rounds**: every alive player chooses independently during
+  the shared `aiming` phase (aim + power + `confirmLaunch`). Confirming
+  LOCKS that player's choice (further aim/setPower/confirm are rejected
+  with `already-confirmed`) but moves nobody by itself. When ALL alive
+  players have confirmed — or when the server submits the match-level
+  `resolveRound` command (the decision deadline) — every confirmed pawn's
+  impulse is applied in ONE transition and the physics resolves all of them
+  together (confirmed movers can collide mid-flight). Unconfirmed pawns
+  simply stay where they are. There is no turn queue, no active pawn and no
+  rotation anywhere in the model. A single-pawn match is the degenerate
+  case: the lone player's confirmation completes the set, so movement
+  starts immediately (the classic solo flow, unchanged).
 - **Finishing**: with nobody left the match ends immediately with **no
   winner**; in a multi-pawn roster the last pawn standing **wins** when the
-  current turn resolves (the mover may still take itself out, leaving no
+  current round resolves (the mover may still take itself out, leaving no
   winner). A single-pawn match never finishes on its own — the lone pawn just
   aims again.
 - **Eliminated pawns become ghosts**: frozen, non-collidable, but still part
   of the historical state (rendered where they left the arena). `reset`
   restores the whole roster.
-- **Per-pawn controls**: each pawn carries its own aim + power selection;
-  they persist across other players' turns and are consumed at launch. The UI
-  always shows the *active* pawn's controls.
+- **Per-pawn controls**: each pawn carries its own aim + power + confirmed
+  flag; power persists across rounds, aim and confirmation reset per round,
+  and the aim is consumed by the pawn's own launch. The projection always
+  exposes the VIEWER'S OWN controls (a spectator projection shows neutral
+  defaults) — every player's screen describes their own choice, never
+  "the active pawn's".
 
 ### Multiplayer readiness (server-authoritative; reconnection built in, real auth pending)
 
@@ -416,9 +437,13 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
   change the phase, resolve a collision, or declare a winner — those outcomes
   are computed exclusively inside the engine.
 - **Command ownership**: every action command names its `playerId`; the
-  engine rejects commands from unknown players (`unknown-player`), eliminated
-  players or out-of-turn players (`wrong-player`), and any command in the
-  wrong phase (`wrong-phase`). A future server performs the same check after
+  engine rejects commands from unknown players (`unknown-player`),
+  eliminated players (`wrong-player`), players who already locked in their
+  move for the current round (`already-confirmed`), and any command in the
+  wrong phase (`wrong-phase`). `resolveRound` and `reset` are match-level
+  commands with no playerId — the server submits them through its own
+  privileged path and the room manager rejects them on the player wire as
+  `unauthorized`. A future server performs the same check after
   authenticating the session behind the `playerId` — client pawn ids are
   never trusted.
 - **The engine has no local player.** `snapshot()` is a spectator projection
@@ -433,9 +458,10 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
   changes one integration point, not every module.
 - **`GameState` is plain JSON data** (no Matter.js internals, no functions)
   and contains everything needed to reconstruct a match, including
-  mid-flight kinematics and per-pawn aim/power; reconstruction continues
-  deterministically. At every turn boundary pawns are brought to a canonical
-  resting state (stopped, no rim overlap), which is what keeps
+  mid-flight kinematics and per-pawn aim/power/confirmation;
+  reconstruction continues deterministically. At every round boundary pawns
+  are brought to a canonical resting state (stopped, no rim overlap), which
+  is what keeps
   reconstruction bit-identical even after wall contacts.
 - **Ownership**: the server (`src/server/`) validates and applies commands
   with the session's seat identity, simulates on a fixed clock, and exposes
@@ -445,10 +471,12 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
 ### Extension points for multiplayer
 
 - **More pawns**: `createGame({ players: [...] })` or `engine.loadState()`
-  with a multi-pawn state — rotation, elimination, finishing and winner
-  detection are all in place (see `__tests__/match.test.ts`).
-- **Simultaneous turns**: `turnLogic.ts` documents where a "everyone aims, then
-  everyone resolves" flag slots in.
+  with a multi-pawn state — simultaneous rounds, elimination, finishing and
+  winner detection are all in place (see `__tests__/match.test.ts`).
+- **Round deadline**: the server-side decision timer plugs into the existing
+  `resolveRound` privileged path (roomManager/gameServer facade) — submit it
+  when the round's deadline expires and the round resolves with whatever
+  confirmations exist.
 - **Bots**: bots only need to produce the same `GameCommand`s (a playerId +
   aim + power + confirm) — reusing `aiming.ts` helpers.
 - **Server authority**: implemented headless — `createGameServer()` issues
@@ -456,15 +484,17 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
   command with the session's seat, steps `game.update()` on a fixed 60 Hz
   clock, and broadcasts `serializeGameState()` snapshots. The transport,
   the WebSocket glue and seat-recovery/reconnection policy are in; what is
-  left: real authentication, turn timeouts, and the rest of the hardening
-  list above.
+  left: real authentication, the timed round deadline, and the rest of the
+  hardening list above.
 
 ## Controls
 
 1. Move the mouse to aim (a dashed arrow shows the direction; its length,
    opacity and chevron count grow with the selected power).
 2. Pick a power level **1–5** (higher = stronger launch).
-3. Click **Launch** to apply the impulse — one launch per turn.
+3. Click **Launch** to lock in your move — one launch per round (in
+   multiplayer the round resolves once everyone has locked in, or at the
+   server's round deadline; solo starts immediately).
 4. The pawn slides with friction. The rim is a low lip: slow or glancing
    contacts bounce off it, but a fast head-on launch clears it — and once the
    pawn has completely left the floor it is **knocked out** and the match is
@@ -505,12 +535,17 @@ browser's default same-origin server URL just works. Then:
 3. B: type that room ID → **Join Room**.
 4. Both windows show the same roster (A is `p0` + Host, B is `p1`).
 5. A: **Start Match** → both windows switch to the multiplayer game screen.
-6. A (its turn): move the mouse over the arena → the aim indicator
-   follows (authoritative snapshots echo the aim).
-7. A: pick a power (1–5) → the readout follows.
-8. A: **Launch** → both windows show the same movement, phase "moving".
-9. The turn passes to B automatically (badge + highlighted rail entry).
-10. B controls ONLY its own turn (A's controls are disabled meanwhile).
+6. BOTH windows (simultaneous round): move the mouse over the arena →
+   each side's own aim indicator follows (authoritative snapshots echo
+   each player's own aim).
+7. A: pick a power (1–5) → the readout follows. B does the same,
+   independently — both control bars are live at the same time.
+8. A: **Launch** → A's choice is LOCKED (badge "Ready — waiting for other
+   players…", A's controls disabled) but nobody moves yet.
+9. B: aim + power + **Launch** → the round resolves: BOTH pawns start
+   moving together in both windows (phase "Round resolving…").
+10. After everything settles a fresh round opens for the survivors
+    ("Choose your move — aim!" again; unconfirmed players never moved).
 11. Knock a pawn out of the arena → both windows mark it **Out**.
 12. The match finishes → both windows show the same winner overlay.
 13. **Back to lobby** returns to the initial screen on each side.
@@ -518,14 +553,16 @@ browser's default same-origin server URL just works. Then:
 
 Seat recovery (optional, uses the same server):
 
-15. A and B reach a running match (steps 1–5, a few turns in).
+15. A and B reach a running match (steps 1–5, a few rounds in).
 16. In window B, close the TAB (or kill the network) → A's roster shows
     B **disconnected**; B's screen (if only the socket died) keeps the
     match under a "Connection lost — retrying" banner.
 17. Reopen the page (or restore the network) → B reconnects
     automatically with its credential and lands back in the SAME seat,
-    same match, same turn — the roster shows B connected again and
-    B's controls work on its turn. No new player appears.
+    same match, same round — the roster shows B connected again and
+    B's controls work right away (rounds are open to every alive player).
+    A previously-confirmed move even survives the disconnect: it still
+    executes when the round resolves. No new player appears.
 18. To watch the expiry path instead: set `RECONNECT_RESERVATION_MS=5000`
     before `npm run smoke`, drop B, and wait >5 s before reconnecting —
     the credential is then rejected (`invalid-reconnect`), B returns to
@@ -541,15 +578,20 @@ the real stack and UI).
 
 The engine regression suite lives in `src/game/__tests__/` and runs with
 **Vitest** in a **node environment** — no DOM. Covered: pure-function math
-(arena, aiming, turn logic, config, players), the Matter.js facade (physics,
+(arena, aiming, round logic, config, players), the Matter.js facade (physics,
 incl. ghosts and canonical rest), full game-orchestrator behavior — phases,
-launch/turn rules, movement/friction/settling, geometric elimination, rim
+launch/round rules, movement/friction/settling, geometric elimination, rim
 pass-over, reset, determinism, and frame-rate independence (identical
 trajectories at 30/60/120/144 Hz) — and, in `match.test.ts`, whole
-**N-player matches** (2/3/4-player rotation, physical knockouts of non-active
-pawns, self-elimination, consecutive eliminations, winner/no-winner
-detection, command ownership, per-pawn aim/power, loadState normalization,
-serialization/replay determinism, and per-viewer projection).
+**N-player simultaneous-round matches** (the required spec suite: both
+players choosing before any movement, a single confirmation never moving
+anyone, the last confirmation resolving everyone together, four players
+confirming independently, the deadline moving only the confirmed, confirmed
+movements starting in one simulation transition, no turn/current-player
+concept anywhere in the authoritative model, one player's commands never
+touching another's intent, physical knockouts, self-elimination, winner/
+no-winner detection, loadState normalization, serialization/replay
+determinism, and per-viewer projection).
 
 Three suites guard the **package boundary** itself:
 
@@ -573,10 +615,11 @@ The **server** has its own suites in `src/server/__tests__/`:
   `fixedTimestepMs` — host state stays bit-identical to a raw engine replica
   fed the same fixed ticks, even under real-time jitter and catch-up after a
   missed wakeup), command handling through the host only (unknown-player,
-  wrong-player, malformed/hostile input that never crashes, client state
-  payloads rejected), snapshot exposure/broadcast semantics, reset, whole
-  2/3/4-player matches to a winner, and deterministic replay from the
-  command log on both a fresh host and a raw engine.
+  wrong-player/already-confirmed, malformed/hostile input that never
+  crashes, client state payloads rejected), snapshot exposure/broadcast
+  semantics, reset, whole 2/3/4-player matches to a winner (rounds resolved
+  at the decision deadline), and deterministic replay from the command log
+  on both a fresh host and a raw engine.
 - `server-boundary.test.ts` — the server package is DOM-free, imports no
   React/client code, reaches the engine only via its barrel (never
   `matter-js` directly), and is networked ONLY in the transport adapter
@@ -595,7 +638,11 @@ The **server** has its own suites in `src/server/__tests__/`:
   room lifecycle (waiting → playing → finished via the real 60 Hz loop,
   stable roster at start, joins blocked once playing, mid-match leaves
   vacate seats, empty-room cleanup), privileged reset (players rejected as
-  `unauthorized`, server path works), independent simultaneous rooms, and
+  `unauthorized`, server path works), the round/disconnect semantics
+  (`resolveRound` privileged — a disconnected unconfirmed player never
+  blocks the round, a disconnected player's confirmed move still executes,
+  an unconfirmed disconnected player does not move), independent
+  simultaneous rooms, and
   the `onRoomState` broadcast hook.
 - `transport.test.ts` — the wire protocol and connection logic over FAKE
   sockets (the same `createTransportCore` the real server runs):
@@ -621,7 +668,9 @@ The **server** has its own suites in `src/server/__tests__/`:
   reservation semantics (occupied + disconnected + unstealable, identity
   preserved), recovery of the creator's and a joiner's seat, recovery
   mid-match (same playerId, same live state — nothing restarts), on the
-  dropped player's own turn (still their turn), after elimination (still
+  dropped player's own round (reconnect before resolution → the same round
+  continues, the player can still choose; reconnect after resolution → the
+  authoritative post-resolution state with a fresh round), after elimination (still
   eliminated), concurrent same-credential reconnects (no duplicate seats),
   uniform `invalid-reconnect` rejection for garbage/foreign/expired
   credentials, revocation on leave/disconnect/teardown, and expiry
@@ -709,9 +758,10 @@ every other suite stays headless/node; dev-only deps:
   rendering (every pawn from the snapshot, `localPawnId` taken from the
   server's projection — the You chip is where the server says it is,
   eliminated pawns rendered Out, new snapshots replace the picture and
-  without a push nothing changes — no client physics), turn ownership
-  (controls enabled on the local aiming turn; disabled on another
-  player's turn / while moving / when finished / when the local pawn is
+  without a push nothing changes — no client physics), round ownership
+  (controls enabled while the local player is choosing; disabled once they
+  have locked in — but NOT when other players lock in / while the round
+  resolves / when finished / when the local pawn is
   eliminated), commands (exact aim/setPower/confirmLaunch wire envelopes,
   pending power replaced by the authoritative value, nothing sent while
   disconnected or in invalid phases, server rejections displayed
@@ -725,7 +775,10 @@ every other suite stays headless/node; dev-only deps:
   network client + the real React UI, two clients, one match. Proves
   player command → server engine → authoritative snapshot → client
   rendering state, identical snapshots on both clients (per-viewer
-  projection aside), the turn passing, an elimination, an identical
+  projection aside), the required simultaneous-round proof (two players
+  choose independently; one confirmation alone moves nobody; completing
+  the set resolves BOTH movements in the same round; a fresh round opens
+  after the settle), an elimination at the decision deadline, an identical
   winner verdict for both, and that the client's snapshot is untouched
   while the server is idle (no local simulation).
 - `multiplayerReconnect.test.tsx` — seat recovery through the real stack

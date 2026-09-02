@@ -416,20 +416,25 @@ describe("identity and commands", () => {
     const { sockets } = makeRoom(core, 2);
     startAsHost(sockets[0]);
 
-    // p0's socket claims to be p1 — the command is applied as p0's (the
-    // active pawn): accepted, and the snapshot shows the active pawn's aim.
-    // Had the payload's playerId been trusted, p1 would be acting out of
-    // turn (wrong-player error, no snapshot).
+    // p0's socket claims to be p1 — the command is applied to p0's OWN
+    // pawn (the seat's identity): accepted, and p0's viewer projection
+    // shows p0's aim. Had the payload's playerId been trusted, this would
+    // have modified p1's choice.
     sockets[0].receiveMsg(command({ type: "aim", playerId: "p1", x: CX, y: CY }));
     expect(sockets[0].lastOf("error")).toBeUndefined();
     const state = sockets[0].lastOf("snapshot")!.state as GameStateSnapshot;
-    expect(state.activePawnId).toBe("p0");
-    expect(state.isAiming).toBe(true);
+    expect(state.localPawnId).toBe("p0");
+    expect(state.isAiming).toBe(true); // p0's own aim (forged id ignored)
     expect(state.pawns[1].isLocal).toBe(false);
 
-    // Out-of-turn is still enforced by the engine — for the REAL owner.
+    // Ownership is enforced for the REAL owner the other way too: p1's
+    // socket claiming to be p0 acts on p1's own pawn (rounds are
+    // simultaneous, so p1 acting is legal — but never on p0's pawn).
     sockets[1].receiveMsg(command({ type: "aim", playerId: "p0", x: CX, y: CY }));
-    expect(sockets[1].lastOf("error")).toMatchObject({ code: "wrong-player" });
+    expect(sockets[1].lastOf("error")).toBeUndefined();
+    const p1View = sockets[1].lastOf("snapshot")!.state as GameStateSnapshot;
+    expect(p1View.localPawnId).toBe("p1");
+    expect(p1View.isAiming).toBe(true); // p1's own aim, not p0's
   });
 
   it("setPower and confirmLaunch work through the wire", () => {
@@ -439,9 +444,15 @@ describe("identity and commands", () => {
 
     sockets[0].receiveMsg(command({ type: "setPower", power: 5 }));
     let state = sockets[0].lastOf("snapshot")!.state as GameStateSnapshot;
-    expect(state.power).toBe(5); // the active pawn's power
+    expect(state.power).toBe(5); // the viewer's own power
 
     sockets[0].receiveMsg(command({ type: "confirmLaunch" }));
+    state = sockets[0].lastOf("snapshot")!.state as GameStateSnapshot;
+    expect(state.phase).toBe("aiming"); // the round waits for p1…
+    expect(state.pawns[0].confirmed).toBe(true); // …but p0's choice is locked
+
+    // p1 confirms too → the round resolves with both movements together.
+    sockets[1].receiveMsg(command({ type: "confirmLaunch" }));
     state = sockets[0].lastOf("snapshot")!.state as GameStateSnapshot;
     expect(state.phase).toBe("moving");
 
@@ -526,9 +537,12 @@ describe("snapshots and match lifecycle", () => {
     sockets[0].receiveMsg(command({ type: "aim", x: CX, y: CY }));
     expect(sockets[0].ofType("snapshot").length).toBeGreaterThan(before);
     expect(sockets[1].ofType("snapshot").length).toBeGreaterThan(before);
+    const p0View = sockets[0].lastOf("snapshot")!.state as GameStateSnapshot;
+    expect(p0View.isAiming).toBe(true); // p0 sees its OWN aim…
     const p1View = sockets[1].lastOf("snapshot")!.state as GameStateSnapshot;
-    expect(p1View.isAiming).toBe(true); // p1 sees the active pawn's (p0's) aim
+    expect(p1View.isAiming).toBe(false); // …p1's controls stay neutral until p1 aims
     expect(p1View.pawns[0].isLocal).toBe(false);
+    expect(p1View.pawns.map((p) => p.id)).toEqual(p0View.pawns.map((p) => p.id));
   }, 5000);
 
   it("roomless and other-room connections receive no snapshots", async () => {
@@ -547,8 +561,8 @@ describe("snapshots and match lifecycle", () => {
   }, 5000);
 
   it("announces match_finished once, with the winner", async () => {
-    const { core } = newCore();
-    const { sockets } = makeRoom(core, 2);
+    const { server, core } = newCore();
+    const { roomId, sockets } = makeRoom(core, 2);
     startAsHost(sockets[0]);
 
     // p0 eliminates itself (radial outward power-5 launch over the rim).
@@ -560,6 +574,7 @@ describe("snapshots and match lifecycle", () => {
     sockets[0].receiveMsg(command({ type: "aim", x: CX + (dx / len) * 400, y: CY + (dy / len) * 400 }));
     sockets[0].receiveMsg(command({ type: "setPower", power: 5 }));
     sockets[0].receiveMsg(command({ type: "confirmLaunch" }));
+    server.resolveRound(roomId); // the decision deadline (p1 stayed silent)
 
     const done = await waitFor(
       () => sockets[1].ofType("match_finished").length > 0,
@@ -644,6 +659,9 @@ describe("disconnect", () => {
     sockets[0].receiveMsg(command({ type: "aim", x: CX + (dx / len) * 400, y: CY + (dy / len) * 400 }));
     sockets[0].receiveMsg(command({ type: "setPower", power: 5 }));
     sockets[0].receiveMsg(command({ type: "confirmLaunch" }));
+    // The deadline fires and p0 drops while its pawn is mid-flight: the
+    // confirmed move executes without its connection.
+    server.resolveRound(roomId);
     sockets[0].close();
 
     // The remaining player is notified (p0 vacated, roster frozen)…
@@ -720,15 +738,13 @@ describe("backpressure (slow clients)", () => {
     sockets[0].receiveMsg(command({ type: "aim", x: CX, y: CY }));
 
     // The command WAS processed (authoritative state changed — the healthy
-    // member sees it)…
+    // member receives the broadcast)…
     expect(sockets[1].ofType("snapshot").length).toBeGreaterThan(healthyBefore);
-    const healthyView = sockets[1].lastOf("snapshot")!.state as GameStateSnapshot;
-    expect(healthyView.isAiming).toBe(true);
     // …but the slow socket received no snapshot for it (dropped, not queued)
     // — its newest view still predates the aim.
     expect(sockets[0].ofType("snapshot").length).toBe(slowBefore);
     const staleView = sockets[0].lastOf("snapshot")!.state as GameStateSnapshot;
-    expect(staleView.isAiming).toBe(false);
+    expect(staleView.isAiming).toBe(false); // p0's own view, pre-aim
 
     // Once the socket drains, the NEWEST authoritative state arrives with
     // the next snapshot — nothing stale is replayed.
@@ -750,9 +766,10 @@ describe("backpressure (slow clients)", () => {
     // …yet the host's command is applied and broadcast to healthy members
     // synchronously, and the wedged member's inbound command still works.
     sockets[0].receiveMsg(command({ type: "aim", x: CX, y: CY }));
-    sockets[1].receiveMsg(command({ type: "setPower", power: 2 })); // wrong turn: still answered
-    expect(sockets[1].lastOf("error")).toMatchObject({ code: "wrong-player" });
+    sockets[0].receiveMsg(command({ type: "confirmLaunch" })); // visible to everyone
+    sockets[1].receiveMsg(command({ type: "setPower", power: 2 })); // still answered (rounds are open to all)
+    expect(sockets[1].lastOf("error")).toBeUndefined();
     const view = sockets[2].lastOf("snapshot")!.state as GameStateSnapshot;
-    expect(view.isAiming).toBe(true);
+    expect(view.pawns[0].confirmed).toBe(true); // the healthy member saw p0 lock in
   }, 5000);
 });

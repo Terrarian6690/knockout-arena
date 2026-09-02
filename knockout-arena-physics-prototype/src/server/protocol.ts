@@ -241,8 +241,9 @@ export const ERROR_DESCRIPTIONS: Record<string, string> = {
   unauthorized: "not allowed for this session",
   "invalid-reconnect": "the reconnect credential is invalid or expired",
   "invalid-command": "the command is malformed",
-  "wrong-player": "not this player's turn, or the player is eliminated",
+  "wrong-player": "the player is eliminated",
   "wrong-phase": "the command is not allowed in the current phase",
+  "already-confirmed": "the move is locked in for this round — wait for the next one",
 };
 
 export function describeError(code: string): string {

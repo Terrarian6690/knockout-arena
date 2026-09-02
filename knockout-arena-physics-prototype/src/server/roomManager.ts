@@ -18,9 +18,10 @@ import { createGameHost, type GameHost, type SerializedStateListener } from "./g
  *   - lifecycle: waiting → playing → finished (see RoomState);
  *   - identity: commands are re-stamped with the seat's playerId — any
  *     playerId (or unknown field) a client sends is dropped here;
- *   - authorization: the match-level `reset` command is privileged and is
- *     rejected on the player path (see submitCommand); only the server
- *     itself may reset a match (resetMatch);
+ *   - authorization: the match-level `reset` and `resolveRound` commands
+ *     are privileged and are rejected on the player path (see
+ *     submitCommand); only the server itself may reset a match
+ *     (resetMatch) or resolve a round at its deadline (resolveRound);
  *   - reconnection: a disconnected session's seat is temporarily RESERVED
  *     (occupied, reported disconnected, invisible to joiners) until it
  *     reclaims it (restoreSeat) or the reservation expires — expiry then
@@ -128,6 +129,9 @@ export type ResetResult =
   | { ok: true }
   | { ok: false; reason: "unknown-room" | "no-match" | CommandRejection };
 
+/** Result of the privileged resolveRound (decision deadline) operation. */
+export type ResolveRoundResult = ResetResult;
+
 /**
  * Why a command was rejected at the server level. Superset of the engine's
  * CommandRejection: engine reasons pass through unchanged, plus the
@@ -200,6 +204,13 @@ export interface RoomManager {
    * ONLY path through which a match may be reset — players cannot.
    */
   resetMatch(roomId: string): ResetResult;
+  /**
+   * Privileged, server-controlled round resolution (the decision
+   * deadline): confirmed players move together, unconfirmed players stay.
+   * The ONLY path through which a round may be force-resolved — players
+   * cannot (submitCommand rejects it as unauthorized).
+   */
+  resolveRound(roomId: string): ResolveRoundResult;
   /** Destroy rooms with no connected players; returns how many were removed. */
   removeEmptyRooms(): number;
   /** Subscribe a seated session to its room's match state (broadcast hook). */
@@ -471,6 +482,22 @@ export function createRoomManager(): RoomManager {
     return room.host.submitCommand({ type: "reset" });
   }
 
+  /**
+   * Privileged, server-controlled resolution of the current round — the
+   * decision deadline. Every alive player who already confirmed moves
+   * (together); unconfirmed players do not move this round. This is the
+   * stand-in for the server's round-deadline timer: players cannot
+   * submit it over the wire (submitCommand rejects it as unauthorized),
+   * exactly like resetMatch.
+   */
+  function resolveRound(roomId: string): ResolveRoundResult {
+    if (!validKey(roomId)) return { ok: false, reason: "unknown-room" };
+    const room = rooms.get(roomId);
+    if (!room) return { ok: false, reason: "unknown-room" };
+    if (!room.host) return { ok: false, reason: "no-match" };
+    return room.host.submitCommand({ type: "resolveRound" });
+  }
+
   function removeEmptyRooms(): number {
     let removed = 0;
     for (const room of [...rooms.values()]) {
@@ -543,6 +570,12 @@ export function createRoomManager(): RoomManager {
         case "confirmLaunch":
           rebuilt = { type: "confirmLaunch", playerId };
           break;
+        case "resolveRound":
+          // Match-level action: privileged. A player must never resolve a
+          // round on the other players' behalf — the server calls
+          // resolveRound() when the round deadline expires (behind
+          // whatever timer policy it enforces).
+          return { ok: false, reason: "unauthorized" };
         case "reset":
           // Match-level action: privileged. A player command must never
           // reset other players' match — the server calls resetMatch()
@@ -570,6 +603,7 @@ export function createRoomManager(): RoomManager {
     resolveSeat,
     startMatch,
     resetMatch,
+    resolveRound,
     removeEmptyRooms,
     onRoomState,
     roomCount,

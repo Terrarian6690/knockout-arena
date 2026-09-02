@@ -51,9 +51,10 @@ export function render(
 
   drawArena(ctx, arena);
 
-  // Draw aim indicator under the pawns.
+  // Draw the viewer's own aim indicator under the pawns (simultaneous
+  // rounds: every player sees their own current-round selection).
   if (snapshot.isAiming && snapshot.aimDirection) {
-    const local = snapshot.pawns.find((p) => p.id === snapshot.activePawnId);
+    const local = snapshot.pawns.find((p) => p.id === snapshot.localPawnId);
     if (local && snapshot.phase === "aiming") {
       drawAimIndicator(ctx, local.position.x, local.position.y, snapshot.aimDirection, snapshot.power);
     }
@@ -120,7 +121,9 @@ function drawPawn(
   const { x, y } = pawn.position;
   const r = pawn.radius;
 
-  const isActive = pawn.id === snapshot.activePawnId;
+  // Simultaneous rounds: highlight the viewer's own, still-deciding pawn
+  // (there is no single acting pawn — everyone chooses at once).
+  const isActive = pawn.isLocal && !pawn.confirmed;
   const fill = playerColor(pawn.colorIndex);
   const stroke = playerStroke(pawn.colorIndex);
 

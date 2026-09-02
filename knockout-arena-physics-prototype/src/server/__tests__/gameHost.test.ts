@@ -56,10 +56,6 @@ function stateOf(h: GameHost): GameState {
   return deserializeGameState(h.serializedState());
 }
 
-function activeId(s: GameState): string {
-  return s.turn.queue[s.turn.activeIndex];
-}
-
 /** Tick until the phase leaves "moving" (mirrors the engine tests' pump). */
 function pumpTicks(h: GameHost, max = 700): number {
   let n = 0;
@@ -75,7 +71,9 @@ function pumpTicks(h: GameHost, max = 700): number {
  * From the natural spawn ring (just inside the floor edge) a power-5 launch
  * flies over the rim and eliminates the launcher — the documented
  * self-knockout mechanic, used here as a deterministic way to finish
- * matches through commands only.
+ * matches through commands only. The round then resolves at the DEADLINE
+ * (the server-only resolveRound command), exactly like a real match whose
+ * other players stayed silent.
  */
 function selfEliminate(h: GameHost, playerId: string): void {
   const me = stateOf(h).pawns.find((p) => p.id === playerId);
@@ -86,6 +84,7 @@ function selfEliminate(h: GameHost, playerId: string): void {
   h.submitCommand({ type: "aim", playerId, x: CX + (dx / len) * 400, y: CY + (dy / len) * 400 });
   h.submitCommand({ type: "setPower", playerId, power: 5 });
   h.submitCommand({ type: "confirmLaunch", playerId });
+  h.submitCommand({ type: "resolveRound" }); // the decision deadline
 }
 
 /** A safe inward launch (mirrors the engine tests' launchInward). */
@@ -137,7 +136,8 @@ describe("host lifecycle", () => {
     expect(s.winnerId).toBeNull();
     expect(s.pawns.map((p) => p.id)).toEqual(["p0", "p1", "p2"]);
     expect(s.pawns.map((p) => p.name)).toEqual(["Player 1", "Player 2", "Player 3"]);
-    expect(activeId(s)).toBe("p0");
+    expect(s.pawns.every((p) => !p.confirmed)).toBe(true); // nobody chose yet
+    expect(s.round.settleTicks).toBe(0);
     expect(h.tickCount()).toBe(0);
     expect(h.isRunning()).toBe(false);
   });
@@ -311,7 +311,10 @@ describe("command handling", () => {
     expect(s.pawns[0].aim.active).toBe(true);
     expect(s.pawns[0].power).toBe(4);
     expect(h.submitCommand({ type: "confirmLaunch", playerId: "p0" })).toEqual({ ok: true });
-    expect(stateOf(h).phase).toBe("moving");
+    expect(stateOf(h).pawns[0].confirmed).toBe(true); // choice locked…
+    expect(stateOf(h).phase).toBe("aiming"); // …but the round waits for p1
+    expect(h.submitCommand({ type: "resolveRound" })).toEqual({ ok: true }); // deadline
+    expect(stateOf(h).phase).toBe("moving"); // now the round resolves
   });
 
   it("rejects commands from unknown player ids", () => {
@@ -326,21 +329,37 @@ describe("command handling", () => {
     expect(h.serializedState()).toBe(before); // nothing was applied
   });
 
-  it("rejects wrong-player commands (out of turn or eliminated)", () => {
+  it("rejects an eliminated player's commands, and a confirmed player's changes (round model)", () => {
     const h = host({ players: specs(3) });
-    const before = h.serializedState();
 
-    // p1 tries to act during p0's turn.
+    // Rounds are simultaneous: p1 and p2 may act while p0 also acts — no
+    // "out of turn" rejections anymore.
+    expect(h.submitCommand({ type: "aim", playerId: "p1", x: CX, y: CY })).toEqual({ ok: true });
+    expect(h.submitCommand({ type: "setPower", playerId: "p2", power: 3 })).toEqual({ ok: true });
+
+    // p1 locks in its choice…
+    expect(h.submitCommand({ type: "confirmLaunch", playerId: "p1" })).toEqual({ ok: true });
+    // …and can no longer change it this round.
     expect(h.submitCommand({ type: "aim", playerId: "p1", x: CX, y: CY })).toEqual({
       ok: false,
-      reason: "wrong-player",
+      reason: "already-confirmed",
     });
-    expect(h.serializedState()).toBe(before);
+    expect(h.submitCommand({ type: "setPower", playerId: "p1", power: 1 })).toEqual({
+      ok: false,
+      reason: "already-confirmed",
+    });
+    expect(h.submitCommand({ type: "confirmLaunch", playerId: "p1" })).toEqual({
+      ok: false,
+      reason: "already-confirmed",
+    });
+    // p0, who has NOT confirmed, can still choose freely.
+    expect(h.submitCommand({ type: "setPower", playerId: "p0", power: 5 })).toEqual({ ok: true });
 
-    // p0 eliminates itself; the match continues with p1 and p2.
+    // p0 eliminates itself at the deadline; the match continues with p1 + p2.
     selfEliminate(h, "p0");
     pumpTicks(h);
-    expect(activeId(stateOf(h))).toBe("p1"); // rotation skipped the eliminated p0
+    expect(stateOf(h).phase).toBe("aiming");
+    expect(stateOf(h).pawns[0].eliminated).toBe(true);
 
     // The eliminated player can no longer act.
     expect(h.submitCommand({ type: "aim", playerId: "p0", x: CX, y: CY })).toEqual({
@@ -492,14 +511,14 @@ describe("matches through the host", () => {
     expect(s.pawns.map((p) => p.eliminated)).toEqual([true, false]);
   });
 
-  it("runs a full 3-player match with turn rotation and a winner", () => {
+  it("runs a full 3-player match over simultaneous rounds to a winner", () => {
     const h = host({ players: specs(3) });
 
     selfEliminate(h, "p0");
     pumpTicks(h);
     let s = stateOf(h);
     expect(s.phase).toBe("aiming"); // match continues, two survivors
-    expect(activeId(s)).toBe("p1"); // rotation skipped the eliminated p0
+    expect(s.pawns.filter((p) => !p.eliminated).map((p) => p.id)).toEqual(["p1", "p2"]);
 
     selfEliminate(h, "p1");
     pumpTicks(h);
@@ -560,6 +579,7 @@ describe("matches through the host", () => {
       record(h2, { type: "aim", playerId, x: CX + (dx / len) * 400, y: CY + (dy / len) * 400 });
       record(h2, { type: "setPower", playerId, power: 5 });
       record(h2, { type: "confirmLaunch", playerId });
+      record(h2, { type: "resolveRound" }); // the decision deadline
       pumpTicks(h2);
     };
     scriptedTurn(h, "p0"); // p0 eliminates itself

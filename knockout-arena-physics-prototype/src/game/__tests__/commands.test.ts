@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createGame } from "../game";
+import { projectSnapshot } from "../project";
 import {
   validateCommand,
   withPlayerId,
@@ -8,11 +9,13 @@ import {
 } from "../commands";
 
 /**
- * UPDATED for the N-player command model: every action command now carries a
- * `playerId` (structural requirement), and the engine adds the rejection
- * reasons `unknown-player` and `wrong-player`. Reasons: commands must be
- * attributable to a player so a future authoritative server can validate
- * ownership (pawn → turn → phase) instead of trusting the client.
+ * UPDATED for the simultaneous-round command model: every ACTION command
+ * carries a `playerId` (structural requirement), and the engine adds the
+ * rejection reasons `unknown-player`, `wrong-player` (eliminated) and
+ * `already-confirmed` (choice locked for the round). `resolveRound` joins
+ * `reset` as a match-level, player-less command (the server's decision
+ * deadline). Commands must be attributable to a player so the authoritative
+ * server can validate ownership instead of trusting the client.
  */
 
 const P0 = "p0";
@@ -34,8 +37,9 @@ describe("validateCommand — valid commands", () => {
     expect(validateCommand({ type: "setPower", playerId: P0, power: -1 })).toEqual({ ok: true });
   });
 
-  it("accepts confirmLaunch and reset", () => {
+  it("accepts confirmLaunch, resolveRound and reset", () => {
     expect(validateCommand({ type: "confirmLaunch", playerId: P0 })).toEqual({ ok: true });
+    expect(validateCommand({ type: "resolveRound" })).toEqual({ ok: true });
     expect(validateCommand({ type: "reset" })).toEqual({ ok: true });
   });
 });
@@ -145,16 +149,23 @@ describe("ownership — commands cannot state authoritative outcomes", () => {
     }
   });
 
-  it("the GameCommand union is exactly the four player-facing commands", () => {
+  it("the GameCommand union is exactly the three player actions plus the two match-level commands", () => {
     // Exhaustiveness canary: if a new command type is added, this literal's
     // type stops matching the union and the suite fails to compile.
     const all: GameCommand[] = [
       { type: "aim", playerId: P0, x: 0, y: 0 },
       { type: "setPower", playerId: P0, power: 1 },
       { type: "confirmLaunch", playerId: P0 },
+      { type: "resolveRound" },
       { type: "reset" },
     ];
     for (const cmd of all) expect(validateCommand(cmd)).toEqual({ ok: true });
+  });
+
+  it("resolveRound is match-level: it takes no playerId", () => {
+    // The wire protocol (PlayerIntent) cannot even express it — only the
+    // server submits it (the room manager rejects it on the player path).
+    expect(validateCommand({ type: "resolveRound" })).toEqual({ ok: true });
   });
 });
 
@@ -199,9 +210,11 @@ describe("applyCommand — command application", () => {
     const g = createGame();
     expect(g.applyCommand({ type: "aim", playerId: P0, x: 450, y: 400 })).toEqual({ ok: true });
     expect(g.applyCommand({ type: "setPower", playerId: P0, power: 2 })).toEqual({ ok: true });
-    expect(g.snapshot().aimDirection).toEqual({ x: 0, y: 1 });
-    expect(g.snapshot().power).toBe(2);
+    const view = projectSnapshot(g.getState(), P0); // the player's own view
+    expect(view.aimDirection).toEqual({ x: 0, y: 1 });
+    expect(view.power).toBe(2);
     expect(g.applyCommand({ type: "confirmLaunch", playerId: P0 })).toEqual({ ok: true });
+    // Single pawn: the confirmation completes the set → immediate movement.
     expect(g.snapshot().phase).toBe("moving");
     g.destroy();
   });
@@ -229,15 +242,56 @@ describe("applyCommand — command application", () => {
     g.destroy();
   });
 
-  it("rejects commands from another player's pawn with 'wrong-player'", () => {
-    // Two players; it is p0's turn, so p1's commands are rejected.
-    const g = createGame({ players: [{ id: "p0", name: "A" }, { id: "p1", name: "B" }] });
+  it("rejects an eliminated player's commands with 'wrong-player'", () => {
+    // Three players; p1 is already out (two survivors keep the match
+    // running) — p1's commands are rejected.
+    const g = createGame({
+      players: [
+        { id: "p0", name: "A" },
+        { id: "p1", name: "B" },
+        { id: "p2", name: "C" },
+      ],
+    });
+    const pawn = (id: string, name: string, colorIndex: number, x: number, y: number, eliminated = false) => ({
+      id, name, colorIndex, radius: 16,
+      spawnX: x, spawnY: y, eliminated,
+      power: 3, confirmed: false,
+      aim: { active: false, direction: { x: 0, y: -1 } },
+      position: { x, y }, velocity: { x: 0, y: 0 },
+      angle: 0, angularVelocity: 0,
+    });
+    g.loadState({
+      phase: "aiming",
+      winnerId: null,
+      round: { settleTicks: 0 },
+      pawns: [
+        pawn("p0", "A", 0, 450, 110),
+        pawn("p1", "B", 1, 450, 700, true),
+        pawn("p2", "C", 2, 450, 590),
+      ],
+    });
     for (const cmd of [
       { type: "aim", playerId: "p1", x: 450, y: 400 },
       { type: "setPower", playerId: "p1", power: 5 },
       { type: "confirmLaunch", playerId: "p1" },
     ] as GameCommand[]) {
       expect(g.applyCommand(cmd)).toEqual({ ok: false, reason: "wrong-player" });
+    }
+    // The alive player's commands are accepted in the SAME phase (there is
+    // no turn to wait for — rounds are simultaneous).
+    expect(g.applyCommand({ type: "setPower", playerId: "p0", power: 4 })).toEqual({ ok: true });
+    g.destroy();
+  });
+
+  it("rejects a confirmed player's further choices with 'already-confirmed'", () => {
+    const g = createGame({ players: [{ id: "p0", name: "A" }, { id: "p1", name: "B" }] });
+    expect(g.applyCommand({ type: "confirmLaunch", playerId: "p0" })).toEqual({ ok: true });
+    for (const cmd of [
+      { type: "aim", playerId: "p0", x: 450, y: 400 },
+      { type: "setPower", playerId: "p0", power: 5 },
+      { type: "confirmLaunch", playerId: "p0" },
+    ] as GameCommand[]) {
+      expect(g.applyCommand(cmd)).toEqual({ ok: false, reason: "already-confirmed" });
     }
     g.destroy();
   });
@@ -309,7 +363,7 @@ describe("applyCommand — command application", () => {
   it("dispatch remains a working legacy alias (result discarded)", () => {
     const g = createGame();
     expect(() => g.dispatch({ type: "setPower", playerId: P0, power: 4 })).not.toThrow();
-    expect(g.snapshot().power).toBe(4);
+    expect(projectSnapshot(g.getState(), P0).power).toBe(4);
     g.destroy();
   });
 });

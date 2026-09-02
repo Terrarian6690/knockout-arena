@@ -24,8 +24,12 @@ export interface PawnSnapshot {
   radius: number;
   /** Whether this pawn has been knocked out of the arena. */
   eliminated: boolean;
-  /** Whether this pawn is currently moving (during a turn). */
-  isMoving: boolean;
+  /**
+   * Whether this pawn's player has locked in their move for the CURRENT
+   * round (meaningful during the aiming phase; always false for
+   * eliminated pawns).
+   */
+  confirmed: boolean;
   /** Whether this pawn belongs to the local player (client projection only). */
   isLocal: boolean;
   /** Color key (index into the player palette). */
@@ -36,11 +40,14 @@ export interface PawnSnapshot {
  * The explicit phase of a match. The engine is in exactly one phase at a
  * time and every input is gated by it:
  *
- *   aiming   - the active pawn's player may aim and pick a power level
- *              (one launch per turn).
- *   moving   - the launch is resolving; physics runs until the mover
- *              settles. Eliminations of ANY pawn can happen while moving
- *              (a mover can knock opponents over the rim).
+ *   aiming   - the SHARED decision round: every alive player may aim and
+ *              pick a power level, and confirms independently. The phase
+ *              ends when all alive players have confirmed (or the server
+ *              resolves the round via `resolveRound`).
+ *   moving   - the round's confirmed launches are resolving TOGETHER;
+ *              physics runs until every survivor settles. Eliminations of
+ *              ANY pawn can happen while moving (a mover can knock
+ *              opponents over the rim — and movers can collide).
  *   finished - terminal: at most one pawn remains active. `winnerId`
  *              identifies the survivor, or null when nobody survived
  *              (e.g. a single-player loss). Only `reset` is accepted.
@@ -69,12 +76,20 @@ export interface GameStateSnapshot {
   localPawnId: string | null;
   /** Winner pawn id once the match is finished (null = no survivor). */
   winnerId: string | null;
-  /** The ACTIVE pawn's selected power level (1..5). */
+  /**
+   * The VIEWER'S OWN selected power level (1..5) — rounds are
+   * simultaneous, so each player's controls describe their own pawn. The
+   * neutral default for spectator projections (localPawnId null).
+   */
   power: number;
-  /** The ACTIVE pawn's aim direction as a unit vector, or null when unset. */
+  /**
+   * The VIEWER'S OWN aim direction as a unit vector, or null when unset.
+   * Null for spectator projections.
+   */
   aimDirection: Vec2 | null;
-  /** Whether the active pawn has an aim target to draw. */
+  /**
+   * Whether the viewer's own pawn has an aim target to draw (aiming phase,
+   * pawn alive). False for spectator projections.
+   */
   isAiming: boolean;
-  /** Which pawn currently acts. */
-  activePawnId: string | null;
 }

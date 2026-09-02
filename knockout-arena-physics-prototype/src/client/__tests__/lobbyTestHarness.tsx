@@ -313,7 +313,6 @@ export const wire = {
       power: 3,
       aimDirection: { x: 1, y: 0 },
       isAiming: false,
-      activePawnId: "p0",
       ...overrides,
       pawns,
     };
@@ -330,7 +329,7 @@ function pawn(id: string, overrides: Record<string, unknown> = {}) {
     velocity: { x: 0, y: 0 },
     radius: 16,
     eliminated: false,
-    isMoving: false,
+    confirmed: false,
     isLocal: false,
     colorIndex: Number(id.slice(1)),
     ...overrides,

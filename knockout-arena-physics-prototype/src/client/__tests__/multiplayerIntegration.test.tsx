@@ -40,11 +40,18 @@ async function waitFor(
   return predicate();
 }
 
-/** Strip the per-viewer projection so two clients' snapshots compare equal. */
+/**
+ * Strip the per-viewer projection so two clients' snapshots compare equal.
+ * (Simultaneous rounds: power/aimDirection/isAiming describe the VIEWER'S
+ * OWN pawn, so they differ per client by design.)
+ */
 function asAuthoritative(snapshot: GameStateSnapshot) {
   return {
     ...snapshot,
     localPawnId: null,
+    power: 0,
+    aimDirection: null,
+    isAiming: false,
     pawns: snapshot.pawns.map((pawn) => ({ ...pawn, isLocal: false })),
   };
 }
@@ -72,15 +79,15 @@ describe("two clients play one authoritative match (full stack)", () => {
     expect(await screen.findByTestId("arena-canvas", {}, { timeout: 5000 })).toBeInTheDocument();
     await waitFor(() => host.client.getState().snapshot !== null, 5000);
 
-    // p0 (the host) acts first — the server said so, the UI follows.
-    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Your turn — aim!");
+    // ── the SHARED aiming round: both players may choose at the same time ──
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
     expect(screen.getByTestId("launch")).toBeEnabled();
 
     const initialSnap = host.client.getState().snapshot as GameStateSnapshot;
     expect(initialSnap.pawns).toHaveLength(2);
     const initialPositions = initialSnap.pawns.map((p) => ({ ...p.position }));
 
-    // ── aim: pointer input → intent → server engine → new snapshot ──
+    // ── [20] the HOST chooses first (aim: pointer input → intent → server) ──
     fireEvent.pointerMove(screen.getByTestId("arena-canvas"), {
       clientX: 120,
       clientY: 80,
@@ -92,7 +99,7 @@ describe("two clients play one authoritative match (full stack)", () => {
       )
     ).toBe(true);
     const aimingSnap = host.client.getState().snapshot as GameStateSnapshot;
-    expect(aimingSnap.activePawnId).toBe("p0");
+    expect(aimingSnap.localPawnId).toBe("p0"); // the host's own view
     expect(aimingSnap.aimDirection).not.toBeNull();
 
     // ── power: the authoritative value comes back from the server ──
@@ -110,8 +117,36 @@ describe("two clients play one authoritative match (full stack)", () => {
       await waitFor(() => host.client.getState().snapshot !== idleSnap, 350)
     ).toBe(false); // no push while idle → no rerender data → no simulation
 
-    // ── launch: confirmLaunch → the server simulates the movement ──
+    // ── the host LOCKS IN: confirmLaunch does NOT start any movement ──
     fireEvent.click(screen.getByTestId("launch"));
+    expect(
+      await waitFor(
+        () =>
+          ((host.client.getState().snapshot as GameStateSnapshot).pawns[0]
+            .confirmed === true),
+        5000
+      )
+    ).toBe(true);
+    expect((host.client.getState().snapshot as GameStateSnapshot).phase).toBe("aiming"); // still the SAME round
+    expect(screen.getByTestId("launch")).toBeDisabled(); // the choice is locked
+    expect(screen.getByTestId("launch")).toHaveTextContent("Waiting…");
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent(
+      "Ready — waiting for other players"
+    );
+    // Nobody moved yet: the host's confirm alone moves nothing.
+    const confirmedSnap = host.client.getState().snapshot as GameStateSnapshot;
+    expect(confirmedSnap.pawns[0].position).toEqual(initialPositions[0]);
+    expect(confirmedSnap.pawns[1].position).toEqual(initialPositions[1]);
+
+    // ── [20] the GUEST chooses independently (headless "browser B") ──
+    const guestSnap = guest.client.getState().snapshot as GameStateSnapshot;
+    expect(guestSnap.localPawnId).toBe("p1"); // server's projection for B
+    await playerAct(() => guest.client.submitCommand({ type: "aim", x: CX, y: CY }));
+    await playerAct(() => guest.client.submitCommand({ type: "setPower", power: 2 }));
+    await playerAct(() => guest.client.submitCommand({ type: "confirmLaunch" }));
+
+    // The guest's confirmation completes the set → the round resolves with
+    // BOTH movements starting together.
     expect(
       await waitFor(
         () => (host.client.getState().snapshot as GameStateSnapshot).phase === "moving",
@@ -125,28 +160,28 @@ describe("two clients play one authoritative match (full stack)", () => {
     const guestMoving = guest.client.getState().snapshot as GameStateSnapshot;
     expect(asAuthoritative(guestMoving)).toEqual(asAuthoritative(hostMoving));
 
-    // ── the turn passes to p1 (the guest) once the pawn settles ──
+    // ── the round settles into a fresh aiming round (no turn queue) ──
     expect(
       await waitFor(() => {
         const snap = host.client.getState().snapshot as GameStateSnapshot;
-        return snap.phase === "aiming" && snap.activePawnId === "p1";
+        return snap.phase === "aiming";
       }, 8000)
     ).toBe(true);
-    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Player 2's turn");
-    expect(screen.getByTestId("launch")).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Power 4" })
-    ).toBeDisabled();
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
+    expect(screen.getByTestId("launch")).toBeEnabled(); // fresh round, fresh choice
 
-    // Authoritative positions changed (the launch moved p0)…
     const settledSnap = host.client.getState().snapshot as GameStateSnapshot;
+    // BOTH players' pawns moved during that ONE round — the host's confirm
+    // moved nothing by itself, and the guest never needed a "turn" of its
+    // own: two independent choices, one shared resolution.
     const settledP0 = settledSnap.pawns.find((p) => p.id === "p0")!;
+    const settledP1 = settledSnap.pawns.find((p) => p.id === "p1")!;
     expect(settledP0.position).not.toEqual(initialPositions[0]);
+    expect(settledP1.position).not.toEqual(initialPositions[1]);
+    expect(settledSnap.pawns.every((p) => !p.confirmed)).toBe(true);
 
-    // ── the guest plays its own turn (headless "browser B") ──
-    const guestSnap = guest.client.getState().snapshot as GameStateSnapshot;
-    expect(guestSnap.localPawnId).toBe("p1"); // server's projection for B
-    const me = guestSnap.pawns.find((p) => p.id === "p1")!;
+    // ── round 2: the guest knocks itself out; the deadline resolves ──
+    const me = settledP1;
     const dx = me.position.x - CX || 1;
     const dy = me.position.y - CY;
     const len = Math.hypot(dx, dy) || 1;
@@ -159,6 +194,17 @@ describe("two clients play one authoritative match (full stack)", () => {
     });
     await playerAct(() => guest.client.submitCommand({ type: "setPower", power: 5 }));
     await playerAct(() => guest.client.submitCommand({ type: "confirmLaunch" }));
+    // The host stays silent this round — the server's decision deadline
+    // (the privileged resolveRound path, never the player wire) resolves it.
+    expect(
+      await waitFor(
+        () =>
+          ((guest.client.getState().snapshot as GameStateSnapshot).pawns[1]
+            .confirmed === true),
+        5000
+      )
+    ).toBe(true);
+    await playerAct(() => harness.gameServer.resolveRound(roomId));
 
     // The guest knocks itself out → the server finishes the match.
     expect(

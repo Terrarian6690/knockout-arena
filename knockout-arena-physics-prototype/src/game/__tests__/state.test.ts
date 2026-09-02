@@ -13,14 +13,15 @@ import { projectSnapshot } from "../project";
 const DT = CONFIG.simulation.fixedTimestepMs;
 
 /**
- * UPDATED for the N-player state schema, which intentionally replaces the
- * old single-player shape:
- *   - aim + power moved from the match level onto EACH pawn (per-player
- *     controls that persist across other players' turns);
- *   - new `winnerId` field (set only in the "finished" phase);
- *   - the phase union is now aiming | moving | finished (elimination is a
- *     per-pawn flag, not a phase);
- *   - turn.queue must list every pawn exactly once (stable full roster).
+ * UPDATED for the simultaneous-round state schema:
+ *   - aim + power live on EACH pawn (per-player controls; power persists
+ *     across rounds, aim resets per round);
+ *   - per-pawn `confirmed` — locked in the current round's move;
+ *   - `round.settleTicks` replaces the whole turn queue (there is NO
+ *     current player and NO rotation — rounds are simultaneous);
+ *   - `winnerId` field (set only in the "finished" phase);
+ *   - the phase union is aiming | moving | finished (elimination is a
+ *     per-pawn flag, not a phase).
  */
 
 /** Build a complete, valid state by hand (single pawn at spawn). */
@@ -28,7 +29,7 @@ function handmadeState(): GameState {
   return {
     phase: "aiming",
     winnerId: null,
-    turn: { queue: ["p0"], activeIndex: 0, settleTicks: 0 },
+    round: { settleTicks: 0 },
     pawns: [handmadePawn("p0", "Player 1", 0, 450, 110)],
   };
 }
@@ -49,6 +50,7 @@ function handmadePawn(
     spawnY: y,
     eliminated: false,
     power: CONFIG.power.default,
+    confirmed: false,
     aim: { active: false, direction: { x: 0, y: -1 } },
     position: { x, y },
     velocity: { x: 0, y: 0 },
@@ -89,14 +91,28 @@ describe("validateGameState — valid states", () => {
   it("accepts a multi-pawn state (the N-player schema)", () => {
     const s = handmadeState();
     s.pawns.push(handmadePawn("p1", "Player 2", 1, 450, 590));
-    s.turn = { queue: ["p0", "p1"], activeIndex: 1, settleTicks: 3 };
+    s.round = { settleTicks: 3 };
+    expect(() => validateGameState(s)).not.toThrow();
+  });
+
+  it("accepts confirmed pawns during the aiming phase", () => {
+    const s = handmadeState();
+    s.pawns.push(handmadePawn("p1", "Player 2", 1, 450, 590));
+    s.pawns[0].confirmed = true;
+    s.pawns[1].confirmed = true;
+    expect(() => validateGameState(s)).not.toThrow();
+  });
+
+  it("accepts a mid-round state with settle ticks", () => {
+    const s = handmadeState();
+    s.phase = "moving";
+    s.round = { settleTicks: 17 };
     expect(() => validateGameState(s)).not.toThrow();
   });
 
   it("accepts a finished state with a surviving winner", () => {
     const s = handmadeState();
     s.pawns.push({ ...handmadePawn("p1", "Player 2", 1, 450, 590), eliminated: true });
-    s.turn = { queue: ["p0", "p1"], activeIndex: 0, settleTicks: 0 };
     s.phase = "finished";
     s.winnerId = "p0";
     expect(() => validateGameState(s)).not.toThrow();
@@ -191,42 +207,41 @@ describe("validateGameState — rejects corrupted states", () => {
     ).toThrow(/aim/);
   });
 
-  it("rejects malformed turn state", () => {
+  it("rejects malformed round state", () => {
     expect(() =>
-      validateGameState(
-        corrupt((s) => (s.turn = { queue: [], activeIndex: 0, settleTicks: 0 } as never))
-      )
-    ).toThrow(/turn\.queue/);
+      validateGameState(corrupt((s) => ((s.round as unknown as null) = null)))
+    ).toThrow(/missing round/);
     expect(() =>
-      validateGameState(corrupt((s) => (s.turn.activeIndex = 7)))
-    ).toThrow(/activeIndex/);
-    expect(() =>
-      validateGameState(corrupt((s) => (s.turn.settleTicks = -1)))
+      validateGameState(corrupt((s) => (s.round.settleTicks = -1)))
     ).toThrow(/settleTicks/);
     expect(() =>
-      validateGameState(corrupt((s) => (s.turn.queue = ["p0", "ghost"])))
-    ).toThrow(/unknown pawn/);
+      validateGameState(corrupt((s) => (s.round.settleTicks = 1.5)))
+    ).toThrow(/settleTicks/);
+    expect(() =>
+      validateGameState(corrupt((s) => ((s.round.settleTicks as unknown as string) = "3")))
+    ).toThrow(/settleTicks/);
   });
 
-  it("rejects a turn queue that is not the full roster", () => {
-    // Reason: the queue is the stable full roster; a partial or duplicated
-    // queue would make rotation order ambiguous across hosts/replays.
+  it("rejects a non-boolean confirmed flag", () => {
+    expect(() =>
+      validateGameState(
+        corrupt((s) => ((s.pawns[0].confirmed as unknown as string) = "yes"))
+      )
+    ).toThrow(/confirmed/);
+  });
+
+  it("rejects an eliminated pawn that is confirmed", () => {
+    // Reason: an eliminated pawn cannot participate in any round; keeping
+    // the invariant explicit makes the flag trustworthy after restore.
     expect(() =>
       validateGameState(
         corrupt((s) => {
           s.pawns.push(handmadePawn("p1", "Player 2", 1, 450, 590));
-          s.turn.queue = ["p0"]; // p1 missing
+          s.pawns[0].eliminated = true;
+          s.pawns[0].confirmed = true;
         })
       )
-    ).toThrow(/exactly once/);
-    expect(() =>
-      validateGameState(
-        corrupt((s) => {
-          s.pawns.push(handmadePawn("p1", "Player 2", 1, 450, 590));
-          s.turn.queue = ["p0", "p1", "p0"]; // duplicate
-        })
-      )
-    ).toThrow(/duplicate/);
+    ).toThrow(/eliminated pawn .* must not be confirmed/);
   });
 
   it("rejects malformed pawns", () => {
@@ -300,7 +315,7 @@ describe("serializeGameState / deserializeGameState", () => {
 });
 
 describe("projectSnapshot (state → client view)", () => {
-  it("projects aiming state with the aim visible", () => {
+  it("projects aiming state with the viewer's own aim visible", () => {
     const s = handmadeState();
     s.pawns[0].aim.active = true;
     s.pawns[0].aim.direction = { x: 0, y: 1 };
@@ -309,22 +324,22 @@ describe("projectSnapshot (state → client view)", () => {
     expect(view.isAiming).toBe(true);
     expect(view.aimDirection).toEqual({ x: 0, y: 1 });
     expect(view.localPawnId).toBe("p0");
-    expect(view.activePawnId).toBe("p0");
-    expect(view.pawns[0].isMoving).toBe(false);
+    expect(view.pawns[0].confirmed).toBe(false);
     expect(view.pawns[0].isLocal).toBe(true);
   });
 
-  it("projects moving state with the active pawn moving", () => {
+  it("projects each pawn's round confirmation per pawn", () => {
     const s = handmadeState();
-    s.phase = "moving";
-    s.pawns[0].aim.active = false;
-    const view = projectSnapshot(s, "p0");
-    expect(view.isAiming).toBe(false);
-    expect(view.aimDirection).toBeNull();
-    expect(view.pawns[0].isMoving).toBe(true);
+    s.pawns.push(handmadePawn("p1", "Player 2", 1, 450, 590));
+    s.pawns[0].confirmed = true;
+    s.pawns[1].confirmed = false;
+    const view = projectSnapshot(s, null);
+    expect(view.pawns.find((p) => p.id === "p0")!.confirmed).toBe(true);
+    expect(view.pawns.find((p) => p.id === "p1")!.confirmed).toBe(false);
+    expect(view.localPawnId).toBeNull();
   });
 
-  it("hides the aim while moving even if aim.active is somehow true", () => {
+  it("hides the aim while the round resolves even if aim.active is somehow true", () => {
     const s = handmadeState();
     s.phase = "moving";
     s.pawns[0].aim.active = true;
@@ -332,15 +347,13 @@ describe("projectSnapshot (state → client view)", () => {
     expect(view.isAiming).toBe(false);
   });
 
-  it("marks only the active pawn as moving in a multi-pawn state", () => {
+  it("hides the aim of an eliminated viewer", () => {
     const s = handmadeState();
-    s.phase = "moving";
-    s.pawns.push(handmadePawn("p1", "Player 2", 1, 450, 590));
-    s.turn = { queue: ["p0", "p1"], activeIndex: 1, settleTicks: 0 };
-    const view = projectSnapshot(s, null);
-    expect(view.pawns.find((p) => p.id === "p0")!.isMoving).toBe(false);
-    expect(view.pawns.find((p) => p.id === "p1")!.isMoving).toBe(true);
-    expect(view.localPawnId).toBeNull();
+    s.phase = "aiming";
+    s.pawns[0].eliminated = true;
+    s.pawns[0].aim.active = true;
+    const view = projectSnapshot(s, "p0");
+    expect(view.isAiming).toBe(false);
   });
 
   it("marks isLocal per pawn and only for the caller's own pawn", () => {
@@ -356,17 +369,31 @@ describe("projectSnapshot (state → client view)", () => {
     expect(asSpectator.pawns.every((p) => !p.isLocal)).toBe(true);
   });
 
-  it("projects the ACTIVE pawn's controls (per-pawn aim + power)", () => {
+  it("projects the VIEWER'S OWN controls (simultaneous rounds)", () => {
     const s = handmadeState();
     s.pawns.push(handmadePawn("p1", "Player 2", 1, 450, 590));
-    s.turn = { queue: ["p0", "p1"], activeIndex: 1, settleTicks: 0 };
     s.pawns[0].power = 5;
     s.pawns[0].aim = { active: true, direction: { x: 1, y: 0 } };
     s.pawns[1].power = 2;
     s.pawns[1].aim = { active: true, direction: { x: 0, y: -1 } };
+    // Each player sees their OWN selection — not "the active pawn's".
+    const asP0 = projectSnapshot(s, "p0");
+    expect(asP0.power).toBe(5);
+    expect(asP0.aimDirection).toEqual({ x: 1, y: 0 });
+    const asP1 = projectSnapshot(s, "p1");
+    expect(asP1.power).toBe(2);
+    expect(asP1.aimDirection).toEqual({ x: 0, y: -1 });
+  });
+
+  it("projects neutral spectator controls (no local pawn)", () => {
+    const s = handmadeState();
+    s.pawns.push(handmadePawn("p1", "Player 2", 1, 450, 590));
+    s.pawns[0].power = 5;
+    s.pawns[0].aim = { active: true, direction: { x: 1, y: 0 } };
     const view = projectSnapshot(s, null);
-    expect(view.power).toBe(2);
-    expect(view.aimDirection).toEqual({ x: 0, y: -1 });
+    expect(view.power).toBe(CONFIG.power.default);
+    expect(view.aimDirection).toBeNull();
+    expect(view.isAiming).toBe(false);
   });
 
   it("carries the winner through the projection", () => {

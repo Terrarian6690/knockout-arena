@@ -201,7 +201,7 @@ describe("lobby room screen", () => {
     expect(await screen.findByText("Multiplayer match")).toBeInTheDocument();
     expect(
       await screen.findByTestId("turn-badge")
-    ).toHaveTextContent("Your turn — aim!");
+    ).toHaveTextContent("Choose your move — aim!");
     expect(screen.queryByTestId("start-match")).toBeNull();
     expect(host.client.getState().roomState).toBe("playing"); // server truth
   });

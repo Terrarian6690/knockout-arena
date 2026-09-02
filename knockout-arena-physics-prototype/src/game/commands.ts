@@ -2,16 +2,24 @@
  * The command model - how player INTENT enters the engine.
  *
  * A command is the only way outside input can affect the simulation. Commands
- * are deliberately intentions ("aim here", "launch now"), never outcomes:
- * there is no command to eliminate a pawn, change the phase, resolve a
- * collision, or declare a winner. Those are engine-internal results of
- * simulating, which is what makes a future authoritative server possible -
- * a client can only ask, never decide.
+ * are deliberately intentions ("aim here", "lock in my move"), never
+ * outcomes: there is no command to eliminate a pawn, change the phase,
+ * resolve a collision, or declare a winner. Those are engine-internal
+ * results of simulating, which is what makes a future authoritative server
+ * possible - a client can only ask, never decide.
+ *
+ * ROUNDS ARE SIMULTANEOUS: aim / setPower / confirmLaunch are a player's
+ * OWN choices within the CURRENT shared aiming round. confirmLaunch locks
+ * that player's choice (it does NOT start movement by itself) - the round's
+ * movements begin together only when every alive player has confirmed, or
+ * when the server resolves the round (the `resolveRound` command, its
+ * decision deadline).
  *
  * OWNERSHIP: every action command identifies the player issuing it. The
- * engine verifies that the player exists, is not eliminated, and is the one
- * whose turn it is before applying. A future server performs the same check
- * against the authenticated session before even forwarding the command.
+ * engine verifies that the player exists and is not eliminated before
+ * applying. A future server performs the same check against the
+ * authenticated session before even forwarding the command - a player can
+ * never submit a command for another player.
  *
  * Commands are plain JSON-serializable objects so a future transport layer
  * can ship them verbatim.
@@ -22,12 +30,27 @@
  * the sender claims to control - it is validated, never trusted.
  */
 export type GameCommand =
-  /** Aim the sender's pawn toward a world-space point (aiming phase only). */
+  /** Aim the sender's pawn toward a world-space point (aiming round only,
+   *  before the sender has confirmed). */
   | { type: "aim"; playerId: string; x: number; y: number }
-  /** Select the sender's pawn launch power; the engine clamps to range. */
+  /** Select the sender's pawn launch power (aiming round only, before the
+   *  sender has confirmed); the engine clamps to range. */
   | { type: "setPower"; playerId: string; power: number }
-  /** Launch the sender's pawn along its aim (one launch per turn). */
+  /**
+   * Lock in the sender's move for the CURRENT round (aim + power become
+   * immutable for that player). Does NOT start movement by itself: the
+   * round resolves when every alive player has confirmed, or when the
+   * server resolves it (see resolveRound).
+   */
   | { type: "confirmLaunch"; playerId: string }
+  /**
+   * Resolve the current aiming round with whatever confirmations exist:
+   * all confirmed players' movements start together; unconfirmed players
+   * do not move this round. This is the server's decision-deadline action
+   * (match-level, player-less — exactly like reset). The multiplayer
+   * server submits it when the round deadline expires; players cannot.
+   */
+  | { type: "resolveRound" }
   /**
    * Reset the match to its initial state. Deliberately player-less for now:
    * it is a match-level/debug action. In the multiplayer phase this becomes
@@ -65,21 +88,26 @@ export function withPlayerId(intent: PlayerIntent, playerId: string): GameComman
 /**
  * Why a command was not applied.
  *
- *   invalid-command - structurally malformed (unknown type, missing or
- *                     non-numeric fields, missing playerId). Safe to
- *                     evaluate against completely untrusted input.
- *   unknown-player  - the playerId does not exist in this match.
- *   wrong-player    - the player exists but cannot act right now: not their
- *                     turn, or their pawn is eliminated.
- *   wrong-phase     - the right player at the right time, but the phase does
- *                     not accept the command (e.g. launching while a pawn is
- *                     still moving, or anything after the match finished).
+ *   invalid-command    - structurally malformed (unknown type, missing or
+ *                        non-numeric fields, missing playerId). Safe to
+ *                        evaluate against completely untrusted input.
+ *   unknown-player     - the playerId does not exist in this match.
+ *   wrong-player       - the player exists but cannot act: their pawn is
+ *                        eliminated.
+ *   wrong-phase        - the player is fine, but the phase does not accept
+ *                        the command (e.g. choosing while the round is
+ *                        still resolving, or anything after the match
+ *                        finished).
+ *   already-confirmed  - the player already locked in their move for the
+ *                        current round; aim/power/confirm are immutable
+ *                        until the next round begins.
  */
 export type CommandRejection =
   | "invalid-command"
   | "unknown-player"
   | "wrong-player"
-  | "wrong-phase";
+  | "wrong-phase"
+  | "already-confirmed";
 
 /** Outcome of validating/applying a command. */
 export type CommandResult =
@@ -131,6 +159,10 @@ function validateCommandInner(candidate: unknown): CommandResult {
       if (!hasPlayerId) {
         return { ...REJECTED, reason: "invalid-command" };
       }
+      return { ok: true };
+    case "resolveRound":
+      // Match-level, player-less — structurally valid; ownership is the
+      // server's business (players never get to submit it over the wire).
       return { ok: true };
     case "reset":
       return { ok: true };

@@ -4,10 +4,10 @@ import { HostChip, YouChip } from "../lobby/SeatList";
 
 /**
  * The match's player rail: who is playing, who is "you", who hosts, who
- * acts and who is out — all read from the authoritative snapshot (the
- * server's viewer projection marks your own pawn via `isLocal`; the host
- * id comes from the room state). This is display only: the rail never
- * advances a turn or decides an elimination.
+ * has locked in their move and who is out — all read from the
+ * authoritative snapshot (the server's viewer projection marks your own
+ * pawn via `isLocal`; the host id comes from the room state). This is
+ * display only: the rail never advances a round or decides an elimination.
  */
 interface MatchRailProps {
   readonly snapshot: GameStateSnapshot;
@@ -22,14 +22,16 @@ export function MatchRail({ snapshot, hostPlayerId }: MatchRailProps) {
       className="flex items-center gap-2 overflow-x-auto border-b border-white/10 bg-white/[0.02] px-4 py-2"
     >
       {snapshot.pawns.map((pawn) => {
-        const active = pawn.id === snapshot.activePawnId;
+        // Simultaneous rounds: the highlight marks players who are still
+        // deciding in the CURRENT round (no single acting pawn).
+        const deciding = snapshot.phase === "aiming" && !pawn.eliminated && !pawn.confirmed;
         return (
           <div
             key={pawn.id}
             data-testid={`rail-${pawn.id}`}
             className={cn(
               "flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs",
-              active
+              deciding
                 ? "border-amber-400/50 bg-amber-500/10"
                 : "border-white/10 bg-white/[0.03]",
               pawn.eliminated && "opacity-45"
@@ -53,11 +55,13 @@ export function MatchRail({ snapshot, hostPlayerId }: MatchRailProps) {
             {pawn.id === hostPlayerId && <HostChip />}
             {pawn.eliminated ? (
               <span className="font-semibold text-red-300/80">Out</span>
-            ) : active ? (
-              <span className="font-semibold text-amber-300">
-                {snapshot.phase === "moving" ? "Moving" : "Aiming"}
-              </span>
-            ) : null}
+            ) : snapshot.phase === "moving" ? (
+              <span className="font-semibold text-sky-300">Moving</span>
+            ) : pawn.confirmed ? (
+              <span className="font-semibold text-emerald-300">Ready</span>
+            ) : (
+              <span className="font-semibold text-amber-300">Choosing…</span>
+            )}
           </div>
         );
       })}

@@ -205,8 +205,8 @@ describe("WebSocket transport over real sockets", () => {
     // A command with a forged playerId is applied as the sender's own.
     host.send(command({ type: "aim", playerId: "p1", x: CX, y: CY }));
     const aimSnap = (await host.next("snapshot")).state as GameStateSnapshot;
-    expect(aimSnap.isAiming).toBe(true);
-    expect(aimSnap.activePawnId).toBe("p0");
+    expect(aimSnap.isAiming).toBe(true); // the host's OWN aim (viewer-local)
+    expect(aimSnap.localPawnId).toBe("p0");
     await guest.next("snapshot");
   }, 8000);
 
@@ -274,6 +274,20 @@ describe("WebSocket transport over real sockets", () => {
     host.send(command({ type: "aim", x: CX + (dx / len) * 400, y: CY + (dy / len) * 400 }));
     host.send(command({ type: "setPower", power: 5 }));
     host.send(command({ type: "confirmLaunch" }));
+    // Wire commands are asynchronous — wait until the confirmation is
+    // visible in the authoritative state before firing the deadline.
+    const waitForSnapshot = async (
+      predicate: (s: GameStateSnapshot) => boolean
+    ): Promise<void> => {
+      for (;;) {
+        const snap = (await host.next("snapshot")).state as GameStateSnapshot;
+        if (predicate(snap)) return;
+      }
+    };
+    await waitForSnapshot((snap) => snap.pawns[0].confirmed === true);
+    // The guest stayed silent — the round resolves at the server's
+    // decision deadline (the privileged resolveRound path, not the wire).
+    transport.gameServer.resolveRound(roomId);
     const finished = await guest.next("match_finished", 6000);
     expect(finished).toMatchObject({ protocolVersion: 1, type: "match_finished", winnerId: "p1" });
     expect(transport.gameServer.getRoom(roomId)!.state).toBe("finished");

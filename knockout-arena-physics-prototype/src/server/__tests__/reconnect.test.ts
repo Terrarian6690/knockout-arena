@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   CONFIG,
   deserializeGameState,
-  projectSnapshot,
   type GameState,
 } from "../../game";
 import { createGameServer, type GameServer, type SeatedResult } from "../index";
@@ -95,9 +94,14 @@ function latestState(received: string[]): GameState {
   return deserializeGameState(last);
 }
 
-/** The active pawn of the latest state (spectator projection). */
-function activePawnId(received: string[]): string | null {
-  return projectSnapshot(latestState(received), null).activePawnId;
+/** The phase of the latest pushed state. */
+function phaseOf(received: string[]): GameState["phase"] {
+  return latestState(received).phase;
+}
+
+/** Wait until the round has settled back to "aiming" (post-resolution). */
+function roundSettled(received: string[]): boolean {
+  return phaseOf(received) === "aiming";
 }
 
 async function waitFor(
@@ -281,23 +285,22 @@ describe("seat recovery", () => {
     ]);
     expect(latestState(states)).toEqual(stateBefore);
 
-    // The recovered player's commands work again immediately.
+    // The recovered player's commands work again immediately — the round
+    // is open to every alive player, so p1 may choose right away.
     expect(
       server.submitCommand(sessions[1], { type: "aim", x: CX, y: CY })
-    ).toEqual({
-      ok: false,
-      reason: "wrong-player", // not their turn — identity-aware as always
-    });
+    ).toEqual({ ok: true });
   }, 8000);
 
-  it("dropping on your own turn: it is still your turn after recovery", async () => {
+  it("[11] dropping mid-round and recovering BEFORE resolution: the player continues normally", async () => {
     const server = newServer();
     const { roomId, sessions, tokens } = makeRoom(server, 2);
     const states = statePipe(server, sessions[0]);
     expect(server.startMatch(roomId).ok).toBe(true);
     expect(await waitFor(() => states.length > 0, 3000)).toBe(true);
 
-    // p0 plays a short inward shot → the turn passes to p1.
+    // p0 locks in a short inward shot. The round stays OPEN (p1 has not
+    // chosen) — no turn passes anywhere.
     expect(
       server.submitCommand(sessions[0], { type: "aim", x: CX, y: CY })
     ).toEqual({ ok: true });
@@ -307,16 +310,67 @@ describe("seat recovery", () => {
     expect(server.submitCommand(sessions[0], { type: "confirmLaunch" })).toEqual({
       ok: true,
     });
-    expect(await waitFor(() => activePawnId(states) === "p1", 5000)).toBe(true);
+    expect(phaseOf(states)).toBe("aiming"); // waiting for p1 (or deadline)
 
-    // p1 drops on its own turn and recovers: still p1's turn.
+    // p1 drops mid-round and recovers before any resolution happened.
     expect(server.reserve(sessions[1])).toEqual({ ok: true });
     const recovered = server.reconnect(tokens[1]);
     expect(recovered.ok).toBe(true);
-    expect(activePawnId(states)).toBe("p1");
+    expect(phaseOf(states)).toBe("aiming"); // the round never moved on
+
+    // The recovered p1 still chooses in the SAME round…
     expect(
       server.submitCommand(sessions[1], { type: "aim", x: CX, y: CY })
-    ).toEqual({ ok: true }); // their turn, they can aim again
+    ).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[1], { type: "setPower", power: 1 })).toEqual({
+      ok: true,
+    });
+    // …and completing the set starts everyone's movement together.
+    expect(server.submitCommand(sessions[1], { type: "confirmLaunch" })).toEqual({
+      ok: true,
+    });
+    expect(await waitFor(() => phaseOf(states) === "moving", 3000)).toBe(true);
+    expect(await waitFor(() => roundSettled(states), 5000)).toBe(true); // settled → next round
+  }, 10000);
+
+  it("[12] recovering AFTER a resolution: the reconnected player sees the post-resolution state", async () => {
+    const server = newServer();
+    const { roomId, sessions, tokens } = makeRoom(server, 2);
+    const states = statePipe(server, sessions[0]);
+    expect(server.startMatch(roomId).ok).toBe(true);
+    expect(await waitFor(() => states.length > 0, 3000)).toBe(true);
+
+    // p0 locks in; p1 drops WITHOUT choosing; the deadline resolves the
+    // round with p0's move only.
+    expect(
+      server.submitCommand(sessions[0], { type: "aim", x: CX, y: CY })
+    ).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[0], { type: "setPower", power: 3 }))
+      .toEqual({ ok: true });
+    expect(server.submitCommand(sessions[0], { type: "confirmLaunch" })).toEqual({
+      ok: true,
+    });
+    const p1Start = { ...latestState(states).pawns[1].position };
+    expect(server.reserve(sessions[1])).toEqual({ ok: true }); // p1 drops
+    expect(server.resolveRound(roomId)).toEqual({ ok: true }); // deadline
+    expect(await waitFor(() => phaseOf(states) === "moving", 3000)).toBe(true);
+    expect(await waitFor(() => roundSettled(states), 5000)).toBe(true);
+
+    // p1 reconnects AFTER the resolution: the authoritative state shows the
+    // post-resolution world — a fresh aiming round, p1 unmoved and free to
+    // choose again.
+    const recovered = server.reconnect(tokens[1]);
+    expect(recovered.ok).toBe(true);
+    if (!recovered.ok) throw new Error("unreachable");
+    expect(recovered.playerId).toBe("p1");
+    const s = latestState(states);
+    expect(s.phase).toBe("aiming");
+    expect(s.pawns[1].position).toEqual(p1Start); // did not move that round
+    expect(s.pawns[1].confirmed).toBe(false); // fresh round, fresh choice
+    expect(s.pawns[0].confirmed).toBe(false);
+    expect(
+      server.submitCommand(sessions[1], { type: "aim", x: CX, y: CY })
+    ).toEqual({ ok: true }); // and can act immediately
   }, 10000);
 
   it("dropping after elimination: still eliminated after recovery", async () => {
@@ -326,7 +380,8 @@ describe("seat recovery", () => {
     expect(server.startMatch(roomId).ok).toBe(true);
     expect(await waitFor(() => states.length > 0, 3000)).toBe(true);
 
-    // p0 plays a short inward shot to hand the turn to p1.
+    // p0 locks in a short inward shot; the deadline resolves it (p1 stayed
+    // silent), and the round settles into a fresh aiming phase.
     expect(
       server.submitCommand(sessions[0], { type: "aim", x: CX, y: CY })
     ).toEqual({ ok: true });
@@ -336,7 +391,8 @@ describe("seat recovery", () => {
     expect(server.submitCommand(sessions[0], { type: "confirmLaunch" })).toEqual({
       ok: true,
     });
-    expect(await waitFor(() => activePawnId(states) === "p1", 5000)).toBe(true);
+    expect(server.resolveRound(roomId)).toEqual({ ok: true });
+    expect(await waitFor(() => roundSettled(states), 5000)).toBe(true);
 
     // p1 eliminates itself: radial outward p5 launch over the rim.
     const target = overTheRim(latestState(states).pawns[1]);
@@ -349,6 +405,7 @@ describe("seat recovery", () => {
     expect(server.submitCommand(sessions[1], { type: "confirmLaunch" })).toEqual({
       ok: true,
     });
+    expect(server.resolveRound(roomId)).toEqual({ ok: true });
     expect(
       await waitFor(
         () => latestState(states).pawns[1].eliminated === true,
@@ -361,7 +418,7 @@ describe("seat recovery", () => {
     expect(recovered.ok).toBe(true);
     expect(latestState(states).pawns[1].eliminated).toBe(true);
     // Still eliminated — and the match is over (p0 won): the recovered
-    // identity gets the normal rejection, never a new turn.
+    // identity gets the normal rejection, never a new round.
     expect(latestState(states).phase).toBe("finished");
     expect(
       server.submitCommand(sessions[1], { type: "aim", x: CX, y: CY })

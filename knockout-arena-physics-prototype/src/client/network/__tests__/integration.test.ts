@@ -247,7 +247,8 @@ describe("browser client ↔ real server (in-memory wire)", () => {
       )
     ).toBe(true);
     const aiming = host.client.getState().snapshot as GameStateSnapshot;
-    expect(aiming.activePawnId).toBe("p0"); // the host aimed its own pawn
+    expect(aiming.localPawnId).toBe("p0"); // the host's own view
+    expect(aiming.pawns[0].isLocal).toBe(true);
     for (const raw of host.pair.clientSent) {
       expect(JSON.parse(raw)).not.toHaveProperty("playerId");
       expect(JSON.parse(raw).command ?? {}).not.toHaveProperty("playerId");
@@ -256,6 +257,7 @@ describe("browser client ↔ real server (in-memory wire)", () => {
 
   it("runs a real match to match_finished: the self-KO player loses", async () => {
     const core = makeCore();
+    const gameServer = liveServers[liveServers.length - 1];
     const { host, guest } = await startedRoom(core);
 
     expect(
@@ -278,6 +280,17 @@ describe("browser client ↔ real server (in-memory wire)", () => {
     ).toBe(true);
     host.client.submitCommand({ type: "setPower", power: 5 });
     host.client.submitCommand({ type: "confirmLaunch" });
+    // The guest stayed silent — the round resolves at the server's
+    // decision deadline once the host's confirmation has landed.
+    expect(
+      await waitFor(
+        () =>
+          (host.client.getState().snapshot as GameStateSnapshot | null)?.pawns[0]
+            ?.confirmed === true,
+        3000
+      )
+    ).toBe(true);
+    gameServer.resolveRound((host.client.getState().roomId as string));
 
     const finished = await waitFor(
       () => host.client.getState().winnerId === "p1" && guest.client.getState().winnerId === "p1",
@@ -402,8 +415,8 @@ describe("browser client ↔ real server (in-memory wire)", () => {
       )
     ).toBe(true);
     expect(
-      (host.client.getState().snapshot as GameStateSnapshot).activePawnId
-    ).toBe("p0");
+      (host.client.getState().snapshot as GameStateSnapshot).localPawnId
+    ).toBe("p0"); // recovered into the same seat's own view
   });
 
   it("an expired credential is rejected and the client returns to the lobby surface", async () => {
@@ -480,12 +493,12 @@ describe("browser client ↔ real server (in-memory wire)", () => {
     expect(notifications).toBeGreaterThan(afterJoin);
     const afterStart = notifications;
 
-    // Unsubscribed: no further notifications. (The guest's rejected command
-    // errors on the GUEST side only — the host hears nothing.)
+    // Unsubscribed: no further notifications. (The guest's malformed
+    // command errors on the GUEST side only — the host hears nothing.)
     unsubscribe();
-    guest.client.submitCommand({ type: "aim", x: CX, y: CY });
+    guest.client.submitCommand({ type: "setPower", power: "hot" });
     expect(notifications).toBe(afterStart);
-    expect(guest.client.getState().lastError?.code).toBe("wrong-player");
+    expect(guest.client.getState().lastError?.code).toBe("invalid-command");
     expect(host.client.getState().lastError).toBeNull();
   });
 });

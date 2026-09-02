@@ -68,7 +68,7 @@ describe("seat recovery through the real UI", () => {
       await waitFor(() => host.client.getState().snapshot !== null, 5000)
     ).toBe(true);
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
-      "Your turn — aim!"
+      "Choose your move — aim!"
     );
 
     // ── the host's connection dies mid-match ──
@@ -105,7 +105,7 @@ describe("seat recovery through the real UI", () => {
     // The banner is gone, the match view is intact…
     expect(screen.queryByText(/Connection lost — retrying/)).not.toBeInTheDocument();
     expect(screen.getByText("Multiplayer match")).toBeInTheDocument();
-    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Your turn — aim!");
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
 
     // …the guest sees the host connected again…
     expect(
@@ -128,8 +128,8 @@ describe("seat recovery through the real UI", () => {
       )
     ).toBe(true);
     expect(
-      (host.client.getState().snapshot as GameStateSnapshot).activePawnId
-    ).toBe("p0");
+      (host.client.getState().snapshot as GameStateSnapshot).localPawnId
+    ).toBe("p0"); // recovered into the same seat's own view
 
     // One room, two seats, one host identity — nothing duplicated.
     expect(harness.gameServer.getRoom(roomId)!.seats).toHaveLength(2);

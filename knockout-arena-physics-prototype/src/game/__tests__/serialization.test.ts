@@ -13,11 +13,12 @@ const FLOOR = CONFIG.arena.radius - CONFIG.arena.wallThickness;
 const PAWN_R = CONFIG.pawn.radius;
 
 /**
- * UPDATED for the N-player model:
- *   - commands carry playerId (the crafted two-pawn scenario must send p1's
- *     commands with playerId "p1" during p1's turn);
+ * UPDATED for the simultaneous-round model:
+ *   - commands carry playerId (players choose independently — there is no
+ *     turn to wait for);
  *   - the terminal phase is "finished" (the old "eliminated" phase is gone);
- *   - per-pawn aim/power and winnerId are part of the serialized state.
+ *   - per-pawn aim/power/confirmed and winnerId are part of the serialized
+ *     state; the turn queue is gone (round.settleTicks only).
  */
 
 /** Drive the game loop until the phase leaves "moving" (or maxFrames). */
@@ -49,8 +50,8 @@ describe("getState — serializable authoritative state", () => {
 
     expect(s.phase).toBe("moving");
     expect(s.pawns[0].power).toBe(4); // per-pawn power
-    expect(s.turn.queue).toEqual(["p0"]);
-    expect(s.turn.settleTicks).toBe(1);
+    expect(s.pawns[0].confirmed).toBe(true); // locked for this round
+    expect(s.round.settleTicks).toBe(1);
     const pawn = s.pawns[0];
     // Kinematics present so physics can be rebuilt.
     expect(pawn.position.x).toBeTypeOf("number");
@@ -222,14 +223,14 @@ describe("loadState — reconstruction", () => {
 });
 
 describe("loadState — state-driven engine (N-player states)", () => {
-  it("adopts a two-pawn state and rotates turns correctly", () => {
+  it("adopts a two-pawn state and resolves simultaneous rounds", () => {
     const g = createGame();
     const base = g.getState();
 
     // Craft a two-pawn state: second pawn at the bottom of the arena.
     const twoPawn: GameState = {
       ...base,
-      turn: { queue: ["p0", "p1"], activeIndex: 0, settleTicks: 0 },
+      round: { settleTicks: 0 },
       pawns: [
         base.pawns[0],
         {
@@ -245,22 +246,21 @@ describe("loadState — state-driven engine (N-player states)", () => {
     };
     g.loadState(twoPawn);
     expect(g.snapshot().pawns.length).toBe(2);
-    expect(g.snapshot().activePawnId).toBe("p0");
-
-    // p0 launches toward the center and settles → turn advances to p1.
-    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 350 });
-    g.dispatch({ type: "setPower", playerId: "p0", power: 2 });
-    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
-    pump(g, 700);
     expect(g.snapshot().phase).toBe("aiming");
-    expect(g.snapshot().activePawnId).toBe("p1");
+    // Nobody acts alone: confirming p0 does NOT start a round (p1 pending).
+    g.dispatch({ type: "confirmLaunch", playerId: "p0" });
+    expect(g.snapshot().phase).toBe("aiming");
+    expect(g.getState().pawns.find((p) => p.id === "p0")!.confirmed).toBe(true);
 
-    // p1 launches as well → turn wraps back to p0.
+    // p1 confirms too → BOTH move in the same round, together.
     g.dispatch({ type: "aim", playerId: "p1", x: 450, y: 350 });
     g.dispatch({ type: "setPower", playerId: "p1", power: 1 });
     g.dispatch({ type: "confirmLaunch", playerId: "p1" });
+    expect(g.snapshot().phase).toBe("moving");
     pump(g, 700);
-    expect(g.snapshot().activePawnId).toBe("p0");
+    // Both settled → a fresh aiming round, confirmations reset for everyone.
+    expect(g.snapshot().phase).toBe("aiming");
+    expect(g.getState().pawns.every((p) => !p.confirmed)).toBe(true);
     g.destroy();
   });
 
@@ -269,10 +269,10 @@ describe("loadState — state-driven engine (N-player states)", () => {
     const base = g.getState();
     const single: GameState = {
       ...base,
+      round: { settleTicks: 0 },
       pawns: [
         { ...base.pawns[0], id: "solo", name: "Solo" },
       ],
-      turn: { queue: ["solo"], activeIndex: 0, settleTicks: 0 },
     };
     g.loadState(single);
     expect(g.snapshot().pawns.map((p) => p.id)).toEqual(["solo"]);
@@ -286,7 +286,7 @@ describe("loadState — state-driven engine (N-player states)", () => {
     const base = g.getState();
     g.loadState({
       ...base,
-      turn: { queue: ["p0", "p1"], activeIndex: 1, settleTicks: 5 },
+      round: { settleTicks: 5 },
       pawns: [
         base.pawns[0],
         { ...base.pawns[0], id: "p1", colorIndex: 1, spawnX: 450, spawnY: 590, position: { x: 450, y: 590 } },
@@ -295,7 +295,7 @@ describe("loadState — state-driven engine (N-player states)", () => {
     g.dispatch({ type: "reset" });
     const s = g.snapshot();
     expect(s.phase).toBe("aiming");
-    expect(s.activePawnId).toBe("p0");
+    expect(s.pawns.every((p) => !p.confirmed)).toBe(true);
     expect(s.pawns.find((p) => p.id === "p1")!.position).toEqual({ x: 450, y: 590 });
     g.destroy();
   });

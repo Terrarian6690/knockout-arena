@@ -8,13 +8,18 @@ import type { GamePhase, Vec2 } from "./types";
  * engine instance — no Matter.js internals, no functions, no object
  * references, only plain JSON data:
  *
- *   - the phase machine (phase, winner, turn queue, active index, settle
- *     ticks)
+ *   - the phase machine (phase, winner, round settle ticks)
  *   - per-pawn domain state (identity, colors, spawn, elimination flag)
- *   - per-pawn aim + power selections (each player's own controls, so a
- *     server can apply commands to the correct pawn)
+ *   - per-pawn round selections (aim, power, and whether the player has
+ *     confirmed their move for the CURRENT round)
  *   - per-pawn kinematics (position, velocity, angle, angular velocity) so
  *     physics bodies can be rebuilt deterministically
+ *
+ * There is NO turn queue and NO current player: rounds are SIMULTANEOUS.
+ * Every alive player picks aim + power and confirms independently; the
+ * round's movements start together when all alive players have confirmed
+ * (or the server resolves the round — its decision deadline). The
+ * `confirmed` flag is per-round: it resets for every new aiming phase.
  *
  * Deliberately EXCLUDED:
  *   - rendering/presentation data (see GameStateSnapshot in types.ts)
@@ -50,10 +55,16 @@ export interface PawnState {
   spawnY: number;
   /** Whether this pawn has been knocked out. */
   eliminated: boolean;
-  /** This pawn's selected power level (1..5), kept across other turns. */
+  /** This pawn's selected power level (1..5), kept across rounds. */
   power: number;
-  /** This pawn's aim selection, kept across other turns. */
+  /** This pawn's aim selection (reset for each new aiming round). */
   aim: PawnAimState;
+  /**
+   * Whether this pawn's player has CONFIRMED their move for the CURRENT
+   * round. Confirmation locks aim + power for that round; the flag resets
+   * for every new aiming phase. Eliminated pawns are never confirmed.
+   */
+  confirmed: boolean;
   /** Current center position in world units. */
   position: Vec2;
   /** Current velocity in world units per tick. */
@@ -73,17 +84,9 @@ export interface GameState {
    * from elimination state — never from any client/local perspective.
    */
   winnerId: string | null;
-  /** Turn state machine. */
-  turn: {
-    /**
-     * ALL pawn ids in turn order — the full roster, including eliminated
-     * pawns. The queue is stable for the whole match (replay-friendly);
-     * rotation skips eliminated ids at runtime (see turnLogic.advanceTurn).
-     */
-    queue: string[];
-    /** Index of the currently acting pawn. */
-    activeIndex: number;
-    /** Fixed simulation ticks since the active pawn launched. */
+  /** Round state machine (simultaneous rounds — no turn queue). */
+  round: {
+    /** Fixed simulation ticks since the round's movements started. */
     settleTicks: number;
   };
   /** All pawns in the match (eliminated pawns stay listed). */
@@ -141,34 +144,21 @@ export function validateGameState(candidate: unknown): GameState {
     }
   }
 
-  const turn = s.turn;
-  if (typeof turn !== "object" || turn === null) {
-    throw new Error("GameState: missing turn");
+  const round = s.round;
+  if (typeof round !== "object" || round === null) {
+    throw new Error("GameState: missing round");
   }
-  const t = turn as Record<string, unknown>;
-  if (!Array.isArray(t.queue) || t.queue.length === 0) {
-    throw new Error("GameState: turn.queue must be a non-empty array");
+  const r = round as Record<string, unknown>;
+  if (!isInteger(r.settleTicks) || r.settleTicks < 0) {
+    throw new Error("GameState: round.settleTicks must be a non-negative integer");
   }
-  if (!t.queue.every((id) => typeof id === "string" && id.length > 0)) {
-    throw new Error("GameState: turn.queue entries must be non-empty strings");
-  }
-  const queued = new Set<string>(t.queue as string[]);
-  if (queued.size !== t.queue.length) {
-    throw new Error("GameState: turn.queue contains duplicate pawn ids");
-  }
-  for (const id of queued) {
-    if (!pawnIds.has(id)) {
-      throw new Error(`GameState: turn.queue references unknown pawn ${id}`);
+
+  // Round invariant: an eliminated pawn never carries a confirmation
+  // (it cannot participate in any round).
+  for (const p of s.pawns as PawnState[]) {
+    if (p.eliminated && p.confirmed) {
+      throw new Error(`GameState: eliminated pawn ${p.id} must not be confirmed`);
     }
-  }
-  if (t.queue.length !== pawnIds.size) {
-    throw new Error("GameState: turn.queue must list every pawn exactly once");
-  }
-  if (!isInteger(t.activeIndex) || t.activeIndex < 0 || t.activeIndex >= t.queue.length) {
-    throw new Error("GameState: turn.activeIndex out of range");
-  }
-  if (!isInteger(t.settleTicks) || t.settleTicks < 0) {
-    throw new Error("GameState: turn.settleTicks must be a non-negative integer");
   }
 
   return candidate as GameState;
@@ -196,6 +186,9 @@ function validatePawn(raw: unknown): PawnState {
   }
   if (typeof p.eliminated !== "boolean") {
     throw new Error(`GameState: pawn ${p.id} eliminated must be a boolean`);
+  }
+  if (typeof p.confirmed !== "boolean") {
+    throw new Error(`GameState: pawn ${p.id} confirmed must be a boolean`);
   }
   if (
     !isInteger(p.power) ||

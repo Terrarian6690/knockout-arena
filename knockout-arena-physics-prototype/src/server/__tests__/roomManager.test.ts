@@ -407,6 +407,8 @@ describe("match lifecycle", () => {
     ).toEqual({ ok: true });
     server.submitCommand(sessions[0], { type: "setPower", power: 5 });
     server.submitCommand(sessions[0], { type: "confirmLaunch" });
+    // p1 never chose — the round resolves at the server's deadline.
+    expect(server.resolveRound(roomId)).toEqual({ ok: true });
 
     // The real 60 Hz loop resolves the match (flight + settle ≈ 1-2 s).
     const finished = await waitFor(
@@ -467,10 +469,17 @@ describe("command identity", () => {
     expect(s.pawns[0].power).toBe(5); // p0's power, not p1's
     expect(s.pawns[1].power).toBe(CONFIG.power.default);
 
-    // The same for the launch: p0's session "confirming as p1" launches p0.
+    // The same for the launch: p0's session "confirming as p1" locks in
+    // p0's OWN choice (the round itself still waits for p1 or the deadline).
     expect(
       server.submitCommand(sessions[0], { type: "confirmLaunch", playerId: "p1" })
     ).toEqual({ ok: true });
+    let s2 = latestState(states);
+    expect(s2.pawns[0].confirmed).toBe(true); // p0 confirmed…
+    expect(s2.pawns[1].confirmed).toBe(false); // …and ONLY p0
+    expect(s2.phase).toBe("aiming"); // the round is still open
+    // The deadline resolves it with p0's (forged-as-p1) confirmation.
+    expect(server.resolveRound(roomId)).toEqual({ ok: true });
     expect(latestState(states).phase).toBe("moving"); // p0 launched
   });
 
@@ -581,6 +590,148 @@ describe("reset authorization", () => {
       reason: "unknown-room",
     });
     expect(server.resetMatch(null)).toEqual({ ok: false, reason: "unknown-room" });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Simultaneous rounds — disconnect semantics at the decision deadline
+// ────────────────────────────────────────────────────────────────────────
+
+describe("simultaneous rounds — disconnect semantics", () => {
+  /**
+   * The engine knows nothing about connections: "disconnected" here means
+   * the seat is reserved (dropped) — the pawn stays alive and simply has no
+   * player submitting commands. The required guarantees:
+   *   - a disconnected player never BLOCKS the round: the early end waits
+   *     for all ALIVE confirmations, but the server's deadline
+   *     (resolveRound) always resolves the round regardless;
+   *   - a previously-confirmed move is preserved and still executes while
+   *     the player is disconnected;
+   *   - a disconnected player without a confirmed move does not move.
+   */
+  const settleToNextRound = async (states: string[]) => {
+    expect(await waitFor(() => latestState(states).phase === "moving", 3000)).toBe(true);
+    expect(
+      await waitFor(() => latestState(states).phase === "aiming", 5000)
+    ).toBe(true);
+  };
+
+  it("[8] a disconnected, unconfirmed player does not block the round", async () => {
+    const server = newServer();
+    const { roomId, sessions } = makeRoom(server, 3);
+    const states = statePipe(server, sessions[0]);
+    server.startMatch(roomId);
+
+    // p1 drops without choosing anything; p0 and p2 lock in their moves.
+    expect(server.reserve(sessions[1])).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[0], { type: "aim", x: CX, y: CY })).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[0], { type: "setPower", power: 2 })).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[0], { type: "confirmLaunch" })).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[2], { type: "aim", x: CX, y: CY })).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[2], { type: "setPower", power: 2 })).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[2], { type: "confirmLaunch" })).toEqual({ ok: true });
+
+    // The early end waits for ALL alive players — p1 included, connected
+    // or not: the round is still open…
+    expect(latestState(states).phase).toBe("aiming");
+
+    // …but the deadline resolves it anyway. The round is NOT blocked.
+    expect(server.resolveRound(roomId)).toEqual({ ok: true });
+    await settleToNextRound(states);
+
+    // p0 and p2 moved; the disconnected p1 stayed exactly at its spawn.
+    const s = latestState(states);
+    expect(s.phase).toBe("aiming");
+    expect(s.pawns[1].position).toEqual({ x: s.pawns[1].spawnX, y: s.pawns[1].spawnY });
+    expect(s.pawns[0].position).not.toEqual({ x: s.pawns[0].spawnX, y: s.pawns[0].spawnY });
+    expect(s.pawns[2].position).not.toEqual({ x: s.pawns[2].spawnX, y: s.pawns[2].spawnY });
+    // And nobody was punished for the disconnect: p1 is alive, unconfirmed
+    // in the fresh round.
+    expect(s.pawns[1].eliminated).toBe(false);
+    expect(s.pawns[1].confirmed).toBe(false);
+  }, 10000);
+
+  it("[9] a disconnected player's confirmed move is preserved and executes", async () => {
+    const server = newServer();
+    const { roomId, sessions } = makeRoom(server, 3);
+    const states = statePipe(server, sessions[0]);
+    server.startMatch(roomId);
+
+    // p1 chooses and locks in FIRST, then drops before the round resolves.
+    expect(server.submitCommand(sessions[1], { type: "aim", x: CX, y: CY })).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[1], { type: "setPower", power: 4 })).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[1], { type: "confirmLaunch" })).toEqual({ ok: true });
+    const p1Start = { ...latestState(states).pawns[1].position };
+    expect(server.reserve(sessions[1])).toEqual({ ok: true }); // p1 drops
+
+    // The deadline fires while p1 is gone…
+    expect(server.resolveRound(roomId)).toEqual({ ok: true });
+    await settleToNextRound(states);
+
+    // …and p1's locked-in move still executed.
+    const s = latestState(states);
+    expect(s.pawns[1].position).not.toEqual(p1Start);
+    expect(s.pawns[0].position).toEqual({ x: s.pawns[0].spawnX, y: s.pawns[0].spawnY }); // never chose
+  }, 10000);
+
+  it("[10] a disconnected player without a confirmed move does not move", async () => {
+    const server = newServer();
+    const { roomId, sessions } = makeRoom(server, 2);
+    const states = statePipe(server, sessions[0]);
+    server.startMatch(roomId);
+
+    // p1 drops silently; p0 locks in; the deadline resolves the round.
+    expect(server.reserve(sessions[1])).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[0], { type: "aim", x: CX, y: CY })).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[0], { type: "setPower", power: 3 })).toEqual({ ok: true });
+    expect(server.submitCommand(sessions[0], { type: "confirmLaunch" })).toEqual({ ok: true });
+    const p1Start = { ...latestState(states).pawns[1].position };
+    expect(server.resolveRound(roomId)).toEqual({ ok: true });
+    await settleToNextRound(states);
+
+    const s = latestState(states);
+    expect(s.pawns[1].position).toEqual(p1Start); // did not move
+    expect(s.pawns[1].eliminated).toBe(false); // not auto-eliminated either
+    expect(s.pawns[0].position).not.toEqual({ x: s.pawns[0].spawnX, y: s.pawns[0].spawnY });
+  }, 10000);
+
+  it("the player path rejects resolveRound — only the server may resolve a round", () => {
+    const server = newServer();
+    const { roomId, sessions } = makeRoom(server, 2);
+    const states = statePipe(server, sessions[0]);
+    server.startMatch(roomId);
+    const before = latestState(states);
+    const emissionsBefore = states.length;
+
+    // Neither player may force the round to resolve through the command
+    // path — with or without dressing the payload up.
+    expect(server.submitCommand(sessions[0], { type: "resolveRound" })).toEqual({
+      ok: false,
+      reason: "unauthorized",
+    });
+    expect(server.submitCommand(sessions[1], { type: "resolveRound" })).toEqual({
+      ok: false,
+      reason: "unauthorized",
+    });
+    expect(server.submitCommand(sessions[1], { type: "resolveRound", playerId: "p0" })).toEqual({
+      ok: false,
+      reason: "unauthorized",
+    });
+
+    // Nothing changed.
+    expect(states.length).toBe(emissionsBefore);
+    expect(latestState(states)).toEqual(before);
+
+    // The privileged path works and fails cleanly on bad rooms.
+    expect(server.resolveRound(roomId)).toEqual({ ok: true });
+    expect(server.resolveRound("no-such-room")).toEqual({ ok: false, reason: "unknown-room" });
+    expect(server.resolveRound(null)).toEqual({ ok: false, reason: "unknown-room" });
+  });
+
+  it("resolveRound fails cleanly without a running match", () => {
+    const server = newServer();
+    const { roomId } = makeRoom(server, 2);
+    expect(server.resolveRound(roomId)).toEqual({ ok: false, reason: "no-match" });
   });
 });
 

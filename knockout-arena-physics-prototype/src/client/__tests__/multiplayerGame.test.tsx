@@ -95,14 +95,14 @@ describe("multiplayer game: rendering", () => {
     // The server says this viewer is p1 (isLocal on p1 only).
     await feed(
       sockets,
-      { localPawnId: "p1", activePawnId: "p1" },
+      { localPawnId: "p1" },
       { p0: { isLocal: false }, p1: { isLocal: true } }
     );
     expect(screen.getByTestId("rail-p1").textContent).toContain("You");
     expect(screen.getByTestId("rail-p0").textContent).not.toContain("You");
-    // Turn badge: p1 is the local and active pawn.
+    // Round badge: the local player still has to choose their move.
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
-      "Your turn — aim!"
+      "Choose your move — aim!"
     );
   });
 
@@ -116,9 +116,9 @@ describe("multiplayer game: rendering", () => {
 
   it("a new authoritative snapshot replaces the picture; without one, nothing changes", async () => {
     const { client, sockets } = await renderGame();
-    await feed(sockets, { activePawnId: "p0" });
+    await feed(sockets, {});
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
-      "Your turn — aim!"
+      "Choose your move — aim!"
     );
 
     // No new server push → the store's snapshot is untouched (no local
@@ -129,39 +129,44 @@ describe("multiplayer game: rendering", () => {
     });
     expect(client.getState().snapshot).toBe(before);
 
-    // A new snapshot replaces it wholesale (turn change reflected).
-    await feed(sockets, { activePawnId: "p1" });
+    // A new snapshot replaces it wholesale (confirmation reflected).
+    await feed(sockets, {}, { p0: { confirmed: true } });
     expect(client.getState().snapshot).not.toBe(before);
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
-      "Player 2's turn"
+      "Ready — waiting for other players"
     );
   });
 });
 
 // ── turn ownership ───────────────────────────────────────────────────────
 
-describe("multiplayer game: turn ownership", () => {
-  it("enables controls during the local player's aiming turn", async () => {
+describe("multiplayer game: round ownership", () => {
+  it("enables controls during the aiming round while unconfirmed", async () => {
     const { sockets } = await renderGame();
-    await feed(sockets, { activePawnId: "p0" });
+    await feed(sockets, {});
     expect(screen.getByTestId("launch")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Power 4" })).toBeEnabled();
   });
 
-  it("disables controls during another player's turn", async () => {
+  it("disables controls once the local player has locked in (confirmed)", async () => {
     const { sockets } = await renderGame();
-    await feed(
-      sockets,
-      { activePawnId: "p1" },
-      { p0: { isLocal: true }, p1: {} }
-    );
+    await feed(sockets, {}, { p0: { confirmed: true } });
     expect(screen.getByTestId("launch")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Power 4" })).toBeDisabled();
+    expect(screen.getByTestId("launch")).toHaveTextContent("Waiting…");
     pointerAim();
     expect(sentCommands(sockets)).toHaveLength(0);
   });
 
-  it("disables controls while moving", async () => {
+  it("keeps controls enabled while OTHER players are still deciding (simultaneous rounds)", async () => {
+    const { sockets } = await renderGame();
+    // p1 has locked in; the local player (p0) may still choose freely.
+    await feed(sockets, {}, { p1: { confirmed: true } });
+    expect(screen.getByTestId("launch")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Power 4" })).toBeEnabled();
+  });
+
+  it("disables controls while the round is resolving", async () => {
     const { sockets } = await renderGame();
     await feed(sockets, { phase: "moving" });
     expect(screen.getByTestId("launch")).toBeDisabled();
@@ -169,7 +174,7 @@ describe("multiplayer game: turn ownership", () => {
     pointerAim();
     expect(sentCommands(sockets)).toHaveLength(0);
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
-      "Player 1 is moving…"
+      "Round resolving…"
     );
   });
 
@@ -182,22 +187,20 @@ describe("multiplayer game: turn ownership", () => {
 
   it("disables controls for an eliminated local pawn (guard)", async () => {
     const { sockets } = await renderGame();
-    await feed(
-      sockets,
-      { activePawnId: "p0" },
-      { p0: { eliminated: true } }
-    );
+    await feed(sockets, {}, { p0: { eliminated: true } });
     expect(screen.getByTestId("launch")).toBeDisabled();
     pointerAim();
     expect(sentCommands(sockets)).toHaveLength(0);
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent(
+      "You're out — watching"
+    );
   });
 
   it("canLocalPlayerAct follows only server snapshot facts", () => {
     const base = JSON.parse(wire.snapshot()).state as GameStateSnapshot;
-    expect(canLocalPlayerAct(base)).toBe(true); // aiming + own turn + alive
+    expect(canLocalPlayerAct(base)).toBe(true); // aiming + alive + unconfirmed
     expect(canLocalPlayerAct(null)).toBe(false);
     expect(canLocalPlayerAct({ ...base, phase: "moving" })).toBe(false);
-    expect(canLocalPlayerAct({ ...base, activePawnId: "p1" })).toBe(false);
     expect(canLocalPlayerAct({ ...base, localPawnId: null })).toBe(false);
     expect(
       canLocalPlayerAct({
@@ -207,6 +210,24 @@ describe("multiplayer game: turn ownership", () => {
         ),
       })
     ).toBe(false);
+    // A confirmed player may not change their locked-in choice…
+    expect(
+      canLocalPlayerAct({
+        ...base,
+        pawns: base.pawns.map((p) =>
+          p.id === "p0" ? { ...p, confirmed: true } : p
+        ),
+      })
+    ).toBe(false);
+    // …while OTHER players' confirmations never gate the local input.
+    expect(
+      canLocalPlayerAct({
+        ...base,
+        pawns: base.pawns.map((p) =>
+          p.id === "p1" ? { ...p, confirmed: true } : p
+        ),
+      })
+    ).toBe(true);
   });
 });
 
@@ -215,7 +236,7 @@ describe("multiplayer game: turn ownership", () => {
 describe("multiplayer game: commands", () => {
   it("aim: pointer input sends the protocol aim command (input math only)", async () => {
     const { sockets } = await renderGame();
-    await feed(sockets, { activePawnId: "p0" });
+    await feed(sockets, {});
 
     pointerAim();
     const commands = sentCommands(sockets);
@@ -227,20 +248,20 @@ describe("multiplayer game: commands", () => {
 
   it("power: sends setPower and shows the pending value until the snapshot replaces it", async () => {
     const { sockets } = await renderGame();
-    await feed(sockets, { activePawnId: "p0", power: 3 });
+    await feed(sockets, { power: 3 });
 
     fireEvent.click(screen.getByRole("button", { name: "Power 5" }));
     expect(sentCommands(sockets)).toEqual([{ type: "setPower", power: 5 }]);
     // Local pending value for responsiveness (authoritative was 3)…
     expect(screen.getByTestId("power-readout")).toHaveTextContent("5");
     // …and the next server snapshot replaces it authoritatively.
-    await feed(sockets, { power: 4, activePawnId: "p0" });
+    await feed(sockets, { power: 4 });
     expect(screen.getByTestId("power-readout")).toHaveTextContent("4");
   });
 
   it("launch: sends confirmLaunch", async () => {
     const { sockets } = await renderGame();
-    await feed(sockets, { activePawnId: "p0" });
+    await feed(sockets, {});
 
     fireEvent.click(screen.getByTestId("launch"));
     expect(sentCommands(sockets)).toEqual([{ type: "confirmLaunch" }]);
@@ -248,7 +269,7 @@ describe("multiplayer game: commands", () => {
 
   it("sends nothing while disconnected", async () => {
     const { client, sockets } = await renderGame();
-    await feed(sockets, { activePawnId: "p0" });
+    await feed(sockets, {});
 
     await act(async () => {
       sockets[0].close(); // the connection drops
@@ -263,7 +284,7 @@ describe("multiplayer game: commands", () => {
 
   it("server command rejections are displayed as normal errors", async () => {
     const { sockets } = await renderGame();
-    await feed(sockets, { activePawnId: "p0" });
+    await feed(sockets, {});
 
     await act(async () => {
       sockets[0].serverMessage(
@@ -271,7 +292,7 @@ describe("multiplayer game: commands", () => {
           protocolVersion: 1,
           type: "error",
           code: "wrong-player",
-          message: "not your turn",
+          message: "the player is eliminated",
         })
       );
     });
@@ -346,7 +367,7 @@ describe("multiplayer game: match completion", () => {
 describe("multiplayer game: disconnect during the match", () => {
   it("keeps the last snapshot visible, refuses input, offers reconnect", async () => {
     const { client, sockets } = await renderGame();
-    await feed(sockets, { activePawnId: "p0" });
+    await feed(sockets, {});
 
     await act(async () => {
       sockets[0].close(); // unexpected drop
@@ -356,7 +377,7 @@ describe("multiplayer game: disconnect during the match", () => {
     expect(screen.getByTestId("rail-p0")).toBeInTheDocument();
     expect(screen.getByTestId("rail-p1")).toBeInTheDocument();
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
-      "Your turn — aim!"
+      "Choose your move — aim!"
     );
     // …input is refused…
     pointerAim();
@@ -397,10 +418,10 @@ describe("lobby → game screen transition", () => {
     expect(screen.queryByTestId("room-panel")).toBeNull();
 
     // Snapshot arrives → the game renders it.
-    await feed(sockets, { activePawnId: "p0" });
+    await feed(sockets, {});
     expect(screen.getByTestId("arena-canvas")).toBeInTheDocument();
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
-      "Your turn — aim!"
+      "Choose your move — aim!"
     );
   });
 });

@@ -4,6 +4,7 @@ import {
   DEFAULT_RESERVATION_MS,
   type LeaveResult,
   type ResetResult,
+  type ResolveRoundResult,
   type RoomInfo,
   type RoomManager,
   type SeatResult,
@@ -140,6 +141,12 @@ export interface GameServer {
    * authorization policy (host-only / rematch vote) is decided.
    */
   resetMatch(roomId: unknown): ResetResult;
+  /**
+   * Privileged, server-controlled round resolution (decision deadline):
+   * confirmed players move together, unconfirmed players stay. Not
+   * reachable through the player command path.
+   */
+  resolveRound(roomId: unknown): ResolveRoundResult;
   /**
    * Validate and apply a command for the session. The playerId comes from
    * the session's seat; any playerId in the command payload is ignored.
@@ -312,6 +319,12 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     return manager.resetMatch(id);
   }
 
+  function resolveRound(roomId: unknown): ResolveRoundResult {
+    const id = asRoomId(roomId);
+    if (!id) return { ok: false, reason: "unknown-room" };
+    return manager.resolveRound(id);
+  }
+
   function submitCommand(session: unknown, command: unknown): ServerCommandResult {
     const s = resolve(session);
     if (!s) return { ok: false, reason: "unknown-session" };
@@ -372,6 +385,7 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     getSeat,
     startMatch,
     resetMatch,
+    resolveRound,
     submitCommand,
     onRoomState,
     onRoomView,

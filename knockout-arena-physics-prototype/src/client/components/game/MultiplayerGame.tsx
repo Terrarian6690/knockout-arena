@@ -23,15 +23,17 @@ import { canLocalPlayerAct } from "./localControl";
  *   3. SHOW connection status, server errors and the server's match
  *      result.
  *
- * It never simulates: no engine tick, no physics, no turn advancement, no
+ * It never simulates: no engine tick, no physics, no round advancement, no
  * elimination or winner logic. Between server pushes the picture simply
  * stays as the server last sent it (direct snapshot rendering — no
  * interpolation in this first version).
  *
- * Disconnects (no seat-recovery protocol yet): the last authoritative
- * snapshot stays visible, input is refused, a reconnect affordance is
- * offered, and nothing pretends the seat survived — once a reconnect
- * completes as a fresh session the lobby takes over again.
+ * Rounds are SIMULTANEOUS: during the aiming phase every alive player
+ * chooses independently (aim, power) and Launch locks in their OWN move
+ * ("Ready"); the round resolves on the server once everyone is ready.
+ * Disconnects (seat recovery): the last authoritative snapshot stays
+ * visible, input is refused while not connected, and the reconnect
+ * handshake restores the same seat and its current-round choice state.
  */
 export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
   const client = useNetworkClient();
@@ -60,6 +62,9 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
   }, [state.snapshot]);
 
   const canAct = canLocalPlayerAct(snapshot);
+  const lockedIn =
+    snapshot?.pawns.find((pawn) => pawn.id === snapshot.localPawnId)
+      ?.confirmed ?? false;
   const connected = state.status === "connected";
 
   const handleAim = (point: { x: number; y: number }) => {
@@ -95,7 +100,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {snapshot !== null && <TurnBadge snapshot={snapshot} />}
+          {snapshot !== null && <RoundBadge snapshot={snapshot} />}
           <ConnectionStatusBadge status={state.status} />
         </div>
       </header>
@@ -146,6 +151,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
             <MatchControls
               power={pendingPower ?? snapshot.power}
               canAct={canAct}
+              lockedIn={lockedIn}
               onPowerChange={handlePowerChange}
               onLaunch={handleLaunch}
             />
@@ -158,32 +164,43 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
 
 // ── small internal pieces ────────────────────────────────────────────────
 
-/** Whose turn is it (aiming/moving/finished) — read from the snapshot. */
-function TurnBadge({ snapshot }: { readonly snapshot: GameStateSnapshot }) {
-  const activePawn = snapshot.pawns.find(
-    (pawn) => pawn.id === snapshot.activePawnId
+/**
+ * The round status (simultaneous rounds — no "whose turn"). Read from the
+ * snapshot: what the phase is and where the viewer's own choice stands.
+ */
+function RoundBadge({ snapshot }: { readonly snapshot: GameStateSnapshot }) {
+  const localPawn = snapshot.pawns.find(
+    (pawn) => pawn.id === snapshot.localPawnId
   );
-  const activeName = activePawn?.name ?? snapshot.activePawnId ?? "—";
-  const mine = snapshot.activePawnId === snapshot.localPawnId;
 
-  const badge =
-    snapshot.phase === "finished"
-      ? { label: "Match over", className: "bg-emerald-500/15 text-emerald-300 border-emerald-400/30" }
-      : snapshot.phase === "moving"
-        ? { label: `${activeName} is moving…`, className: "bg-sky-500/15 text-sky-300 border-sky-400/30" }
-        : mine
-          ? { label: "Your turn — aim!", className: "bg-emerald-500/15 text-emerald-300 border-emerald-400/30" }
-          : { label: `${activeName}'s turn`, className: "bg-amber-500/15 text-amber-300 border-amber-400/30" };
+  let label: string;
+  let className: string;
+  if (snapshot.phase === "finished") {
+    label = "Match over";
+    className = "bg-emerald-500/15 text-emerald-300 border-emerald-400/30";
+  } else if (snapshot.phase === "moving") {
+    label = "Round resolving…";
+    className = "bg-sky-500/15 text-sky-300 border-sky-400/30";
+  } else if (localPawn === undefined || localPawn.eliminated) {
+    label = "You're out — watching";
+    className = "bg-white/5 text-white/50 border-white/15";
+  } else if (localPawn.confirmed) {
+    label = "Ready — waiting for other players…";
+    className = "bg-emerald-500/15 text-emerald-300 border-emerald-400/30";
+  } else {
+    label = "Choose your move — aim!";
+    className = "bg-amber-500/15 text-amber-300 border-amber-400/30";
+  }
 
   return (
     <span
       data-testid="turn-badge"
       className={cn(
         "hidden rounded-full border px-3 py-1 text-xs font-semibold sm:inline-block",
-        badge.className
+        className
       )}
     >
-      {badge.label}
+      {label}
     </span>
   );
 }

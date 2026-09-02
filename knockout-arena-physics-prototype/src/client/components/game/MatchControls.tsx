@@ -7,14 +7,21 @@ import { PowerSelector } from "../PowerSelector";
  * single-player ControlPanel, but every control only SENDS AN INTENT:
  * the displayed power is the authoritative one (optionally the local
  * pending choice until the next server snapshot replaces it), Launch
- * sends confirmLaunch, and there is deliberately NO reset (resetMatch is
- * a server-side operation, not exposed over the wire).
+ * locks in the local player's move for the CURRENT round
+ * (confirmLaunch), and there is deliberately NO reset (resetMatch is a
+ * server-side operation, not exposed over the wire).
  */
 interface MatchControlsProps {
   /** The power to display (authoritative, or the pending local choice). */
   readonly power: number;
-  /** Whether the local player may act right now (their aiming turn). */
+  /** Whether the local player may act right now (this round, unconfirmed). */
   readonly canAct: boolean;
+  /**
+   * Whether the local player has already locked in their move for the
+   * current round (waiting for the other players) — only used to label
+   * the disabled Launch button.
+   */
+  readonly lockedIn: boolean;
   onPowerChange: (power: number) => void;
   onLaunch: () => void;
 }
@@ -22,6 +29,7 @@ interface MatchControlsProps {
 export function MatchControls({
   power,
   canAct,
+  lockedIn,
   onPowerChange,
   onLaunch,
 }: MatchControlsProps) {
@@ -56,7 +64,7 @@ export function MatchControls({
             "shadow-orange-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           )}
         >
-          {canAct ? "Launch" : "…"}
+          {canAct ? "Launch" : lockedIn ? "Waiting…" : "…"}
         </button>
       </div>
     </div>

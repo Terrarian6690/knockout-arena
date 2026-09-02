@@ -74,7 +74,7 @@ describe("initial game state", () => {
     expect(pawn.position).toEqual(SPAWN);
     expect(pawn.velocity).toEqual({ x: 0, y: 0 });
     expect(pawn.eliminated).toBe(false);
-    expect(pawn.isMoving).toBe(false);
+    expect(pawn.confirmed).toBe(false);
     g.destroy();
   });
 
@@ -85,7 +85,6 @@ describe("initial game state", () => {
     const g = createGame();
     const s = g.snapshot();
     expect(s.localPawnId).toBeNull();
-    expect(s.activePawnId).toBe("p0");
     expect(s.pawns.every((p) => !p.isLocal)).toBe(true);
 
     const local = projectSnapshot(g.getState(), "p0");
@@ -104,10 +103,15 @@ describe("initial game state", () => {
 });
 
 describe("aiming", () => {
+  // UPDATED for the simultaneous-round model: aim/power in a projection
+  // describe the VIEWER'S OWN pawn. The single player's view is the
+  // localized projection projectSnapshot(state, "p0").
+  const viewOf = (g: GameHandle) => projectSnapshot(g.getState(), "p0");
+
   it("sets a unit aim direction toward the target", () => {
     const g = createGame();
     g.dispatch({ type: "aim", playerId: "p0", x: CONFIG.arena.centerX, y: 400 });
-    const s = g.snapshot();
+    const s = viewOf(g);
     expect(s.isAiming).toBe(true);
     expect(s.aimDirection).toEqual({ x: 0, y: 1 }); // straight down from spawn
     g.destroy();
@@ -117,14 +121,14 @@ describe("aiming", () => {
     const g = createGame();
     g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 }); // down
     g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 40 }); // up
-    expect(g.snapshot().aimDirection).toEqual({ x: 0, y: -1 });
+    expect(viewOf(g).aimDirection).toEqual({ x: 0, y: -1 });
     g.destroy();
   });
 
   it("measures the direction from the pawn, not the world origin", () => {
     const g = createGame();
     g.dispatch({ type: "aim", playerId: "p0", x: 0, y: 0 }); // world origin, up-left of spawn
-    const dir = g.snapshot().aimDirection!;
+    const dir = viewOf(g).aimDirection!;
     expect(dir.x).toBeLessThan(0);
     expect(dir.y).toBeLessThan(0);
     expect(Math.hypot(dir.x, dir.y)).toBeCloseTo(1, 12);
@@ -135,17 +139,30 @@ describe("aiming", () => {
     const g = createGame();
     g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 });
     g.dispatch({ type: "aim", playerId: "p0", x: SPAWN.x, y: SPAWN.y }); // on the pawn itself
-    expect(g.snapshot().aimDirection).toEqual({ x: 0, y: 1 });
+    expect(viewOf(g).aimDirection).toEqual({ x: 0, y: 1 });
+    g.destroy();
+  });
+
+  it("shows neutral controls in the spectator projection", () => {
+    const g = createGame();
+    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 5 });
+    const s = g.snapshot(); // spectator: no local pawn
+    expect(s.isAiming).toBe(false);
+    expect(s.aimDirection).toBeNull();
+    expect(s.power).toBe(CONFIG.power.default);
     g.destroy();
   });
 });
 
 describe("power selection", () => {
+  const powerOf = (g: GameHandle) => projectSnapshot(g.getState(), "p0").power;
+
   it("accepts every level in the configured range", () => {
     const g = createGame();
     for (let p = CONFIG.power.min; p <= CONFIG.power.max; p++) {
       g.dispatch({ type: "setPower", playerId: "p0", power: p });
-      expect(g.snapshot().power).toBe(p);
+      expect(powerOf(g)).toBe(p);
     }
     g.destroy();
   });
@@ -153,23 +170,23 @@ describe("power selection", () => {
   it("clamps values above the maximum", () => {
     const g = createGame();
     g.dispatch({ type: "setPower", playerId: "p0", power: 99 });
-    expect(g.snapshot().power).toBe(CONFIG.power.max);
+    expect(powerOf(g)).toBe(CONFIG.power.max);
     g.destroy();
   });
 
   it("clamps values below the minimum", () => {
     const g = createGame();
     g.dispatch({ type: "setPower", playerId: "p0", power: -3 });
-    expect(g.snapshot().power).toBe(CONFIG.power.min);
+    expect(powerOf(g)).toBe(CONFIG.power.min);
     g.destroy();
   });
 
   it("rounds fractional powers", () => {
     const g = createGame();
     g.dispatch({ type: "setPower", playerId: "p0", power: 2.4 });
-    expect(g.snapshot().power).toBe(2);
+    expect(powerOf(g)).toBe(2);
     g.dispatch({ type: "setPower", playerId: "p0", power: 2.6 });
-    expect(g.snapshot().power).toBe(3);
+    expect(powerOf(g)).toBe(3);
     g.destroy();
   });
 });
@@ -206,19 +223,19 @@ describe("valid launch", () => {
     expect(s.phase).toBe("moving");
     expect(s.isAiming).toBe(false);
     expect(s.aimDirection).toBeNull();
-    expect(pawnOf(s).isMoving).toBe(true);
     g.destroy();
   });
 
-  it("keeps the active pawn during the launch", () => {
+  it("keeps the round's confirmation through the launch", () => {
     const g = createGame();
     launchInward(g, 2);
-    expect(g.snapshot().activePawnId).toBe("p0");
+    expect(g.getState().pawns[0].confirmed).toBe(true);
+    expect(g.snapshot().phase).toBe("moving");
     g.destroy();
   });
 });
 
-describe("launch once per turn", () => {
+describe("one launch per round", () => {
   it("ignores a second confirmLaunch while moving", () => {
     const run = (doubleDispatch: boolean) => {
       const g = createGame();
@@ -349,7 +366,7 @@ describe("elimination (geometric rule)", () => {
     pump(g, 700);
     const pawn = pawnOf(g.snapshot());
     expect(pawn.velocity).toEqual({ x: 0, y: 0 });
-    expect(pawn.isMoving).toBe(false);
+    expect(pawn.eliminated).toBe(true);
     g.destroy();
   });
 
@@ -623,7 +640,7 @@ describe("invalid actions during moving", () => {
     const g = createGame();
     launchInward(g, 2);
     g.dispatch({ type: "setPower", playerId: "p0", power: 5 });
-    expect(g.snapshot().power).toBe(2);
+    expect(projectSnapshot(g.getState(), "p0").power).toBe(2);
     g.destroy();
   });
 
@@ -672,7 +689,7 @@ describe("invalid actions after the match finished", () => {
     const g = eliminatedGame();
     g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 });
     g.dispatch({ type: "setPower", playerId: "p0", power: 1 });
-    const s = g.snapshot();
+    const s = projectSnapshot(g.getState(), "p0");
     expect(s.phase).toBe("finished");
     expect(s.power).toBe(5); // unchanged from the eliminating launch
     expect(s.aimDirection).toBeNull();
