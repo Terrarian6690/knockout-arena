@@ -103,7 +103,7 @@ always share the same game state.
 | ---------------------- | ----------------------------------------------------------- |
 | `index.ts`             | Public server barrel.                                       |
 | `session.ts`           | `Session` — opaque connection identity (the trust root).    |
-| `gameHost.ts`          | `createGameHost()` — the authoritative owner of one match.   |
+| `gameHost.ts`          | `createGameHost()` — the authoritative owner of one match (and its round decision deadline). |
 | `roomManager.ts`       | `createRoomManager()` — rooms, seats p0..p3, lifecycle, identity stamping, host identity. |
 | `gameServer.ts`        | `createGameServer()` — the session-facing facade (+ `onRoomView` viewer projection). |
 | `protocol.ts`          | The wire protocol (v1): pure parsing + message building.    |
@@ -152,7 +152,7 @@ transitions are derived from the match state pushes — no room-side game
 logic. Empty rooms are removed automatically (and sweepable via
 `removeEmptyRooms()`).
 
-#### GameHost (unchanged from the previous milestone)
+#### GameHost
 
 - **Commands** — `submitCommand(raw: unknown)` runs the engine's total
   structural validator, then the engine's ownership/phase rules, and returns
@@ -172,6 +172,24 @@ logic. Empty rooms are removed automatically (and sweepable via
   `onStateChange(cb)` pushes it on every change. Rooms forward these pushes
   to every seated session via `onRoomState(session, cb)` — the transport's
   broadcast hook.
+- **Round decision deadline** — the ONE piece of orchestration policy the
+  host owns: while the match is in the `aiming` phase a wall-clock deadline
+  is armed (**10 seconds** by default — `roundDecisionTimeoutMs`,
+  configurable on the host, the room manager, the game server and the
+  transport, overridable in the smoke server via
+  `ROUND_DECISION_TIMEOUT_MS`); when it expires the host submits the
+  engine's match-level `resolveRound` command through the very same
+  privileged path the room manager exposes manually, so the round resolves
+  with whatever confirmations exist (confirmed players move together,
+  unconfirmed players stay). Every ENTRY into `aiming` arms a fresh
+  deadline (initial round, every round after a settle, a reset's new
+  match); every EXIT cancels it — an all-confirmed room resolves early and
+  its spent deadline can never fire again, and no deadline ever survives
+  into a newer round, a finished match or a destroyed room. The deadline
+  is checked inside the tick loop (never a `setTimeout` callback):
+  wall-clock time decides only WHEN the existing resolution is invoked,
+  never any simulation input — the physics keeps its fixed 60 Hz timestep,
+  and `stop()`/`destroy()` structurally prevent stale firings.
 
 The intended transport flow (already the shape of the code):
 
@@ -236,10 +254,12 @@ cannot be used to probe rooms. A deliberate server-side close
 disconnects cleanly. Starting a match while a seat is reserved is allowed
 (occupied seats form the roster); a disconnected player simply stays
 unconfirmed — the early all-confirmed end waits for every ALIVE player, but
-the server's `resolveRound` (decision deadline) always resolves the round
-regardless, and a previously-confirmed move still executes while its player
-is disconnected. A real timed deadline is deliberately still out of scope
-(planned as its own task).
+the round decision deadline always resolves the round regardless, and a
+previously-confirmed move still executes while its player is disconnected.
+A disconnect never pauses, resets or blocks the deadline, and reconnecting
+grants no fresh window: a player returning BEFORE it continues the same
+round (deadline unchanged, may still confirm — completing the set resolves
+early); a player returning AFTER it observes the post-resolution state.
 
 **Backpressure:** snapshots are full-state and high-frequency, so a socket
 whose outbound buffer exceeds the high-water mark (256 KiB default) simply
@@ -378,10 +398,10 @@ viewer-projected snapshots and sends player intents — nothing else.
 ### Remaining work (reconnection is in — hardening next)
 
 Real authentication (replacing the interim session and reconnect
-credentials), the timed server-side round decision deadline (the manual
-`resolveRound` plumbing is in; without a timer a silent room waits
-indefinitely — nothing auto-resolves yet), rematch/vote policy on top of
-`resetMatch`,
+credentials), a visible round-deadline countdown in the client UI (the
+server-side deadline itself is in — see the GameHost section; for now the
+clients simply observe the state transitions it causes), rematch/vote
+policy on top of `resetMatch`,
 purely-visual interpolation between snapshots, a production server entry
 script (the `scripts/smoke-server.ts` dev helper is manual-test tooling,
 not one), and rate limiting / abuse guards.
@@ -399,11 +419,18 @@ not one), and rate limiting / abuse guards.
   the shared `aiming` phase (aim + power + `confirmLaunch`). Confirming
   LOCKS that player's choice (further aim/setPower/confirm are rejected
   with `already-confirmed`) but moves nobody by itself. When ALL alive
-  players have confirmed — or when the server submits the match-level
-  `resolveRound` command (the decision deadline) — every confirmed pawn's
-  impulse is applied in ONE transition and the physics resolves all of them
-  together (confirmed movers can collide mid-flight). Unconfirmed pawns
-  simply stay where they are. There is no turn queue, no active pawn and no
+  players have confirmed — or when the round's decision deadline expires,
+  whichever comes first — every confirmed pawn's impulse is applied in ONE
+  transition and the physics resolves all of them together (confirmed
+  movers can collide mid-flight). Unconfirmed pawns simply stay where they
+  are. The deadline is a server-side rule: **ten seconds** by default
+  (`roundDecisionTimeoutMs`, configurable at every level from the GameHost
+  up to the transport), armed per aiming round by the host and resolved
+  through the privileged `resolveRound` command — everyone chooses within
+  the same window, an all-confirmed room resolves early, and a silent or
+  disconnected player costs its own move but never blocks the round. No
+  client can force, extend or shorten it: the wire protocol has no timeout
+  concept at all. There is no turn queue, no active pawn and no
   rotation anywhere in the model. A single-pawn match is the degenerate
   case: the lone player's confirmation completes the set, so movement
   starts immediately (the classic solo flow, unchanged).
@@ -473,19 +500,17 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
 - **More pawns**: `createGame({ players: [...] })` or `engine.loadState()`
   with a multi-pawn state — simultaneous rounds, elimination, finishing and
   winner detection are all in place (see `__tests__/match.test.ts`).
-- **Round deadline**: the server-side decision timer plugs into the existing
-  `resolveRound` privileged path (roomManager/gameServer facade) — submit it
-  when the round's deadline expires and the round resolves with whatever
-  confirmations exist.
 - **Bots**: bots only need to produce the same `GameCommand`s (a playerId +
   aim + power + confirm) — reusing `aiming.ts` helpers.
 - **Server authority**: implemented headless — `createGameServer()` issues
   sessions, manages rooms (each owning one `createGameHost()`), stamps every
   command with the session's seat, steps `game.update()` on a fixed 60 Hz
   clock, and broadcasts `serializeGameState()` snapshots. The transport,
-  the WebSocket glue and seat-recovery/reconnection policy are in; what is
-  left: real authentication, the timed round deadline, and the rest of the
-  hardening list above.
+  the WebSocket glue and seat-recovery/reconnection policy are in —
+  including the automatic round decision deadline (each host resolves an
+  aiming round after `roundDecisionTimeoutMs`, default 10 s, through the
+  privileged `resolveRound` path). What is left: real authentication and
+  the rest of the hardening list above.
 
 ## Controls
 
@@ -494,7 +519,8 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
 2. Pick a power level **1–5** (higher = stronger launch).
 3. Click **Launch** to lock in your move — one launch per round (in
    multiplayer the round resolves once everyone has locked in, or at the
-   server's round deadline; solo starts immediately).
+   server's round deadline — 10 seconds by default; solo starts
+   immediately).
 4. The pawn slides with friction. The rim is a low lip: slow or glancing
    contacts bounce off it, but a fast head-on launch clears it — and once the
    pawn has completely left the floor it is **knocked out** and the match is
@@ -546,6 +572,11 @@ browser's default same-origin server URL just works. Then:
    moving together in both windows (phase "Round resolving…").
 10. After everything settles a fresh round opens for the survivors
     ("Choose your move — aim!" again; unconfirmed players never moved).
+    Let a round go by with NOBODY confirming → the server's round
+    decision deadline (10 s by default) resolves it anyway: confirmed
+    pawns move, silent ones do not, and the next round opens by itself.
+    (Set `ROUND_DECISION_TIMEOUT_MS=3000` before `npm run smoke` to
+    watch it sooner.)
 11. Knock a pawn out of the arena → both windows mark it **Out**.
 12. The match finishes → both windows show the same winner overlay.
 13. **Back to lobby** returns to the initial screen on each side.
@@ -620,6 +651,20 @@ The **server** has its own suites in `src/server/__tests__/`:
   semantics, reset, whole 2/3/4-player matches to a winner (rounds resolved
   at the decision deadline), and deterministic replay from the command log
   on both a fresh host and a raw engine.
+- `roundDeadline.test.ts` — the round decision deadline, the host's one
+  orchestration rule: the 10 000 ms default and a configurable override,
+  exactly one deadline per aiming round (ticks and commands never re-arm
+  it), exact fireAt−1/fireAt boundaries on a fake clock, early
+  all-confirmed resolution cancelling the deadline, spent deadlines never
+  resolving newer rounds or a reset match, finished matches immune to any
+  future timeout, `destroy()` leaving no timer behind, timeout/confirm
+  races resolving exactly once in every order, and timeout resolutions
+  moving only confirmed pawns — plus, through the real game server and its
+  60 Hz loop: no timer before `startMatch`, a disconnected player never
+  blocking the deadline (pre-drop confirms still execute; silent
+  disconnected pawns freeze), and the reconnect interactions (no fresh
+  window granted, can still confirm, a post-deadline return sees the new
+  state).
 - `server-boundary.test.ts` — the server package is DOM-free, imports no
   React/client code, reaches the engine only via its barrel (never
   `matter-js` directly), and is networked ONLY in the transport adapter
@@ -662,7 +707,11 @@ The **server** has its own suites in `src/server/__tests__/`:
   projection, malformed wire input never dropping the connection,
   disconnect notifications (a drop reserves the seat; the session is
   removed when the window expires), a whole match to `match_finished`
-  over the wire, and clean transport teardown.
+  over the wire, clean transport teardown, and the round decision
+  deadline end to end (a silent round resolves at the server's deadline
+  with both clients converging on the result — only the confirmed pawn
+  moves; both players confirming before the deadline resolve it
+  immediately, and the spent deadline never fires a second resolution).
 - `reconnect.test.ts` — seat recovery at the `createGameServer()` facade:
   credentials issued with every seat (opaque, never in room info),
   reservation semantics (occupied + disconnected + unstealable, identity
@@ -780,7 +829,12 @@ every other suite stays headless/node; dev-only deps:
   the set resolves BOTH movements in the same round; a fresh round opens
   after the settle), an elimination at the decision deadline, an identical
   winner verdict for both, and that the client's snapshot is untouched
-  while the server is idle (no local simulation).
+  while the server is idle (no local simulation) — plus the deadline path
+  end to end: one player locks in through the real UI, the other stays
+  silent, and the SERVER's round decision deadline resolves the round
+  (both clients observe the transition, the confirmed pawn moves, the
+  silent one freezes, a fresh round opens — and no timeout concept ever
+  crosses the wire).
 - `multiplayerReconnect.test.tsx` — seat recovery through the real stack
   AND the real UI: a mid-match drop keeps the game screen (banner, last
   snapshot, no lobby takeover) and the automatic retry recovers the same

@@ -67,6 +67,13 @@ export interface GameServerOptions {
    * reservation opened via reserve().
    */
   reconnectReservationMs?: number;
+  /**
+   * The round decision deadline for every match (passed through the room
+   * manager to each GameHost): after this many milliseconds in the
+   * "aiming" phase the server resolves the round — confirmed players
+   * move, unconfirmed do not. Default 10 000 ms (see createGameHost).
+   */
+  roundDecisionTimeoutMs?: number;
 }
 
 /** A seat result that carries the seat's reconnect credential. */
@@ -175,7 +182,9 @@ export interface GameServer {
 }
 
 export function createGameServer(options?: GameServerOptions): GameServer {
-  const manager: RoomManager = createRoomManager();
+  const manager: RoomManager = createRoomManager({
+    roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
+  });
   const reservationMs = options?.reconnectReservationMs ?? DEFAULT_RESERVATION_MS;
   /** Live sessions by their opaque token (the registry's canonical objects). */
   const sessions = new Map<string, Session>();

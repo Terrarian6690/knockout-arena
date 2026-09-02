@@ -129,12 +129,17 @@ afterEach(() => {
 
 /** A real server stack; add players with addPlayer(). */
 export function createServerHarness(
-  options?: { reconnectReservationMs?: number },
+  options?: {
+    reconnectReservationMs?: number;
+    /** Round decision deadline forwarded to the real game server. */
+    roundDecisionTimeoutMs?: number;
+  },
   /** Per-player client overrides (e.g. a slower reconnect policy). */
   playerOptions?: { reconnect?: Record<string, unknown> }
 ) {
   const gameServer = createGameServer({
     reconnectReservationMs: options?.reconnectReservationMs,
+    roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
   });
   const core = createTransportCore(gameServer);
   liveServers.push(gameServer);

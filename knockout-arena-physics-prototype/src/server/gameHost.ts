@@ -36,8 +36,25 @@ import {
  *     → serializeGameState()        cached by the host on every state change
  *     → host.onStateChange(cb)      the transport broadcasts to clients
  *
- * The host contains NO game logic of its own: every rule (turn order,
- * elimination, settling, winning) lives in the engine. It also never
+ * The host owns exactly ONE piece of orchestration policy on top of the
+ * engine: the ROUND DECISION DEADLINE. While a match is in the "aiming"
+ * phase, the host arms a wall-clock deadline (default 10 s); when it fires
+ * the host submits the engine's match-level `resolveRound` command through
+ * the exact same authoritative path the room manager's privileged facade
+ * uses. All gameplay rules — who may confirm, who moves, elimination,
+ * settling, winning — stay in the engine; the deadline only decides WHEN
+ * the existing resolution is invoked. It never feeds wall-clock time into
+ * the simulation: physics keeps advancing by exactly tickMs per tick. The
+ * engine emits every state change to this module's subscription, which is
+ * how the deadline is armed on each entry into "aiming" and cancelled on
+ * each exit (early all-confirmed resolution, timeout resolution, match
+ * finish). Because the deadline is checked inside the tick loop — never a
+ * detached setTimeout callback — stop()/destroy() structurally prevent
+ * stale firings, and a deadline from an older round cannot survive into a
+ * newer one.
+ *
+ * The host otherwise contains NO game logic of its own: every rule
+ * (elimination, settling, winning) lives in the engine. It also never
  * exposes the underlying `GameHandle` or a state-loading path — there is
  * nothing here a client could use to install state.
  */
@@ -60,6 +77,14 @@ export interface GameHostOptions {
    * dropped rather than simulated in a burst. Default: 60 ticks (1 s).
    */
   maxCatchUpTicks?: number;
+  /**
+   * The round decision deadline: the maximum wall-clock time an "aiming"
+   * round may last. When it expires the host resolves the round with
+   * whatever confirmations exist (confirmed players move, unconfirmed
+   * players do not). Default: DEFAULT_ROUND_DECISION_TIMEOUT_MS (10 s).
+   * Server-side configuration only — clients never influence it.
+   */
+  roundDecisionTimeoutMs?: number;
 }
 
 /** Listener pushed the serialized authoritative state on every change. */
@@ -67,6 +92,12 @@ export type SerializedStateListener = (serialized: string) => void;
 
 /** Default anti-spiral clamp: at most one second of catch-up per wakeup. */
 export const DEFAULT_MAX_CATCH_UP_TICKS = 60;
+
+/**
+ * Default round decision deadline: an aiming round is resolved by the
+ * server after ten seconds even if not every alive player has confirmed.
+ */
+export const DEFAULT_ROUND_DECISION_TIMEOUT_MS = 10_000;
 
 /**
  * The transport-neutral server interface. A future WebSocket layer needs
@@ -96,6 +127,14 @@ export interface GameHost {
   tick(): void;
   /** How many fixed ticks this host has executed (loop + manual). */
   tickCount(): number;
+  /**
+   * The wall-clock time (in the host's clock domain) at which the CURRENT
+   * aiming round's decision deadline fires, or null when no deadline is
+   * armed (the round is resolving, the match is finished, or the host is
+   * destroyed). Observability for tests and future server-derived UI; the
+   * deadline itself is enforced inside the tick loop.
+   */
+  roundDeadline(): number | null;
   /**
    * The latest serialized authoritative state (the wire snapshot). Cached
    * and refreshed whenever the engine reports a change, so transports can
@@ -129,6 +168,8 @@ export function createGameHost(options: GameHostOptions): GameHost {
   const tickMs = CONFIG.simulation.fixedTimestepMs;
   const clock = options.clock ?? Date.now;
   const maxCatchUpTicks = options.maxCatchUpTicks ?? DEFAULT_MAX_CATCH_UP_TICKS;
+  const roundDecisionTimeoutMs =
+    options.roundDecisionTimeoutMs ?? DEFAULT_ROUND_DECISION_TIMEOUT_MS;
 
   // The authoritative game. Created from the server-supplied roster and
   // never handed out — the outside world can only reach it through
@@ -148,7 +189,52 @@ export function createGameHost(options: GameHostOptions): GameHost {
   let serialized = serializeGameState(game.getState());
   let stateListeners: SerializedStateListener[] = [];
 
+  /**
+   * The current aiming round's decision deadline (the host's timer token).
+   * Invariant: this is non-null IFF the latest engine state observed by the
+   * subscription below has phase "aiming". It is armed on every ENTRY into
+   * aiming (a fresh fireAt per round — the initial round, every round after
+   * a settle, and a reset's new match) and cleared on every EXIT (early
+   * all-confirmed resolution, deadline resolution, match finish). Since it
+   * is re-read synchronously inside the tick loop and never captured by a
+   * detached callback, a deadline belonging to an older round cannot
+   * survive into a newer one: it stops existing the moment its round ends.
+   */
+  let roundDeadline: number | null = null;
+
+  /**
+   * Phase tracking: arm/cancel the round decision deadline. The engine
+   * emits on every state change, so this runs exactly once per transition
+   * (and cheaply no-ops for non-phase changes within the same round).
+   */
+  function observePhase(phase: GameState["phase"]): void {
+    if (phase === "aiming") {
+      if (roundDeadline === null) {
+        roundDeadline = clock() + roundDecisionTimeoutMs;
+      }
+    } else {
+      roundDeadline = null;
+    }
+  }
+
+  /**
+   * Fire the deadline if the current aiming round's time is up. One-shot
+   * per round: the token is consumed before resolving, so the same round
+   * can never be resolved twice by it. The resolution re-enters through
+   * submitCommand() — the same authoritative command path as the room
+   * manager's privileged resolveRound() facade — so the host adds no
+   * resolution logic of its own. Wall-clock time decides only WHETHER it
+   * is due, never any simulation input.
+   */
+  function checkRoundDeadline(): void {
+    if (roundDeadline === null) return; // no aiming round in progress
+    if (clock() < roundDeadline) return; // not due yet
+    roundDeadline = null; // consumed: exactly one resolution per round
+    submitCommand({ type: "resolveRound" });
+  }
+
   const unsubscribeEngine = game.subscribe((state: GameState) => {
+    observePhase(state.phase);
     serialized = serializeGameState(state);
     for (const listener of [...stateListeners]) listener(serialized);
   });
@@ -165,7 +251,12 @@ export function createGameHost(options: GameHostOptions): GameHost {
     backlogMs += elapsed;
 
     const due = Math.floor(backlogMs / tickMs);
-    if (due <= 0) return;
+    if (due <= 0) {
+      // No fixed tick is due yet, but the round deadline may fall between
+      // ticks — check it so the resolution fires within one wakeup.
+      checkRoundDeadline();
+      return;
+    }
     if (due > maxCatchUpTicks) {
       // Long stall: run the allowed catch-up and DROP the rest of the
       // backlog instead of simulating a burst spiral.
@@ -207,7 +298,16 @@ export function createGameHost(options: GameHostOptions): GameHost {
     // socket may ever crash the host process, even if a future engine
     // change introduces an accidental throw.
     try {
-      return game.applyCommand(command as GameCommand);
+      const result = game.applyCommand(command as GameCommand);
+      // A successful reset starts a FRESH match: the aiming round it opens
+      // must get a FRESH decision deadline. Phase tracking alone cannot
+      // see a reset submitted during aiming (aiming → aiming), so re-arm
+      // explicitly. (From "finished"/"moving" the subscription already
+      // re-arms; overwriting with the same value is harmless.)
+      if (result.ok && (command as GameCommand).type === "reset") {
+        roundDeadline = clock() + roundDecisionTimeoutMs;
+      }
+      return result;
     } catch {
       return { ok: false, reason: "invalid-command" };
     }
@@ -220,10 +320,18 @@ export function createGameHost(options: GameHostOptions): GameHost {
     // it into exactly one physics tick while the phase is "moving" and
     // makes it a cheap no-op otherwise.
     game.update(tickMs);
+    // Then the round decision deadline — checked on every tick (manual or
+    // loop-driven) so an armed deadline fires deterministically regardless
+    // of how the simulation is being driven.
+    checkRoundDeadline();
   }
 
   function tickCount(): number {
     return ticks;
+  }
+
+  function roundDeadlineFireAt(): number | null {
+    return roundDeadline;
   }
 
   function serializedState(): string {
@@ -245,6 +353,7 @@ export function createGameHost(options: GameHostOptions): GameHost {
     if (destroyed) return;
     destroyed = true;
     stop();
+    roundDeadline = null; // no armed deadline survives teardown
     unsubscribeEngine();
     stateListeners = [];
     game.destroy();
@@ -263,6 +372,7 @@ export function createGameHost(options: GameHostOptions): GameHost {
     submitCommand,
     tick,
     tickCount,
+    roundDeadline: roundDeadlineFireAt,
     serializedState,
     onStateChange,
     destroy,

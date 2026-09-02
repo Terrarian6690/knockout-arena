@@ -114,10 +114,14 @@ async function connectClient(port: number): Promise<{
 
 /** Start a transport with an injected game server (so tests can inspect it). */
 async function startTransport(
-  options?: { reconnectReservationMs?: number }
+  options?: {
+    reconnectReservationMs?: number;
+    roundDecisionTimeoutMs?: number;
+  }
 ): Promise<WebSocketTransport> {
   const gameServer = createGameServer({
     reconnectReservationMs: options?.reconnectReservationMs,
+    roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
   });
   liveServers.push(gameServer);
   const transport = await createWebSocketTransport({ gameServer });
@@ -292,6 +296,159 @@ describe("WebSocket transport over real sockets", () => {
     expect(finished).toMatchObject({ protocolVersion: 1, type: "match_finished", winnerId: "p1" });
     expect(transport.gameServer.getRoom(roomId)!.state).toBe("finished");
   }, 10000);
+
+  // ── the round decision deadline, end to end over real sockets ──────────
+
+  /** All wire snapshots a client has received, in order. */
+  function snapshotsOf(client: { received: Array<Record<string, unknown>> }): GameStateSnapshot[] {
+    return client.received
+      .filter((m) => m.type === "snapshot")
+      .map((m) => m.state as GameStateSnapshot);
+  }
+
+  /** The phase of the client's LATEST snapshot (null before the first). */
+  function lastPhase(client: { received: Array<Record<string, unknown>> }): GameStateSnapshot["phase"] | null {
+    const snaps = snapshotsOf(client);
+    return snaps.length > 0 ? snaps[snaps.length - 1].phase : null;
+  }
+
+  /** aiming → moving transitions in a client's full snapshot history. */
+  function resolutionEdges(client: { received: Array<Record<string, unknown>> }): number {
+    const snaps = snapshotsOf(client);
+    let n = 0;
+    for (let i = 1; i < snaps.length; i++) {
+      if (snaps[i - 1].phase === "aiming" && snaps[i].phase === "moving") n += 1;
+    }
+    return n;
+  }
+
+  /**
+   * Strip the per-viewer projection so two clients' snapshots compare equal
+   * (power/aimDirection/isAiming describe the viewer's OWN pawn).
+   */
+  function asAuthoritative(snapshot: GameStateSnapshot) {
+    return {
+      ...snapshot,
+      localPawnId: null,
+      power: 0,
+      aimDirection: null,
+      isAiming: false,
+      pawns: snapshot.pawns.map((pawn) => ({ ...pawn, isLocal: false })),
+    };
+  }
+
+  it("[Z] a silent round resolves at the server's deadline and both clients converge", async () => {
+    const transport = await startTransport({ roundDecisionTimeoutMs: 150 });
+    const host = await connectClient(transport.port());
+    const guest = await connectClient(transport.port());
+    host.send(msg.create);
+    const { roomId } = (await host.next("welcome")) as { roomId: string };
+    guest.send({ protocolVersion: 1, type: "join_room", roomId });
+    await guest.next("welcome");
+    host.send(msg.start);
+    const hostSnap0 = (await host.next("snapshot")).state as GameStateSnapshot;
+    const guestSnap0 = (await guest.next("snapshot")).state as GameStateSnapshot;
+    expect(hostSnap0.phase).toBe("aiming");
+    expect(guestSnap0.localPawnId).toBe("p1"); // each client gets its own view
+    const spawn = hostSnap0.pawns.map((p) => ({ ...p.position }));
+
+    // The host locks in a move; the guest goes SILENT. Nobody ever sends a
+    // resolveRound (the wire has no such command) — the server's own round
+    // decision deadline must resolve the round authoritatively.
+    host.send(command({ type: "aim", x: CX, y: CY }));
+    host.send(command({ type: "setPower", power: 2 }));
+    host.send(command({ type: "confirmLaunch" }));
+    expect(
+      await waitFor(
+        () => snapshotsOf(host).some((s) => s.pawns[0].confirmed === true),
+        2000
+      )
+    ).toBe(true);
+
+    // The deadline fires: both clients see the movement begin.
+    expect(await waitFor(() => lastPhase(host) === "moving", 2000)).toBe(true);
+    expect(await waitFor(() => lastPhase(guest) === "moving", 2000)).toBe(true);
+    expect(resolutionEdges(host)).toBe(1);
+
+    // The round settles into a fresh aiming round for both.
+    expect(await waitFor(() => lastPhase(host) === "aiming", 8000)).toBe(true);
+    expect(await waitFor(() => lastPhase(guest) === "aiming", 8000)).toBe(true);
+
+    // Exactly one resolution happened, and it moved only the player who
+    // had confirmed: the silent guest's pawn never left its spawn.
+    expect(resolutionEdges(host)).toBe(1);
+    expect(resolutionEdges(guest)).toBe(1);
+    const settledHost = snapshotsOf(host).slice(-1)[0];
+    const settledGuest = snapshotsOf(guest).slice(-1)[0];
+    expect(
+      Math.hypot(
+        settledHost.pawns[0].position.x - spawn[0].x,
+        settledHost.pawns[0].position.y - spawn[0].y
+      )
+    ).toBeGreaterThan(1); // the host's confirmed move executed
+    expect(settledGuest.pawns[1].position).toEqual(spawn[1]); // silent pawn frozen
+    expect(settledHost.pawns.every((p) => !p.eliminated)).toBe(true); // a timeout eliminates nobody
+    // And the two clients agree on the authoritative state.
+    expect(asAuthoritative(settledGuest)).toEqual(asAuthoritative(settledHost));
+    expect(transport.gameServer.getRoom(roomId)!.state).toBe("playing");
+  }, 15000);
+
+  it("[Z] both confirming before the deadline resolves immediately — the spent deadline never fires again", async () => {
+    const transport = await startTransport({ roundDecisionTimeoutMs: 6_000 });
+    const host = await connectClient(transport.port());
+    const guest = await connectClient(transport.port());
+    const t0 = Date.now();
+    host.send(msg.create);
+    const { roomId } = (await host.next("welcome")) as { roomId: string };
+    guest.send({ protocolVersion: 1, type: "join_room", roomId });
+    await guest.next("welcome");
+    host.send(msg.start);
+    const hostSnap0 = (await host.next("snapshot")).state as GameStateSnapshot;
+    const guestSnap0 = (await guest.next("snapshot")).state as GameStateSnapshot;
+
+    // Both players knock themselves out (radially outward, power 5) and
+    // confirm well before the 6 s deadline — the engine resolves the round
+    // IMMEDIATELY on the second confirmation, without waiting.
+    const outward = (pawn: GameStateSnapshot["pawns"][number]) => {
+      const dx = pawn.position.x - CX || 1;
+      const dy = pawn.position.y - CY;
+      const len = Math.hypot(dx, dy) || 1;
+      return { x: CX + (dx / len) * 400, y: CY + (dy / len) * 400 };
+    };
+    const hostAim = outward(hostSnap0.pawns[0]);
+    const guestAim = outward(guestSnap0.pawns[1]);
+    host.send(command({ type: "aim", x: hostAim.x, y: hostAim.y }));
+    host.send(command({ type: "setPower", power: 5 }));
+    host.send(command({ type: "confirmLaunch" }));
+    guest.send(command({ type: "aim", x: guestAim.x, y: guestAim.y }));
+    guest.send(command({ type: "setPower", power: 5 }));
+    guest.send(command({ type: "confirmLaunch" }));
+
+    // The early resolution is visible on BOTH wires long before the
+    // deadline would have fired…
+    expect(await waitFor(() => lastPhase(host) === "moving", 2000)).toBe(true);
+    expect(await waitFor(() => lastPhase(guest) === "moving", 2000)).toBe(true);
+    // …both pawns fly over the rim → the match finishes with no survivor.
+    const hostFinished = await host.next("match_finished", 8000);
+    const finishedAt = Date.now();
+    expect(finishedAt - t0).toBeLessThan(5_000); // resolved EARLY, not at the deadline
+    expect(hostFinished).toMatchObject({ type: "match_finished", winnerId: null });
+    await guest.next("match_finished", 8000);
+
+    // Long after the original deadline moment, the spent deadline must not
+    // have resolved anything again: still exactly one resolution, still
+    // finished, and no new snapshots flow for either client.
+    const hostSnapsAtDeadline = snapshotsOf(host).length;
+    const guestSnapsAtDeadline = snapshotsOf(guest).length;
+    await new Promise((r) => setTimeout(r, Math.max(0, t0 + 6_600 - Date.now())));
+    expect(resolutionEdges(host)).toBe(1);
+    expect(resolutionEdges(guest)).toBe(1);
+    expect(lastPhase(host)).toBe("finished");
+    expect(lastPhase(guest)).toBe("finished");
+    expect(snapshotsOf(host).length).toBe(hostSnapsAtDeadline); // nothing new arrived
+    expect(snapshotsOf(guest).length).toBe(guestSnapsAtDeadline);
+    expect(transport.gameServer.getRoom(roomId)!.state).toBe("finished");
+  }, 20000);
 
   it("closing the transport disconnects everyone cleanly", async () => {
     const transport = await startTransport();

@@ -18,6 +18,7 @@
 export {
   createGameHost,
   DEFAULT_MAX_CATCH_UP_TICKS,
+  DEFAULT_ROUND_DECISION_TIMEOUT_MS,
   type GameHost,
   type GameHostOptions,
   type SerializedStateListener,
@@ -30,6 +31,7 @@ export {
   type ResetResult,
   type RoomInfo,
   type RoomManager,
+  type RoomManagerOptions,
   type RoomSeatInfo,
   type RoomState,
   type SeatResult,

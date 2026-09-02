@@ -31,6 +31,13 @@ const APP_FILE = path.resolve(process.cwd(), "dist", "index.html");
  * the manual smoke test, e.g. RECONNECT_RESERVATION_MS=5000.
  */
 const RECONNECT_RESERVATION_MS = Number(process.env.RECONNECT_RESERVATION_MS ?? 30_000);
+/**
+ * Round decision deadline (default 10 s, like production): after this long
+ * in the aiming phase the server itself resolves the round. Shrink it to
+ * watch the timeout path in the manual smoke test, e.g.
+ * ROUND_DECISION_TIMEOUT_MS=3000.
+ */
+const ROUND_DECISION_TIMEOUT_MS = Number(process.env.ROUND_DECISION_TIMEOUT_MS ?? 10_000);
 
 const httpServer = createServer((_req, res) => {
   try {
@@ -44,6 +51,7 @@ const httpServer = createServer((_req, res) => {
 
 const gameServer = createGameServer({
   reconnectReservationMs: RECONNECT_RESERVATION_MS,
+  roundDecisionTimeoutMs: ROUND_DECISION_TIMEOUT_MS,
 });
 const core = createTransportCore(gameServer);
 
@@ -68,6 +76,7 @@ httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Smoke server ready:`);
   console.log(`  app + protocol v1 on  http://localhost:${PORT} (ws://localhost:${PORT})`);
   console.log(`  seat reservation for reconnect: ${RECONNECT_RESERVATION_MS} ms`);
+  console.log(`  round decision deadline: ${ROUND_DECISION_TIMEOUT_MS} ms`);
 });
 
 /** Mirrors the production adapter in src/server/webSocketTransport.ts. */

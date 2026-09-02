@@ -115,10 +115,13 @@ describe("host lifecycle", () => {
     const h = host({ players: specs(2) });
     // The whole surface a future transport gets. submitCommand is the ONLY
     // mutator besides tick/start/stop — there is no state-loading path.
+    // roundDeadline is read-only observability for the round decision
+    // deadline (enforced inside the tick loop, never by a timer callback).
     expect(Object.keys(h).sort()).toEqual([
       "destroy",
       "isRunning",
       "onStateChange",
+      "roundDeadline",
       "serializedState",
       "start",
       "stop",

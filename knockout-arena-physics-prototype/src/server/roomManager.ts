@@ -21,7 +21,9 @@ import { createGameHost, type GameHost, type SerializedStateListener } from "./g
  *   - authorization: the match-level `reset` and `resolveRound` commands
  *     are privileged and are rejected on the player path (see
  *     submitCommand); only the server itself may reset a match
- *     (resetMatch) or resolve a round at its deadline (resolveRound);
+ *     (resetMatch) or resolve a round at its deadline (resolveRound —
+ *     called manually OR automatically by the host's round decision
+ *     deadline, which enforces the same 10 s aiming-round maximum);
  *   - reconnection: a disconnected session's seat is temporarily RESERVED
  *     (occupied, reported disconnected, invisible to joiners) until it
  *     reclaims it (restoreSeat) or the reservation expires — expiry then
@@ -37,7 +39,7 @@ import { createGameHost, type GameHost, type SerializedStateListener } from "./g
 export type RoomState =
   /** Roster forming; seats may still join/leave freely. */
   | "waiting"
-  /** Match running (or paused between turns); the roster is frozen. */
+  /** Match running (or paused between rounds); the roster is frozen. */
   | "playing"
   /** Match over (winner or no survivor). Rematch = privileged reset. */
   | "finished";
@@ -52,6 +54,18 @@ export const MAX_PLAYERS = 4;
  * server owns the configured value it passes to reserveSeat().
  */
 export const DEFAULT_RESERVATION_MS = 30_000;
+
+/** Options for createRoomManager. */
+export interface RoomManagerOptions {
+  /**
+   * The round decision deadline applied to every match this manager
+   * starts: after this many milliseconds in the "aiming" phase the server
+   * itself resolves the round (confirmed players move, unconfirmed do
+   * not). See createGameHost. Default: DEFAULT_ROUND_DECISION_TIMEOUT_MS
+   * (10 000 ms).
+   */
+  roundDecisionTimeoutMs?: number;
+}
 
 /** One roster seat as seen from outside. */
 export interface RoomSeatInfo {
@@ -227,7 +241,7 @@ export interface RoomManager {
   submitCommand(token: string, command: unknown): ServerCommandResult;
 }
 
-export function createRoomManager(): RoomManager {
+export function createRoomManager(options?: RoomManagerOptions): RoomManager {
   const rooms = new Map<string, RoomEntry>();
 
   // ── internals ─────────────────────────────────────────────────────────
@@ -459,7 +473,12 @@ export function createRoomManager(): RoomManager {
       name: `Player ${i + 1}`,
     }));
 
-    const host = createGameHost({ players: roster });
+    const host = createGameHost({
+      players: roster,
+      // The round decision deadline is room policy: every match started
+      // here gets the same server-configured aiming-round maximum.
+      roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
+    });
     room.host = host;
     room.state = "playing";
     // One subscription drives both the room lifecycle (finished detection)

@@ -229,4 +229,107 @@ describe("two clients play one authoritative match (full stack)", () => {
     expect(host.client.getState().lastError).toBeNull();
     expect(guest.client.getState().lastError).toBeNull();
   }, 25000);
+
+  it("the server's round decision deadline resolves a round not everyone confirms in", async () => {
+    // A short deadline (800 ms): the host confirms through the real UI,
+    // the guest never chooses — no client ever sends or receives a
+    // "timeout" message (the wire has none). The SERVER resolves the
+    // round at its own deadline, and both clients simply observe the
+    // resulting state transitions.
+    const harness = createServerHarness({ roundDecisionTimeoutMs: 800 });
+    const host = harness.addPlayer();
+    const guest = harness.addPlayer();
+
+    renderLobby(host.client);
+    await connectPlayer(host);
+    fireEvent.click(screen.getByRole("button", { name: "Create Room" }));
+    const roomId = host.client.getState().roomId as string;
+
+    await connectPlayer(guest);
+    await playerAct(() => guest.client.joinRoom(roomId));
+    fireEvent.click(screen.getByTestId("start-match"));
+
+    expect(await screen.findByText("Multiplayer match", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByTestId("arena-canvas", {}, { timeout: 5000 })).toBeInTheDocument();
+    await waitFor(() => host.client.getState().snapshot !== null, 5000);
+
+    const initialSnap = host.client.getState().snapshot as GameStateSnapshot;
+    const spawn = initialSnap.pawns.map((p) => ({ ...p.position }));
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
+
+    // The host aims and locks in — the only choice anyone makes.
+    fireEvent.pointerMove(screen.getByTestId("arena-canvas"), {
+      clientX: 120,
+      clientY: 80,
+    });
+    expect(
+      await waitFor(
+        () => (host.client.getState().snapshot as GameStateSnapshot).isAiming === true,
+        5000
+      )
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Power 2" }));
+    expect(
+      await waitFor(
+        () => (host.client.getState().snapshot as GameStateSnapshot).power === 2,
+        5000
+      )
+    ).toBe(true);
+    fireEvent.click(screen.getByTestId("launch"));
+    expect(
+      await waitFor(
+        () =>
+          (host.client.getState().snapshot as GameStateSnapshot).pawns[0].confirmed === true,
+        5000
+      )
+    ).toBe(true);
+    // Locked in, but nothing moves yet — the round waits for the deadline.
+    expect((host.client.getState().snapshot as GameStateSnapshot).phase).toBe("aiming");
+    expect(screen.getByTestId("launch")).toBeDisabled();
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent(
+      "Ready — waiting for other players"
+    );
+
+    // The deadline fires on the server: the host's confirmed move executes
+    // and the silent guest's pawn stays frozen.
+    expect(
+      await waitFor(
+        () => (host.client.getState().snapshot as GameStateSnapshot).phase === "moving",
+        5000
+      )
+    ).toBe(true);
+    expect(
+      await waitFor(
+        () => (guest.client.getState().snapshot as GameStateSnapshot).phase === "moving",
+        5000
+      )
+    ).toBe(true);
+
+    // The round settles into a fresh aiming round for both clients…
+    expect(
+      await waitFor(() => {
+        const snap = host.client.getState().snapshot as GameStateSnapshot;
+        return snap.phase === "aiming";
+      }, 8000)
+    ).toBe(true);
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
+    expect(screen.getByTestId("launch")).toBeEnabled(); // a fresh choice
+
+    // …and the timeout moved exactly the one confirmed pawn.
+    const settled = host.client.getState().snapshot as GameStateSnapshot;
+    const p0 = settled.pawns.find((p) => p.id === "p0")!;
+    const p1 = settled.pawns.find((p) => p.id === "p1")!;
+    expect(Math.hypot(p0.position.x - spawn[0].x, p0.position.y - spawn[0].y)).toBeGreaterThan(1);
+    expect(p1.position).toEqual(spawn[1]);
+    expect(settled.pawns.every((p) => !p.eliminated)).toBe(true); // not an elimination
+    expect(settled.pawns.every((p) => !p.confirmed)).toBe(true); // fresh round
+
+    // Both clients hold the SAME authoritative state.
+    const guestSettled = guest.client.getState().snapshot as GameStateSnapshot;
+    expect(asAuthoritative(guestSettled)).toEqual(asAuthoritative(settled));
+
+    // No protocol additions were involved: no errors, still connected.
+    expect(host.client.getState().lastError).toBeNull();
+    expect(guest.client.getState().lastError).toBeNull();
+  }, 25000);
 });

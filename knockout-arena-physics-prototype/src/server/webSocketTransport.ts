@@ -74,6 +74,13 @@ export interface TransportOptions {
    * 30 000 ms (see createGameServer).
    */
   reconnectReservationMs?: number;
+  /**
+   * The round decision deadline for every match (see createGameHost):
+   * after this many milliseconds in the "aiming" phase the server
+   * resolves the round. Only used when this transport creates its own
+   * game server; default 10 000 ms.
+   */
+  roundDecisionTimeoutMs?: number;
 }
 
 const DEFAULT_SNAPSHOT_BUFFER_LIMIT = 256 * 1024;
@@ -469,7 +476,10 @@ export async function createWebSocketTransport(
   const ownsGameServer = options.gameServer === undefined;
   const gameServer =
     options.gameServer ??
-    createGameServer({ reconnectReservationMs: options.reconnectReservationMs });
+    createGameServer({
+      reconnectReservationMs: options.reconnectReservationMs,
+      roundDecisionTimeoutMs: options.roundDecisionTimeoutMs,
+    });
   const core = createTransportCore(gameServer, {
     snapshotBufferLimitBytes: options.snapshotBufferLimitBytes,
   });
