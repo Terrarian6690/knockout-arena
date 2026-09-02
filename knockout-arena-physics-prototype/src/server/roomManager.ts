@@ -20,15 +20,19 @@ import { createGameHost, type GameHost, type SerializedStateListener } from "./g
  *     playerId (or unknown field) a client sends is dropped here;
  *   - authorization: the match-level `reset` command is privileged and is
  *     rejected on the player path (see submitCommand); only the server
- *     itself may reset a match (resetMatch).
+ *     itself may reset a match (resetMatch);
+ *   - reconnection: a disconnected session's seat is temporarily RESERVED
+ *     (occupied, reported disconnected, invisible to joiners) until it
+ *     reclaims it (restoreSeat) or the reservation expires — expiry then
+ *     applies the normal leave rules (seat freed / vacated mid-match).
  *
  * Sessions are referenced by their opaque token (see session.ts); this
  * module never looks at anything else about a connection. No networking,
- * no persistence — the future WebSocket transport calls into this manager
- * through the game server facade (gameServer.ts).
+ * no persistence — the transport calls into this manager through the game
+ * server facade (gameServer.ts).
  */
 
-/** Room lifecycle. Minimal by design — no matchmaking, no timers. */
+/** Room lifecycle. Minimal by design — no matchmaking, no turn timers. */
 export type RoomState =
   /** Roster forming; seats may still join/leave freely. */
   | "waiting"
@@ -41,6 +45,12 @@ export type RoomState =
 export const MIN_PLAYERS = 2;
 /** Hard seat capacity — the playerIds p0..p3. */
 export const MAX_PLAYERS = 4;
+/**
+ * How long a disconnected player's seat stays reserved before the normal
+ * leave rules take over (seat freed/vacated, credential revoked). The game
+ * server owns the configured value it passes to reserveSeat().
+ */
+export const DEFAULT_RESERVATION_MS = 30_000;
 
 /** One roster seat as seen from outside. */
 export interface RoomSeatInfo {
@@ -80,6 +90,33 @@ export type LeaveResult =
   | { ok: true; room: RoomInfo | null } // null: the room was removed
   | { ok: false; reason: "unknown-session" | "not-in-room" };
 
+/**
+ * Options for seat reservation (a disconnected player's reconnect window).
+ */
+export interface ReserveOptions {
+  /** How long the seat stays reserved before it is released. Default 30s. */
+  reservationMs?: number;
+  /**
+   * Called once the reservation expires, after the seat has been released
+   * with the normal leave semantics. The game server uses this to revoke
+   * the session's reconnect credential (an expired one must stop working).
+   */
+  onExpire?: () => void;
+}
+
+export type ReserveResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason:
+        | "unknown-session" // malformed/absent session token
+        | "not-in-room"; // nothing to reserve
+    };
+
+export type RestoreResult =
+  | { ok: true; room: RoomInfo; playerId: string }
+  | { ok: false; reason: "unknown-session" | "not-in-room" };
+
 export type StartResult =
   | { ok: true; room: RoomInfo }
   | {
@@ -114,6 +151,13 @@ interface RoomEntry {
   seats: Array<string | null>;
   /** Seats vacated after the match started — the roster is frozen. */
   vacated: Set<number>;
+  /**
+   * Seat index → live reservation for a disconnected-but-still-seated
+   * session (its reconnect window). The seat stays OCCUPIED — invisible
+   * to joiners and counted by removeEmptyRooms — but reports
+   * connected:false until the session reclaims it or the timer expires.
+   */
+  reserved: Map<number, { timer: ReturnType<typeof setTimeout>; onExpire?: () => void }>;
   /** The creating session's token — the room host (see RoomInfo.hostPlayerId). */
   hostToken: string;
   host: GameHost | null;
@@ -129,11 +173,27 @@ export interface RoomManager {
   joinRoom(token: string, roomId: string): SeatResult;
   /** Leave the session's room (frees the seat, or vacates it mid-match). */
   leaveRoom(token: string): LeaveResult;
+  /**
+   * Open a reconnect window for a seated session whose connection dropped:
+   * the seat stays reserved (not stealable, not freed) until it expires.
+   * Re-reserving an already reserved seat restarts its timer.
+   */
+  reserveSeat(token: string, options?: ReserveOptions): ReserveResult;
+  /**
+   * Reclaim a seat for reconnect: clears the reservation (if any) and
+   * reports the seat. Idempotent — a seated session that was never
+   * reserved (its connection is still live) also restores fine.
+   */
+  restoreSeat(token: string): RestoreResult;
   /** Room snapshot by id, or null. */
   getRoom(roomId: string): RoomInfo | null;
   /** Resolve a session token to its room and assigned playerId. */
   resolveSeat(token: string): { room: RoomInfo; playerId: string } | null;
-  /** Start the match with the current stable roster (creates the GameHost). */
+  /**
+   * Start the match with the current stable roster (creates the GameHost).
+   * Reserved (disconnected) seats count — the roster is occupied seats;
+   * the host may start while waiting for a player to reconnect.
+   */
   startMatch(roomId: string): StartResult;
   /**
    * Privileged, server-controlled reset of a running match. This is the
@@ -190,7 +250,9 @@ export function createRoomManager(): RoomManager {
     const seats: RoomSeatInfo[] = [];
     for (let i = 0; i < MAX_PLAYERS; i++) {
       if (room.seats[i] !== null) {
-        seats.push({ playerId: `p${i}`, connected: true });
+        // Reserved seats stay occupied but report disconnected — the
+        // player's connection dropped and their reconnect window is open.
+        seats.push({ playerId: `p${i}`, connected: !room.reserved.has(i) });
       } else if (room.vacated.has(i)) {
         seats.push({ playerId: `p${i}`, connected: false });
       }
@@ -208,6 +270,8 @@ export function createRoomManager(): RoomManager {
   }
 
   function destroyRoom(room: RoomEntry): void {
+    for (const { timer } of room.reserved.values()) clearTimeout(timer);
+    room.reserved.clear();
     if (room.detachHost) room.detachHost();
     room.detachHost = null;
     if (room.host) {
@@ -238,6 +302,7 @@ export function createRoomManager(): RoomManager {
       state: "waiting",
       seats: [null, null, null, null],
       vacated: new Set(),
+      reserved: new Map(),
       hostToken: token, // the creator is the room host
       host: null,
       detachHost: null,
@@ -265,21 +330,87 @@ export function createRoomManager(): RoomManager {
     if (!validKey(token)) return { ok: false, reason: "unknown-session" };
     const seated = findSeat(token);
     if (!seated) return { ok: false, reason: "not-in-room" };
-    const { room, seat } = seated;
+    cancelReservation(seated.room, seated.seat); // an explicit leave is not a disconnect
+    const room = detachSeat(seated.room, seated.seat);
+    return { ok: true, room };
+  }
 
+  /** Cancel a seat's reservation (timer + callback) without releasing it. */
+  function cancelReservation(room: RoomEntry, seat: number): void {
+    const reservation = room.reserved.get(seat);
+    if (reservation === undefined) return;
+    clearTimeout(reservation.timer);
+    room.reserved.delete(seat);
+  }
+
+  /**
+   * Release a seat with the normal leave semantics: drop the occupant and
+   * its listeners; destroy an emptied room, else vacate the seat if the
+   * match already started. Returns the room info, or null if destroyed.
+   */
+  function detachSeat(room: RoomEntry, seat: number): RoomInfo | null {
+    const occupant = room.seats[seat];
     room.seats[seat] = null;
-    room.listeners = room.listeners.filter((l) => l.token !== token);
+    if (occupant !== null) {
+      room.listeners = room.listeners.filter((l) => l.token !== occupant);
+    }
 
     if (connectedCount(room) === 0) {
       destroyRoom(room); // empty rooms do not linger
-      return { ok: true, room: null };
+      return null;
     }
     if (room.state !== "waiting") {
       // The roster is frozen once the match started: the pawn stays in the
-      // match, the seat is simply vacated (reconnection is future work).
+      // match, the seat is simply vacated.
       room.vacated.add(seat);
     }
-    return { ok: true, room: infoOf(room) };
+    return infoOf(room);
+  }
+
+  function reserveSeat(token: string, options?: ReserveOptions): ReserveResult {
+    if (!validKey(token)) return { ok: false, reason: "unknown-session" };
+    const seated = findSeat(token);
+    if (!seated) return { ok: false, reason: "not-in-room" };
+    const { room, seat } = seated;
+    const ms = options?.reservationMs ?? DEFAULT_RESERVATION_MS;
+
+    // Restart the window on re-reserve (double drop, transport retries).
+    cancelReservation(room, seat);
+    const onExpire = options?.onExpire;
+    const timer = setTimeout(() => expireReservation(room, seat, onExpire), ms);
+    room.reserved.set(seat, { timer, onExpire });
+
+    // The seat is occupied-but-disconnected now: reserved seats report
+    // connected:false in the roster. The transport broadcasts the new
+    // room info to the peers on its own reserve hook.
+    return { ok: true };
+  }
+
+  function expireReservation(
+    room: RoomEntry,
+    seat: number,
+    onExpire: (() => void) | undefined
+  ): void {
+    // The room may have been destroyed (server teardown) since the timer
+    // was armed — a destroyed room's seat list is gone, nothing to do.
+    if (rooms.get(room.id) !== room) return;
+    room.reserved.delete(seat);
+    // Release the seat FIRST (normal leave semantics, listeners already
+    // gone — the transport unsubscribed on disconnect), then let the
+    // caller revoke the credential: the session can no longer reconnect.
+    detachSeat(room, seat);
+    onExpire?.();
+  }
+
+  function restoreSeat(token: string): RestoreResult {
+    if (!validKey(token)) return { ok: false, reason: "unknown-session" };
+    const seated = findSeat(token);
+    if (!seated) return { ok: false, reason: "not-in-room" };
+    const { room, seat } = seated;
+    cancelReservation(room, seat);
+    // The player is back and connected again — the transport broadcasts
+    // the updated room info to the peers on its reconnect path.
+    return { ok: true, room: infoOf(room), playerId: `p${seat}` };
   }
 
   function getRoom(roomId: string): RoomInfo | null {
@@ -433,6 +564,8 @@ export function createRoomManager(): RoomManager {
     createRoom,
     joinRoom,
     leaveRoom,
+    reserveSeat,
+    restoreSeat,
     getRoom,
     resolveSeat,
     startMatch,

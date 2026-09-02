@@ -6,6 +6,7 @@ import {
   joinRoomMessage,
   leaveRoomMessage,
   parseServerMessage,
+  reconnectMessage,
   startMatchMessage,
 } from "../protocolClient";
 
@@ -34,6 +35,11 @@ describe("client→server message builders", () => {
     expect(JSON.parse(startMatchMessage())).toEqual({
       protocolVersion: 1,
       type: "start_match",
+    });
+    expect(JSON.parse(reconnectMessage("opaque-credential"))).toEqual({
+      protocolVersion: 1,
+      type: "reconnect",
+      token: "opaque-credential",
     });
   });
 
@@ -108,6 +114,57 @@ describe("server→client message parsing", () => {
         hostPlayerId: "p0",
       },
     });
+  });
+
+  it("parses a welcome carrying a reconnect credential (and one without)", () => {
+    const withToken = parseServerMessage(
+      JSON.stringify({
+        protocolVersion: 1,
+        type: "welcome",
+        roomId: "r1",
+        playerId: "p2",
+        roomState: "waiting",
+        roster: [{ playerId: "p0", connected: true }],
+        hostPlayerId: "p0",
+        reconnectToken: "cred-abc",
+      })
+    );
+    expect(withToken).toEqual({
+      ok: true,
+      message: {
+        type: "welcome",
+        roomId: "r1",
+        playerId: "p2",
+        roomState: "waiting",
+        roster: [{ playerId: "p0", connected: true }],
+        hostPlayerId: "p0",
+        reconnectToken: "cred-abc",
+      },
+    });
+
+    // Absent credential (older server): valid, just no recovery path.
+    const withoutToken = parseServerMessage(welcome);
+    expect(withoutToken.ok).toBe(true);
+    if (withoutToken.ok && withoutToken.message.type === "welcome") {
+      expect(withoutToken.message.reconnectToken).toBeUndefined();
+    }
+
+    // Malformed credential: rejected.
+    for (const bad of [42, "", { nested: true }]) {
+      const parsed = parseServerMessage(
+        JSON.stringify({
+          protocolVersion: 1,
+          type: "welcome",
+          roomId: "r1",
+          playerId: "p2",
+          roomState: "waiting",
+          roster: [{ playerId: "p0", connected: true }],
+          hostPlayerId: "p0",
+          reconnectToken: bad,
+        })
+      );
+      expect(parsed).toMatchObject({ ok: false, code: "malformed-payload" });
+    }
   });
 
   it("parses room_state (roomId optional)", () => {

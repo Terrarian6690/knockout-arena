@@ -23,6 +23,16 @@ import type { RoomInfo } from "./roomManager";
  * "finished" → match_finished). The socket IS the connection identity; the
  * session token never leaves the server.
  *
+ * Reconnection policy (seat recovery, no gameplay impact): a connection
+ * that takes a seat receives an opaque reconnect credential in its
+ * personal welcome message. If that socket dies unexpectedly, the seat is
+ * RESERVED for a configurable window (default 30s) instead of released —
+ * presenting the credential on a new connection reclaims the same seat
+ * (same session identity, same playerId, same live match state) and
+ * INVALIDATES the old connection. Invalid or expired credentials are
+ * rejected indistinguishably. Deliberate shutdown (handle/core close) is
+ * not a drop: it disconnects cleanly and revokes the credential.
+ *
  * Authorization policy (v1, deliberately minimal): the room CREATOR is the
  * room host; only the host may start the match (RoomInfo.hostPlayerId,
  * maintained by the RoomManager). reset_match is NOT exposed over the wire
@@ -58,19 +68,42 @@ export interface TransportOptions {
    * it drains). Default 256 KiB.
    */
   snapshotBufferLimitBytes?: number;
+  /**
+   * How long a dropped connection's seat stays reserved for reconnect.
+   * Only used when this transport creates its own game server; default
+   * 30 000 ms (see createGameServer).
+   */
+  reconnectReservationMs?: number;
 }
 
 const DEFAULT_SNAPSHOT_BUFFER_LIMIT = 256 * 1024;
 
 /** One live connection: its session, room membership and bookkeeping. */
 interface ConnectionState {
-  readonly session: Session;
+  /**
+   * The session bound to this connection. Starts as the socket's own
+   * fresh session; a successful reconnect REBINDS it to the recovered
+   * session (same identity, same seat). Never leaves the server.
+   */
+  session: Session;
   readonly socket: TransportSocket;
   roomId: string | null;
   unsubscribeView: (() => void) | null;
   /** match_finished is announced once per match run. */
   finishedAnnounced: boolean;
   closed: boolean;
+  /**
+   * True once this connection is being deliberately closed (handle/core
+   * close): its socket's own close event must not turn into a drop
+   * reservation. An explicit server-side close overrides an open one.
+   */
+  forceClose: boolean;
+  /**
+   * True once a reconnecting connection took this session over: the
+   * socket is being closed for replacement, so its cleanup must neither
+   * reserve the seat nor disconnect the (now re-bound) session.
+   */
+  superseded: boolean;
 }
 
 export interface ConnectionHandle {
@@ -160,7 +193,15 @@ export function createTransportCore(
         }
         state.roomId = result.room.id;
         subscribeView(state);
-        send(state, welcomeMessage(result.room.id, result.playerId, result.room));
+        send(
+          state,
+          welcomeMessage(
+            result.room.id,
+            result.playerId,
+            result.room,
+            result.reconnectToken
+          )
+        );
         broadcastRoomState(result.room);
         return;
       }
@@ -173,7 +214,64 @@ export function createTransportCore(
         }
         state.roomId = result.room.id;
         subscribeView(state);
-        send(state, welcomeMessage(result.room.id, result.playerId, result.room));
+        send(
+          state,
+          welcomeMessage(
+            result.room.id,
+            result.playerId,
+            result.room,
+            result.reconnectToken
+          )
+        );
+        broadcastRoomState(result.room);
+        return;
+      }
+
+      case "reconnect": {
+        // Seat recovery: present the credential, reclaim the seat. This
+        // connection must not already hold a seat (the credential is for
+        // a DIFFERENT, dropped connection's seat).
+        if (state.roomId !== null) {
+          sendError(
+            state,
+            "already-in-room",
+            "this connection already holds a seat — leave it first"
+          );
+          return;
+        }
+        const result = gameServer.reconnect(message.token);
+        if (!result.ok) {
+          sendError(state, result.reason);
+          return;
+        }
+        // Takeover: the recovered session now belongs to THIS connection.
+        // Every other connection bound to it is invalidated — closing them
+        // must not reserve or disconnect the session (see supersede).
+        for (const other of [...connections]) {
+          if (
+            other !== state &&
+            !other.closed &&
+            other.session === result.session
+          ) {
+            supersede(other);
+          }
+        }
+        // Discard the fresh session this socket started with (it never
+        // held a seat, so this is a no-op leave) and rebind.
+        gameServer.disconnect(state.session);
+        state.session = result.session;
+        state.roomId = result.room.id;
+        state.finishedAnnounced = false;
+        subscribeView(state); // pushes the current match state immediately
+        send(
+          state,
+          welcomeMessage(
+            result.room.id,
+            result.playerId,
+            result.room,
+            result.reconnectToken
+          )
+        );
         broadcastRoomState(result.room);
         return;
       }
@@ -227,8 +325,38 @@ export function createTransportCore(
     }
   }
 
-  /** Idempotent teardown: stop subscriptions, disconnect, notify the room. */
-  function cleanup(state: ConnectionState): void {
+  /**
+   * Tear down a connection replaced by a reconnect: synchronous unbind
+   * (subscription, room membership, registry) + socket close, WITHOUT any
+   * server-side session call — the session lives on in the new connection.
+   */
+  function supersede(state: ConnectionState): void {
+    state.superseded = true;
+    state.closed = true; // later close/error events become no-ops
+    state.unsubscribeView?.();
+    state.unsubscribeView = null;
+    state.roomId = null;
+    connections.delete(state);
+    try {
+      state.socket.close();
+    } catch {
+      // already dead — the unbind above is what matters
+    }
+  }
+
+  /**
+   * Idempotent teardown: stop subscriptions, release the session, notify
+   * the room. Two modes:
+   *
+   *   "drop"  — the socket died unexpectedly: the seat gets a reconnect
+   *             reservation (identity preserved, seat not stealable) and
+   *             the session stays alive until it expires;
+   *   "force" — deliberate shutdown of this connection (handle/core
+   *             close): clean disconnect, the credential is revoked.
+   *
+   * Superseded connections (taken over by a reconnect) touch nothing.
+   */
+  function cleanup(state: ConnectionState, mode: "drop" | "force"): void {
     if (state.closed) return;
     state.closed = true;
     state.unsubscribeView?.();
@@ -236,7 +364,18 @@ export function createTransportCore(
     const roomId = state.roomId;
     state.roomId = null;
     connections.delete(state);
-    gameServer.disconnect(state.session);
+    if (state.superseded) return;
+    // A deliberate close wins over the socket's own close event, whatever
+    // order they arrive in.
+    if (state.forceClose || mode === "force") {
+      gameServer.disconnect(state.session);
+    } else {
+      // Unexpected loss: open the seat's reconnect reservation. A session
+      // with no seat has nothing to reserve — clean disconnect instead.
+      if (!gameServer.reserve(state.session).ok) {
+        gameServer.disconnect(state.session);
+      }
+    }
     if (roomId) {
       const room = gameServer.getRoom(roomId);
       if (room) broadcastRoomState(room);
@@ -252,6 +391,8 @@ export function createTransportCore(
         unsubscribeView: null,
         finishedAnnounced: false,
         closed: false,
+        forceClose: false,
+        superseded: false,
       };
       socket.onMessage((data) => {
         try {
@@ -262,30 +403,38 @@ export function createTransportCore(
           sendError(state, "internal-error");
         }
       });
-      socket.onClose(() => cleanup(state));
-      socket.onError(() => cleanup(state));
+      socket.onClose(() => cleanup(state, "drop"));
+      socket.onError(() => cleanup(state, "drop"));
       connections.add(state);
       return {
         session: state.session,
         socket,
         close: () => {
+          // An explicit close overrides everything — including a
+          // reservation a drop already opened.
+          if (state.closed) {
+            if (!state.superseded) gameServer.disconnect(state.session);
+            return;
+          }
+          state.forceClose = true; // the socket's close event must not reserve
           try {
             socket.close();
           } catch {
             // already dead — cleanup below is idempotent anyway
           }
-          cleanup(state);
+          cleanup(state, "force");
         },
       };
     },
     close(): void {
       for (const state of [...connections]) {
+        state.forceClose = true; // deliberate teardown, not a drop
         try {
           state.socket.close();
         } catch {
           // ignore — cleanup is idempotent
         }
-        cleanup(state);
+        cleanup(state, "force");
       }
     },
   };
@@ -318,7 +467,9 @@ export async function createWebSocketTransport(
   options: WebSocketTransportOptions = {}
 ): Promise<WebSocketTransport> {
   const ownsGameServer = options.gameServer === undefined;
-  const gameServer = options.gameServer ?? createGameServer();
+  const gameServer =
+    options.gameServer ??
+    createGameServer({ reconnectReservationMs: options.reconnectReservationMs });
   const core = createTransportCore(gameServer, {
     snapshotBufferLimitBytes: options.snapshotBufferLimitBytes,
   });

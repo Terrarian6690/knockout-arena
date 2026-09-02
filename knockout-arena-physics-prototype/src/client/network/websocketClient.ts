@@ -4,6 +4,7 @@ import {
   joinRoomMessage,
   leaveRoomMessage,
   parseServerMessage,
+  reconnectMessage,
   startMatchMessage,
 } from "./protocolClient";
 import {
@@ -32,11 +33,17 @@ import {
  * server's welcome, or create a second game-state shape. The browser only
  * renders what the server sends.
  *
- * Reconnection honesty: there is no server-side seat-reconnection protocol
- * yet, so a reconnect is a FRESH session — the previous room/seat state is
- * cleared on disconnect (never pretended to survive), no room is created
- * automatically, and commands are never sent while not connected. The
- * ReconnectPolicy exists so this can be swapped for real reconnection later.
+ * Seat recovery: a seat-holding connection receives an opaque reconnect
+ * credential in its personal welcome message. On an unexpected drop the
+ * room/seat state is KEPT (the server reserves the seat for a bounded
+ * window) and the retry handshake presents the credential instead of
+ * starting a fresh session — the same playerId, seat and live match are
+ * restored when the server confirms with a welcome. Without a credential
+ * (older server, or the connection never held a seat) a drop stays what it
+ * always was: a fresh session with the room state honestly cleared. A
+ * rejected credential (invalid/expired) clears the room state and returns
+ * the client to the lobby surface. Commands are never sent while not
+ * connected; no second player is ever created on this side.
  */
 
 export interface NetworkClientOptions {
@@ -98,6 +105,13 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
   let socket: WebSocketLike | null = null;
   let closedForever = false;
   let pendingReconnect: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The current seat's reconnect credential (internal, never part of the
+   * public state — it is a secret between this client and the server).
+   * Set from a welcome that carries one; cleared on leave, permanent
+   * close, or a rejected recovery.
+   */
+  let reconnectToken: string | null = null;
 
   function setState(patch: Partial<NetworkClientState>): void {
     state = { ...state, ...patch };
@@ -138,6 +152,17 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
 
     ws.onOpen(() => {
       if (socket !== ws) return; // stale socket
+      if (reconnectToken !== null) {
+        // Seat recovery: present the credential. The status only becomes
+        // "connected" once the server confirms with a welcome — until
+        // then the client is honest about not being seated.
+        try {
+          ws.send(reconnectMessage(reconnectToken));
+        } catch {
+          // Sending failed — let the close handler own the retry.
+        }
+        return;
+      }
       setState({ status: "connected", reconnectAttempt: 0 });
     });
     ws.onMessage((data) => {
@@ -168,7 +193,14 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     const message = parsed.message;
     switch (message.type) {
       case "welcome":
+        // The welcome is the confirmation for create/join AND for a
+        // reconnect handshake: it carries the seat back (same identity on
+        // recovery) plus the seat's credential (persistent — the same
+        // one may recover future drops too).
+        reconnectToken = message.reconnectToken ?? null;
         setState({
+          status: "connected",
+          reconnectAttempt: 0,
           roomId: message.roomId,
           playerId: message.playerId,
           roomState: message.roomState,
@@ -196,13 +228,33 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
         setState({ winnerId: message.winnerId, roomState: "finished" });
         return;
       case "error":
+        if (reconnectToken !== null && state.status !== "connected") {
+          // A recovery handshake was pending and the server rejected it
+          // (invalid or expired credential — indistinguishable by
+          // design). Abandon the seat honestly: clear the room state and
+          // return to the lobby surface. The socket itself is fine.
+          reconnectToken = null;
+          clearRoomState();
+          setState({
+            status: "connected",
+            reconnectAttempt: 0,
+            lastError: { code: message.code, message: message.message },
+          });
+          return;
+        }
         setState({ lastError: { code: message.code, message: message.message } });
         return;
     }
   }
 
   function handleDisconnect(): void {
-    clearRoomState();
+    if (reconnectToken === null) {
+      // Nothing to recover: the seat did not survive the connection —
+      // clear instead of pretending.
+      clearRoomState();
+    }
+    // With a credential the room/seat state is KEPT: the server reserves
+    // the seat for a bounded window and the retry will reclaim it.
     if (!reconnect.enabled || state.reconnectAttempt >= reconnect.maxAttempts) {
       setState({ status: "disconnected", reconnectAttempt: 0 });
       return;
@@ -254,6 +306,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     close(): void {
       if (closedForever) return;
       closedForever = true;
+      reconnectToken = null; // a permanently closed client never recovers
       if (pendingReconnect !== null) {
         clearTimeout(pendingReconnect);
         pendingReconnect = null;
@@ -277,7 +330,13 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
       return sendRaw(joinRoomMessage(roomId));
     },
     leaveRoom(): boolean {
-      return sendRaw(leaveRoomMessage());
+      const sent = sendRaw(leaveRoomMessage());
+      if (sent) {
+        // Leaving on purpose: this connection's credential is useless now
+        // (the server revokes it with the seat).
+        reconnectToken = null;
+      }
+      return sent;
     },
     startMatch(): boolean {
       return sendRaw(startMatchMessage());

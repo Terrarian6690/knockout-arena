@@ -1,6 +1,7 @@
 import { createSession, isSession, type Session } from "./session";
 import {
   createRoomManager,
+  DEFAULT_RESERVATION_MS,
   type LeaveResult,
   type ResetResult,
   type RoomInfo,
@@ -9,6 +10,7 @@ import {
   type ServerCommandResult,
   type StartResult,
 } from "./roomManager";
+import { createReconnectRegistry } from "./reconnect";
 import type { SerializedStateListener } from "./gameHost";
 import {
   deserializeGameState,
@@ -17,9 +19,10 @@ import {
 } from "../game";
 
 /**
- * The game server facade — the transport-neutral API a future WebSocket
- * layer will attach to. It owns the session registry (connections) and
- * delegates room/match concerns to the RoomManager.
+ * The game server facade — the transport-neutral API the WebSocket layer
+ * attaches to. It owns the session registry (connections) and the
+ * reconnection credentials, and delegates room/match concerns to the
+ * RoomManager.
  *
  * The authoritative identity chain, enforced here:
  *
@@ -32,28 +35,98 @@ import {
  * NEVER chooses a playerId — the seat assignment decides, and commands
  * are stamped with it (see roomManager.submitCommand).
  *
- * Intended transport wiring (no networking implemented yet):
+ * Reconnection (the session domain, this module):
+ *
+ *   - taking a seat (createRoom/joinRoom) issues an opaque reconnect
+ *     credential for that seat, returned ONLY to that player;
+ *   - reserve() opens that seat's reconnect window after an unexpected
+ *     connection drop (the seat stays reserved, not stealable);
+ *   - reconnect(credential) reclaims the seat on a new connection — same
+ *     session identity, same playerId, same match — or fails uniformly
+ *     ("invalid-reconnect") for unknown, stale and expired credentials;
+ *   - credentials are revoked the moment their seat is gone (leave,
+ *     force-disconnect, reservation expiry, server teardown).
+ *
+ * Transport wiring:
  *
  *   on connect:    session = server.connect()
  *   on message:    server.createRoom(session) | server.joinRoom(session, id)
  *                  | server.submitCommand(session, command)
  *   on state:      server.onRoomState(session, broadcast)   // push hook
- *   on disconnect: server.disconnect(session)               // clean leave
+ *   on drop:       server.reserve(session)                  // reconnect window
+ *                  (fall back to server.disconnect if not seated)
+ *   on close:      server.disconnect(session)               // clean leave
  */
+
+/** Options for createGameServer. */
+export interface GameServerOptions {
+  /**
+   * How long a disconnected player's seat stays reserved before the
+   * normal leave rules take over. Default 30 000 ms. Applies to every
+   * reservation opened via reserve().
+   */
+  reconnectReservationMs?: number;
+}
+
+/** A seat result that carries the seat's reconnect credential. */
+export type SeatedResult =
+  | {
+      ok: true;
+      room: RoomInfo;
+      playerId: string;
+      /** Opaque credential to reclaim this seat after a drop. */
+      reconnectToken: string;
+    }
+  | Extract<SeatResult, { ok: false }>;
+
+/**
+ * The outcome of presenting a reconnect credential. The failure carries
+ * NO detail on purpose: unknown, malformed, stale and expired credentials
+ * are indistinguishable ("invalid-reconnect") — no existence leak.
+ */
+export type ReconnectResult =
+  | {
+      ok: true;
+      session: Session;
+      room: RoomInfo;
+      playerId: string;
+      /** The credential, valid again (persistent until revoked). */
+      reconnectToken: string;
+    }
+  | { ok: false; reason: "invalid-reconnect" };
+
 export interface GameServer {
   /** Issue a new session (a connection identity). */
   connect(): Session;
   /**
    * Tear down a session: leaves its room cleanly (freeing or vacating the
-   * seat, removing the room if it empties) and invalidates the token.
-   * Returns true if a live session was disconnected.
+   * seat, removing the room if it empties), revokes its reconnect
+   * credential and invalidates the token. Returns true if a live session
+   * was disconnected. This is the FORCE path — use reserve() for drops
+   * that should be recoverable.
    */
   disconnect(session: unknown): boolean;
-  /** Create a room; the session takes seat p0. */
-  createRoom(session: unknown): SeatResult;
-  /** Join a waiting room by id; the session takes the lowest free seat. */
-  joinRoom(session: unknown, roomId: unknown): SeatResult;
-  /** Leave the session's current room. */
+  /**
+   * Open the session's reconnect window after an unexpected connection
+   * drop: the seat stays occupied and reserved (reported disconnected,
+   * invisible to joiners) until the session reconnects or the window
+   * expires. Returns not-in-room if the session has no seat — the caller
+   * should then disconnect() instead.
+   */
+  reserve(session: unknown): { ok: true } | { ok: false; reason: "unknown-session" | "not-in-room" };
+  /**
+   * Reclaim a seat with a reconnect credential: restores the session's
+   * identity (same session, same playerId, same match state — nothing is
+   * restarted) and returns the seat info plus the credential for the new
+   * connection. Fails uniformly for any credential this server did not
+   * issue, or that has since been revoked (seat left/expired/destroyed).
+   */
+  reconnect(rawToken: unknown): ReconnectResult;
+  /** Create a room; the session takes seat p0 (issues a credential). */
+  createRoom(session: unknown): SeatedResult;
+  /** Join a waiting room by id; the session takes the lowest free seat (issues a credential). */
+  joinRoom(session: unknown, roomId: unknown): SeatedResult;
+  /** Leave the session's current room (revokes its credential). */
   leaveRoom(session: unknown): LeaveResult;
   /** Room snapshot by id (null if unknown/malformed). */
   getRoom(roomId: unknown): RoomInfo | null;
@@ -88,20 +161,24 @@ export interface GameServer {
   removeEmptyRooms(): number;
   /** Number of live rooms. */
   roomCount(): number;
-  /** Number of live sessions. */
+  /** Number of live sessions (reserved seats keep their session alive). */
   sessionCount(): number;
-  /** Tear down everything (all rooms, hosts and sessions). */
+  /** Tear down everything (all rooms, hosts, sessions and credentials). */
   destroy(): void;
 }
 
-export function createGameServer(): GameServer {
+export function createGameServer(options?: GameServerOptions): GameServer {
   const manager: RoomManager = createRoomManager();
-  const liveTokens = new Set<string>();
+  const reservationMs = options?.reconnectReservationMs ?? DEFAULT_RESERVATION_MS;
+  /** Live sessions by their opaque token (the registry's canonical objects). */
+  const sessions = new Map<string, Session>();
+  /** Reconnect credentials: seat recovery, server-issued only. */
+  const credentials = createReconnectRegistry();
 
   /** Resolve untrusted input to a live session, or null. */
   function resolve(session: unknown): Session | null {
     if (!isSession(session)) return null;
-    return liveTokens.has(session.token) ? session : null;
+    return sessions.get(session.token) ?? null;
   }
 
   function asRoomId(roomId: unknown): string | null {
@@ -110,7 +187,7 @@ export function createGameServer(): GameServer {
 
   function connect(): Session {
     const session = createSession();
-    liveTokens.add(session.token);
+    sessions.set(session.token, session);
     return session;
   }
 
@@ -118,28 +195,99 @@ export function createGameServer(): GameServer {
     const s = resolve(session);
     if (!s) return false;
     manager.leaveRoom(s.token); // clean leave; may remove an emptied room
-    liveTokens.delete(s.token);
+    credentials.revokeSession(s.token); // the credential dies with the seat
+    sessions.delete(s.token);
     return true;
   }
 
-  function createRoom(session: unknown): SeatResult {
+  function reserve(
+    session: unknown
+  ): { ok: true } | { ok: false; reason: "unknown-session" | "not-in-room" } {
     const s = resolve(session);
     if (!s) return { ok: false, reason: "unknown-session" };
-    return manager.createRoom(s.token);
+    const reserved = manager.reserveSeat(s.token, {
+      reservationMs,
+      onExpire: () => {
+        // The window closed: the seat is released (normal leave rules,
+        // applied by the room manager before this callback) — the session
+        // identity and its credential must not survive it.
+        credentials.revokeSession(s.token);
+        sessions.delete(s.token);
+      },
+    });
+    if (!reserved.ok) return reserved;
+    return { ok: true };
   }
 
-  function joinRoom(session: unknown, roomId: unknown): SeatResult {
+  function reconnect(rawToken: unknown): ReconnectResult {
+    const cred = credentials.resolve(rawToken);
+    if (!cred) return { ok: false, reason: "invalid-reconnect" };
+    const session = sessions.get(cred.sessionToken);
+    if (!session) {
+      // Session already invalidated (force path / teardown) — the
+      // credential should be gone too; revoke defensively.
+      credentials.revokeSession(cred.sessionToken);
+      return { ok: false, reason: "invalid-reconnect" };
+    }
+    const restored = manager.restoreSeat(cred.sessionToken);
+    if (
+      !restored.ok ||
+      restored.room.id !== cred.roomId ||
+      restored.playerId !== cred.playerId
+    ) {
+      // The credential no longer matches a live seat of that session —
+      // stale credential; kill it and fail indistinguishably.
+      credentials.revokeSession(cred.sessionToken);
+      return { ok: false, reason: "invalid-reconnect" };
+    }
+    return {
+      ok: true,
+      session,
+      room: restored.room,
+      playerId: restored.playerId,
+      reconnectToken: rawToken as string,
+    };
+  }
+
+  /** Stamp a successful seat result with the seat's reconnect credential. */
+  function withCredential(token: string, result: SeatResult): SeatedResult {
+    if (!result.ok) return result;
+    const reconnectToken = credentials.issue(
+      token,
+      result.room.id,
+      result.playerId
+    );
+    return {
+      ok: true,
+      room: result.room,
+      playerId: result.playerId,
+      reconnectToken,
+    };
+  }
+
+  function createRoom(session: unknown): SeatedResult {
+    const s = resolve(session);
+    if (!s) return { ok: false, reason: "unknown-session" };
+    return withCredential(s.token, manager.createRoom(s.token));
+  }
+
+  function joinRoom(session: unknown, roomId: unknown): SeatedResult {
     const s = resolve(session);
     if (!s) return { ok: false, reason: "unknown-session" };
     const id = asRoomId(roomId);
     if (!id) return { ok: false, reason: "unknown-room" };
-    return manager.joinRoom(s.token, id);
+    return withCredential(s.token, manager.joinRoom(s.token, id));
   }
 
   function leaveRoom(session: unknown): LeaveResult {
     const s = resolve(session);
     if (!s) return { ok: false, reason: "unknown-session" };
-    return manager.leaveRoom(s.token);
+    const result = manager.leaveRoom(s.token);
+    if (result.ok) {
+      // The seat is gone — its credential must stop working immediately.
+      credentials.revokeSession(s.token);
+    }
+    return result;
   }
 
   function getRoom(roomId: unknown): RoomInfo | null {
@@ -203,17 +351,20 @@ export function createGameServer(): GameServer {
   }
 
   function sessionCount(): number {
-    return liveTokens.size;
+    return sessions.size;
   }
 
   function destroy(): void {
     manager.destroy();
-    liveTokens.clear();
+    sessions.clear();
+    credentials.clear();
   }
 
   return {
     connect,
     disconnect,
+    reserve,
+    reconnect,
     createRoom,
     joinRoom,
     leaveRoom,

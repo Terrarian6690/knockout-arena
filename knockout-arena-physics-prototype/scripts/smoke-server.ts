@@ -25,6 +25,12 @@ import { createGameServer, createTransportCore, type TransportSocket } from "../
 
 const PORT = Number(process.env.PORT ?? 4173);
 const APP_FILE = path.resolve(process.cwd(), "dist", "index.html");
+/**
+ * How long a dropped connection's seat stays reserved for reconnect
+ * (default 30 s, like production). Shrink it to watch the expiry path in
+ * the manual smoke test, e.g. RECONNECT_RESERVATION_MS=5000.
+ */
+const RECONNECT_RESERVATION_MS = Number(process.env.RECONNECT_RESERVATION_MS ?? 30_000);
 
 const httpServer = createServer((_req, res) => {
   try {
@@ -36,7 +42,9 @@ const httpServer = createServer((_req, res) => {
   }
 });
 
-const gameServer = createGameServer();
+const gameServer = createGameServer({
+  reconnectReservationMs: RECONNECT_RESERVATION_MS,
+});
 const core = createTransportCore(gameServer);
 
 const wss = new WebSocketServer({ noServer: true });
@@ -59,6 +67,7 @@ process.on("SIGINT", () => {
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Smoke server ready:`);
   console.log(`  app + protocol v1 on  http://localhost:${PORT} (ws://localhost:${PORT})`);
+  console.log(`  seat reservation for reconnect: ${RECONNECT_RESERVATION_MS} ms`);
 });
 
 /** Mirrors the production adapter in src/server/webSocketTransport.ts. */

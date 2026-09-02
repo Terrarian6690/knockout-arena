@@ -115,18 +115,25 @@ function command(command: unknown) {
 }
 
 /** A room with n connected clients; creator first. */
-function makeRoom(core: TransportCore, n: number): { roomId: string; sockets: FakeSocket[] } {
+function makeRoom(core: TransportCore, n: number): {
+  roomId: string;
+  sockets: FakeSocket[];
+  handles: ConnectionHandle[];
+} {
   const sockets: FakeSocket[] = [];
-  const creator = connect(core).socket;
-  creator.receiveMsg(msg.create);
-  const welcome = creator.lastOf("welcome") as { roomId: string };
-  sockets.push(creator);
+  const handles: ConnectionHandle[] = [];
+  const creator = connect(core);
+  creator.socket.receiveMsg(msg.create);
+  const welcome = creator.socket.lastOf("welcome") as { roomId: string };
+  sockets.push(creator.socket);
+  handles.push(creator.handle);
   for (let i = 1; i < n; i++) {
-    const socket = connect(core).socket;
-    socket.receiveMsg(join(welcome.roomId));
-    sockets.push(socket);
+    const member = connect(core);
+    member.socket.receiveMsg(join(welcome.roomId));
+    sockets.push(member.socket);
+    handles.push(member.handle);
   }
-  return { roomId: welcome.roomId, sockets };
+  return { roomId: welcome.roomId, sockets, handles };
 }
 
 /** Start a match as the room host (sockets[0] is the creator). */
@@ -656,11 +663,26 @@ describe("disconnect", () => {
     expect(server.getRoom(roomId)!.state).toBe("finished");
   }, 8000);
 
-  it("an emptied room is cleaned up; unrelated rooms remain untouched", () => {
+  it("drops reserve the seats; force-closing an emptied room cleans it up", () => {
     const { server, core } = newCore();
     const roomA = makeRoom(core, 2);
     const roomB = makeRoom(core, 2);
-    for (const { socket } of roomA.sockets.map((s) => ({ socket: s }))) socket.close();
+
+    // Unexpected socket loss: both seats are RESERVED (reported
+    // disconnected, room alive — identity recoverable), not released.
+    roomA.sockets[0].close();
+    roomA.sockets[1].close();
+    expect(server.getRoom(roomA.roomId)).not.toBeNull();
+    expect(server.getRoom(roomA.roomId)!.seats).toEqual([
+      { playerId: "p0", connected: false },
+      { playerId: "p1", connected: false },
+    ]);
+    expect(server.sessionCount()).toBe(4); // reservations keep sessions
+
+    // Explicit server-side teardown overrides the reservations: the
+    // emptied room is removed, unrelated rooms stay untouched.
+    roomA.handles[0].close();
+    roomA.handles[1].close();
     expect(server.getRoom(roomA.roomId)).toBeNull();
     expect(server.roomCount()).toBe(1);
     expect(server.getRoom(roomB.roomId)!.seats).toHaveLength(2);

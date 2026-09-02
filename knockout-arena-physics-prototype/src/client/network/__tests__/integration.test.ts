@@ -113,8 +113,10 @@ afterEach(() => {
 });
 
 /** A real transport core around a real game server. */
-function makeCore(): TransportCore {
-  const gameServer = createGameServer();
+function makeCore(options?: { reconnectReservationMs?: number }): TransportCore {
+  const gameServer = createGameServer({
+    reconnectReservationMs: options?.reconnectReservationMs,
+  });
   liveServers.push(gameServer);
   const core = createTransportCore(gameServer);
   liveCores.push(core);
@@ -173,6 +175,7 @@ async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boo
 async function startedRoom(core: TransportCore): Promise<{
   host: Awaited<ReturnType<typeof connect>>;
   guest: Awaited<ReturnType<typeof connect>>;
+  roomId: string;
 }> {
   const host = await connect(core);
   const guest = await connect(core);
@@ -180,7 +183,7 @@ async function startedRoom(core: TransportCore): Promise<{
   const roomId = host.client.getState().roomId as string;
   guest.client.joinRoom(roomId);
   host.client.startMatch();
-  return { host, guest };
+  return { host, guest, roomId };
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -303,38 +306,153 @@ describe("browser client ↔ real server (in-memory wire)", () => {
     expect(client.getState().playerId).toBe("p0");
   });
 
-  it("an unexpected drop reconnects as a fresh session — the old seat is not restored", async () => {
+  it("an unexpected drop recovers the SAME seat via the reconnect credential", async () => {
     const core = makeCore();
-    const { client, pair } = await connect(core);
+    const gameServer = liveServers[liveServers.length - 1];
+    const { client, pair, pairs } = await connect(core);
     client.createRoom();
-    expect(client.getState().roomId).toBeTruthy();
+    const roomId = client.getState().roomId as string;
+    expect(roomId).toBeTruthy();
 
     pair.serverEnd.close(); // the network drops us mid-room
+    // The seat is server-reserved: the client keeps its room picture and
+    // enters the reconnect loop instead of pretending nothing happened.
     expect(client.getState().status).toBe("reconnecting");
-    expect(client.getState().roomId).toBeNull(); // no pretending
+    expect(client.getState().roomId).toBe(roomId);
+    expect(client.getState().playerId).toBe("p0");
 
-    const reconnected = await waitFor(
+    const recovered = await waitFor(
       () => client.getState().status === "connected",
       3000
     );
-    expect(reconnected).toBe(true);
-    // Fresh session: no room, no seat — and no automatic room creation.
-    expect(client.getState().roomId).toBeNull();
-    expect(client.getState().playerId).toBeNull();
-    // …but fully usable again.
-    expect(client.createRoom()).toBe(true);
+    expect(recovered).toBe(true);
+    // Same seat, same room — no new player, no duplicate seat.
+    expect(client.getState().roomId).toBe(roomId);
     expect(client.getState().playerId).toBe("p0");
+    expect(gameServer.getRoom(roomId)!.seats).toHaveLength(1);
+    expect(gameServer.sessionCount()).toBe(1); // the recovered session only
+
+    // The retry socket's first wire message was the reconnect handshake
+    // carrying the credential — never a create/join (no second player).
+    const retryPair = pairs[1];
+    expect(retryPair).toBeDefined();
+    const firstOut = JSON.parse(retryPair.clientSent[0]);
+    expect(firstOut).toMatchObject({ protocolVersion: 1, type: "reconnect" });
+    expect(typeof firstOut.token).toBe("string");
+    expect(firstOut.token.length).toBeGreaterThan(0);
+
+    // And the connection is fully usable again: commands go through the
+    // recovered identity (the waiting room has no match, so the server
+    // answers the usual no-match — NOT unknown-session).
+    expect(client.submitCommand({ type: "aim", x: CX, y: CY })).toBe(true);
+    expect(
+      await waitFor(() => client.getState().lastError?.code === "no-match", 3000)
+    ).toBe(true);
   });
 
-  it("an explicit client close tears the server session down", async () => {
+  it("an unexpected drop mid-match recovers the same seat and the match continues", async () => {
     const core = makeCore();
     const gameServer = liveServers[liveServers.length - 1];
-    const { client } = await connect(core);
+    const { host, guest, roomId } = await startedRoom(core);
+    expect(
+      await waitFor(() => host.client.getState().snapshot !== null, 3000)
+    ).toBe(true);
+    expect(guest.client.getState().playerId).toBe("p1");
+
+    // The host's connection dies while the match is running.
+    host.pair.serverEnd.close();
+    expect(host.client.getState().status).toBe("reconnecting");
+    expect(host.client.getState().roomId).toBe(roomId); // match screen stays
+    expect(host.client.getState().roomState).toBe("playing");
+
+    // The guest sees the host's seat reserved (disconnected, not freed).
+    expect(
+      await waitFor(
+        () =>
+          guest.client.getState().roster.some(
+            (seat) => seat.playerId === "p0" && !seat.connected
+          ),
+        3000
+      )
+    ).toBe(true);
+
+    // Recovery: same identity, same live match — nothing restarted.
+    expect(
+      await waitFor(() => host.client.getState().status === "connected", 3000)
+    ).toBe(true);
+    expect(host.client.getState().roomId).toBe(roomId);
+    expect(host.client.getState().playerId).toBe("p0");
+    expect(host.client.getState().roomState).toBe("playing");
+    expect(gameServer.getRoom(roomId)!.seats).toHaveLength(2); // no duplicates
+    expect(gameServer.getRoom(roomId)!.state).toBe("playing");
+
+    // Snapshots flow again and commands work for the recovered player.
+    expect(
+      await waitFor(
+        () => (host.client.getState().snapshot as GameStateSnapshot)?.isAiming === true ||
+          host.client.getState().snapshot !== null,
+        3000
+      )
+    ).toBe(true);
+    expect(host.client.submitCommand({ type: "aim", x: CX, y: CY })).toBe(true);
+    expect(
+      await waitFor(
+        () => (host.client.getState().snapshot as GameStateSnapshot).isAiming === true,
+        3000
+      )
+    ).toBe(true);
+    expect(
+      (host.client.getState().snapshot as GameStateSnapshot).activePawnId
+    ).toBe("p0");
+  });
+
+  it("an expired credential is rejected and the client returns to the lobby surface", async () => {
+    // A reservation window shorter than the client's first retry: by the
+    // time it reconnects, the credential has expired.
+    const core = makeCore({ reconnectReservationMs: 40 });
+    const gameServer = liveServers[liveServers.length - 1];
+    const { client, pair } = await connect(core, { baseDelayMs: 150 });
+    client.createRoom();
+    const roomId = client.getState().roomId as string;
+    expect(roomId).toBeTruthy();
+
+    pair.serverEnd.close();
+    expect(client.getState().status).toBe("reconnecting");
+
+    // The retry is rejected: the seat state is cleared honestly and the
+    // client surfaces the rejection without crashing the connection.
+    expect(
+      await waitFor(() => client.getState().status === "connected", 3000)
+    ).toBe(true);
+    expect(client.getState().roomId).toBeNull();
+    expect(client.getState().playerId).toBeNull();
+    expect(client.getState().lastError?.code).toBe("invalid-reconnect");
+
+    // Server-side: the reservation expired, the seat and its room are
+    // really gone (the still-connected client is a fresh, unseated
+    // session — the old identity was revoked with the credential).
+    expect(gameServer.getRoom(roomId)).toBeNull();
+    expect(gameServer.roomCount()).toBe(0);
+
+    // The client can take a fresh seat immediately.
+    expect(client.createRoom()).toBe(true);
+    expect(client.getState().playerId).toBe("p0");
+    expect(gameServer.roomCount()).toBe(1);
+  });
+
+  it("an explicit client close reserves the seat, then the window expires", async () => {
+    // From the server's side a client-initiated close is indistinguishable
+    // from a drop (browsers send no reason) — the seat gets the normal
+    // reconnect reservation, and the session is removed once it expires.
+    const core = makeCore({ reconnectReservationMs: 40 });
+    const gameServer = liveServers[liveServers.length - 1];
+    const { client } = await connect(core, { enabled: false });
     client.createRoom();
 
     client.close();
     expect(client.getState().status).toBe("closed");
     expect(await waitFor(() => gameServer.sessionCount() === 0, 3000)).toBe(true);
+    expect(gameServer.roomCount()).toBe(0);
   });
 
   it("subscribers are notified as the state flows through a real match", async () => {

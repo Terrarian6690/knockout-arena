@@ -113,8 +113,12 @@ async function connectClient(port: number): Promise<{
 }
 
 /** Start a transport with an injected game server (so tests can inspect it). */
-async function startTransport(): Promise<WebSocketTransport> {
-  const gameServer = createGameServer();
+async function startTransport(
+  options?: { reconnectReservationMs?: number }
+): Promise<WebSocketTransport> {
+  const gameServer = createGameServer({
+    reconnectReservationMs: options?.reconnectReservationMs,
+  });
   liveServers.push(gameServer);
   const transport = await createWebSocketTransport({ gameServer });
   liveTransports.push(transport);
@@ -139,8 +143,8 @@ async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boo
 // ────────────────────────────────────────────────────────────────────────
 
 describe("WebSocket transport over real sockets", () => {
-  it("each real connection becomes exactly one session; close removes it", async () => {
-    const transport = await startTransport();
+  it("each real connection becomes exactly one session; a drop reserves it, expiry removes it", async () => {
+    const transport = await startTransport({ reconnectReservationMs: 60 });
     const a = await connectClient(transport.port());
     const b = await connectClient(transport.port());
     a.send(msg.create);
@@ -149,12 +153,15 @@ describe("WebSocket transport over real sockets", () => {
     await b.next("welcome");
     expect(transport.gameServer.sessionCount()).toBe(2);
 
+    // A dropped connection that held a seat: the session SURVIVES (its
+    // seat is reserved for the reconnect window)…
     a.close();
-    await waitFor(() => transport.gameServer.sessionCount() === 1, 3000);
-    expect(transport.gameServer.sessionCount()).toBe(1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(transport.gameServer.sessionCount()).toBe(2);
+    // …until the reservation expires, then it is really gone.
+    expect(await waitFor(() => transport.gameServer.sessionCount() === 1, 3000)).toBe(true);
     b.close();
-    await waitFor(() => transport.gameServer.sessionCount() === 0, 3000);
-    expect(transport.gameServer.sessionCount()).toBe(0);
+    expect(await waitFor(() => transport.gameServer.sessionCount() === 0, 3000)).toBe(true);
   });
 
   it("serves the full room flow: create, join, start, command, snapshot", async () => {
@@ -237,8 +244,15 @@ describe("WebSocket transport over real sockets", () => {
 
     guest.close();
     const update = await host.next("room_state");
-    expect(update.roster).toEqual([{ playerId: "p0", connected: true }]);
-    expect(transport.gameServer.getRoom(roomId)!.seats).toHaveLength(1);
+    // The dropped player's seat is RESERVED: still listed (occupied, not
+    // stealable) but reported disconnected, and the guest's session is
+    // alive for the reconnect window.
+    expect(update.roster).toEqual([
+      { playerId: "p0", connected: true },
+      { playerId: "p1", connected: false },
+    ]);
+    expect(transport.gameServer.getRoom(roomId)!.seats).toHaveLength(2);
+    expect(transport.gameServer.sessionCount()).toBe(2);
   });
 
   it("runs a whole match to match_finished over the wire", async () => {

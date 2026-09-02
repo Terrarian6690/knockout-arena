@@ -196,20 +196,45 @@ strict-envelope violations are rejected with a clean `error` message; the
 connection stays alive.
 
 Client → server: `create_room` · `join_room {roomId}` · `leave_room` ·
-`start_match` · `command {command}` (the command's `playerId` — and every
-unknown field — is discarded; identity comes from the session's seat).
+`start_match` · `reconnect {token}` (seat recovery — see below) ·
+`command {command}` (the command's `playerId` — and every unknown field — is
+discarded; identity comes from the session's seat).
 
-Server → client: `welcome {roomId, playerId, roomState, roster, hostPlayerId}` ·
-`room_state {roomId, roomState, roster, hostPlayerId}` ·
-`snapshot {state}` (the engine's `GameStateSnapshot`, projected for the
-receiving client's own pawn via `projectSnapshot` — the same view model the
-single-player client renders) · `match_finished {winnerId}` ·
-`error {code, message}`.
+Server → client: `welcome {roomId, playerId, roomState, roster,
+hostPlayerId, reconnectToken}` · `room_state {roomId, roomState, roster,
+hostPlayerId}` · `snapshot {state}` (the engine's `GameStateSnapshot`,
+projected for the receiving client's own pawn via `projectSnapshot` — the
+same view model the single-player client renders) ·
+`match_finished {winnerId}` · `error {code, message}`.
 
 **Authorization (v1 policy, deliberately minimal):** the room creator is the
 room host; only the host may start the match (others get `unauthorized`).
 `reset` is not exposed over the wire at all — `resetMatch()` stays a
 server-side operation until rematch authorization is designed.
+
+**Seat recovery (reconnection).** Taking a seat (create/join) issues an
+opaque, 256-bit **reconnect credential** for that seat, returned to that
+player alone in their personal `welcome` — never in broadcasts, rosters,
+snapshots or any shared state. When a connection dies unexpectedly, the
+seat is **reserved** (occupied, reported `connected: false`, invisible to
+joiners) for a configurable window — `reconnectReservationMs`, default
+30 000 ms, on `createGameServer()` / `createWebSocketTransport()` — instead
+of being released. Presenting the credential on a new connection
+(`reconnect {token}`) reclaims the SAME seat: same session identity, same
+playerId, same live match state — the server immediately pushes the current
+snapshot and room state, and the credential invalidates any previous
+connection for that session (a takeover: the old socket is closed without
+touching the seat). Credentials are resolved through a SHA-256 digest map
+(no plaintext store, no early-exit comparison) and are revoked the moment
+their seat is gone. After the window expires, the normal leave rules apply
+(seat freed/vacated, room removed if empty, match state untouched) and the
+credential is dead. Every failure — unknown, malformed, stale, expired —
+is the same indistinguishable `invalid-reconnect` error, so credentials
+cannot be used to probe rooms. A deliberate server-side close
+(`handle.close()` / transport teardown) bypasses the reservation and
+disconnects cleanly. Starting a match while a seat is reserved is allowed
+(occupied seats form the roster); a disconnected player's turn simply
+waits — turn timeouts are deliberately still out of scope.
 
 **Backpressure:** snapshots are full-state and high-frequency, so a socket
 whose outbound buffer exceeds the high-water mark (256 KiB default) simply
@@ -244,12 +269,20 @@ simulation or other clients.
   rebuilt from intent fields only — a `playerId` (or any extra field) a
   caller tries to attach is dropped **before the wire**, and `reset` is
   refused outright (it is not a client operation).
-- **Reconnection, honestly.** An unexpected drop clears the room/seat state
-  (the server has no seat-reconnection protocol yet, so nothing pretends the
-  seat survived), then retries with bounded exponential backoff
-  (`ReconnectPolicy` — replaceable once reattachment exists). An explicit
-  `close()` is terminal and never reconnects. No room is ever created
-  automatically, and nothing is sent while not connected.
+- **Seat recovery.** A seat-holding connection keeps the reconnect
+  credential from its `welcome` (internal to the client — never part of
+  `NetworkClientState`). On an unexpected drop the room/seat picture is
+  KEPT (the server reserves the seat) and the bounded-backoff retry sends
+  `reconnect {token}` instead of starting over; the status only becomes
+  `connected` again when the server confirms with a `welcome` carrying the
+  same seat back. A rejected credential (invalid/expired — the server's
+  one indistinguishable answer) clears the room state honestly and returns
+  the client to the lobby surface. Without a credential (older server, or
+  the connection never held a seat) a drop is what it always was: a fresh
+  session with the room state cleared. An explicit `close()` and a
+  successful `leaveRoom()` both drop the credential. No room is ever
+  created automatically, no second player ever appears, and nothing is
+  sent while not connected.
 - **Lifecycle safety**: per-socket identity guards ignore stale events, a
   double `connect()` never creates a second socket, malformed server
   messages surface as `lastError` instead of throwing, and no state changes
@@ -289,7 +322,9 @@ client-local assumptions.
   the initial screen — a view-level navigation only, because protocol v1
   does not acknowledge the leave to the leaver. The server stays
   authoritative: any later roster push (a fresh welcome / room_state)
-  overrides the local view, and disconnects clear the room state honestly.
+  overrides the local view. A dropped connection keeps the room panel (the
+  seat is server-reserved) with a connection hint; only a rejected/expired
+  recovery clears it.
 - **DOM boundary kept**: the lobby renders in jsdom component tests over
   the REAL network client (in-memory socket pairs into the real server
   stack, or scripted sockets for timing-sensitive states) — no real
@@ -322,23 +357,26 @@ viewer-projected snapshots and sends player intents — nothing else.
   turn, aiming/moving/finished, alive/eliminated — no local timers, no
   turn advancement, no winner calculation. The winner is the server's
   `match_finished` / finished-snapshot verdict (null = no-survivor draw).
-- **Disconnects mid-match** (no seat-recovery protocol yet): the last
-  authoritative snapshot stays visible under a connection banner, input is
-  refused, a reconnect action is offered, nothing simulates locally, and
-  once a reconnect completes as a fresh session the lobby takes over
-  again. There is deliberately **no reset** — `resetMatch` is server-side
-  only.
+- **Disconnects mid-match (seat recovery)**: the last authoritative
+  snapshot stays visible under a "Connection lost — retrying" banner, input
+  is refused and nothing simulates locally — but the screen STAYS, because
+  the server reserves the seat. The automatic retry presents the reconnect
+  credential and the same match resumes exactly where it was (same
+  playerId, same turn, snapshots flowing again, banner gone). If the
+  credential is rejected or expired, the room state is cleared and the
+  lobby takes over again. There is deliberately **no reset** —
+  `resetMatch` is server-side only.
 - **Solo untouched**: `SoloGame.tsx` keeps its local engine path; entering
   it unmounts the network provider entirely (solo never touches the wire).
 
-### Remaining work (gameplay over the wire now exists — resilience next)
+### Remaining work (reconnection is in — hardening next)
 
-Real authentication (replacing the interim session token), reconnection
-(reattaching a session to a vacated seat), disconnected-player turn
-timeouts, rematch/vote policy on top of `resetMatch`, purely-visual
-interpolation between snapshots, a production server entry script (the
-`scripts/smoke-server.ts` dev helper is manual-test tooling, not one),
-and rate limiting / abuse guards.
+Real authentication (replacing the interim session and reconnect
+credentials), disconnected-player turn timeouts (a reserved seat currently
+waits indefinitely), rematch/vote policy on top of `resetMatch`,
+purely-visual interpolation between snapshots, a production server entry
+script (the `scripts/smoke-server.ts` dev helper is manual-test tooling,
+not one), and rate limiting / abuse guards.
 
 ### The match model (N players)
 
@@ -363,7 +401,7 @@ and rate limiting / abuse guards.
   they persist across other players' turns and are consumed at launch. The UI
   always shows the *active* pawn's controls.
 
-### Multiplayer readiness (server-authoritative; auth/reconnection pending)
+### Multiplayer readiness (server-authoritative; reconnection built in, real auth pending)
 
 The engine already follows the intended server-authoritative flow:
 
@@ -416,9 +454,10 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
 - **Server authority**: implemented headless — `createGameServer()` issues
   sessions, manages rooms (each owning one `createGameHost()`), stamps every
   command with the session's seat, steps `game.update()` on a fixed 60 Hz
-  clock, and broadcasts `serializeGameState()` snapshots. What is left for
-  the transport milestone: the WebSocket glue, real authentication and
-  reconnection policy.
+  clock, and broadcasts `serializeGameState()` snapshots. The transport,
+  the WebSocket glue and seat-recovery/reconnection policy are in; what is
+  left: real authentication, turn timeouts, and the rest of the hardening
+  list above.
 
 ## Controls
 
@@ -477,9 +516,26 @@ browser's default same-origin server URL just works. Then:
 13. **Back to lobby** returns to the initial screen on each side.
 14. **Practice solo** still runs the fully local single-player game.
 
+Seat recovery (optional, uses the same server):
+
+15. A and B reach a running match (steps 1–5, a few turns in).
+16. In window B, close the TAB (or kill the network) → A's roster shows
+    B **disconnected**; B's screen (if only the socket died) keeps the
+    match under a "Connection lost — retrying" banner.
+17. Reopen the page (or restore the network) → B reconnects
+    automatically with its credential and lands back in the SAME seat,
+    same match, same turn — the roster shows B connected again and
+    B's controls work on its turn. No new player appears.
+18. To watch the expiry path instead: set `RECONNECT_RESERVATION_MS=5000`
+    before `npm run smoke`, drop B, and wait >5 s before reconnecting —
+    the credential is then rejected (`invalid-reconnect`), B returns to
+    the lobby home, and B's old seat is claimable per the normal rules.
+
 Automated equivalents: `multiplayerIntegration.test.tsx` (the whole loop
-through the real server, engine and UI) and `multiplayerGame.test.tsx`
-(the screen's behavior over scripted sockets).
+through the real server, engine and UI), `multiplayerGame.test.tsx`
+(the screen's behavior over scripted sockets) and
+`multiplayerReconnect.test.tsx` (the drop/recover/expire flows through
+the real stack and UI).
 
 ## Tests
 
@@ -548,15 +604,40 @@ The **server** has its own suites in `src/server/__tests__/`:
   types, strict envelopes), room operations, seat assignment and forged
   playerIds, command routing with engine rejections passed through,
   viewer-projected snapshot broadcasts (room-isolated), host-only start
-  authorization, disconnect handling (mid-flight disconnect still resolves
-  the match), and the backpressure policy (drops for backed-up sockets,
-  newest state on drain, no blocking of healthy members).
+  authorization, disconnect handling (a drop RESERVES the seat — reported
+  disconnected, room alive — while a force-close releases it; a mid-flight
+  drop still resolves the match), and the backpressure policy (drops for
+  backed-up sockets, newest state on drain, no blocking of healthy
+  members).
 - `transport.e2e.test.ts` — the same flows over REAL `ws` sockets on an
   ephemeral port: real connections become sessions, the full
   create/join/start/command/snapshot round trip with per-viewer
   projection, malformed wire input never dropping the connection,
-  disconnect notifications, a whole match to `match_finished` over the
-  wire, and clean transport teardown.
+  disconnect notifications (a drop reserves the seat; the session is
+  removed when the window expires), a whole match to `match_finished`
+  over the wire, and clean transport teardown.
+- `reconnect.test.ts` — seat recovery at the `createGameServer()` facade:
+  credentials issued with every seat (opaque, never in room info),
+  reservation semantics (occupied + disconnected + unstealable, identity
+  preserved), recovery of the creator's and a joiner's seat, recovery
+  mid-match (same playerId, same live state — nothing restarts), on the
+  dropped player's own turn (still their turn), after elimination (still
+  eliminated), concurrent same-credential reconnects (no duplicate seats),
+  uniform `invalid-reconnect` rejection for garbage/foreign/expired
+  credentials, revocation on leave/disconnect/teardown, and expiry
+  applying the normal leave rules (seat freed/vacated, empty rooms
+  removed, reserved rooms surviving the window, re-reserve restarting it).
+- `reconnect.transport.test.ts` — seat recovery over the WIRE (fake
+  sockets through the real `createTransportCore`): the credential in
+  create/join welcomes and nowhere else on the wire, drop → reserved
+  roster → recovery with the same identity and the peer seeing them back,
+  an immediate snapshot push on mid-match reconnect (projected for the
+  recovered seat), connection takeover (a valid credential closes the old
+  live socket without reserving or disconnecting the session), clean
+  `invalid-reconnect` errors that leave the connection usable, expiry
+  releasing the seat, the already-in-room guard, strict-envelope
+  rejection of malformed reconnect messages, and reserved seats being
+  invisible to joiners.
 
 The **browser network client** has its own suites in
 `src/client/network/__tests__/` (no DOM, no real server needed):
@@ -569,9 +650,14 @@ The **browser network client** has its own suites in
   malformed payloads all rejected without throwing.
 - `websocketClient.test.ts` — lifecycle and state over FAKE WebSockets:
   connect/duplicate-connect/close idempotency, explicit close never
-  reconnecting, unexpected drop → `reconnecting` with the seat honestly
-  cleared, bounded attempts when the server stays unreachable, successful
-  reconnection as a fresh session, every inbound message's state effect
+  reconnecting, unexpected drop without a credential → `reconnecting`
+  with the seat honestly cleared, bounded attempts when the server stays
+  unreachable, and the full seat-recovery path (credential stored from
+  the welcome, room state kept through the drop, the reconnect handshake
+  as the retry's first message, recovery welcome restoring the same seat,
+  a rejected credential clearing the seat and the connection staying
+  usable, `leaveRoom`/`close` dropping the credential), every inbound
+  message's state effect
   (welcome/room_state/snapshot-replacement/match_finished/error/malformed),
   all five senders wire-exact, commands blocked while not connected, no
   state mutation after permanent close, stale-socket events ignored, and
@@ -583,8 +669,12 @@ The **browser network client** has its own suites in
   forged-`playerId` commands applied to the sender's own pawn, non-host
   start rejected as `unauthorized`, a whole physical match to
   `match_finished`, unknown-room errors surfaced without breaking the
-  connection, reconnection as a fresh session, explicit close tearing the
-  server session down, and subscriber notifications through it all.
+  connection, an unexpected drop recovering the SAME seat via the
+  credential (no duplicate seats, handshake on the wire, connection
+  usable again), mid-match drop recovery with the match continuing,
+  an expired credential rejected with the client back at the lobby
+  surface, an explicit client close reserving the seat until the window
+  expires, and subscriber notifications through it all.
 
 The **lobby UI** has jsdom component suites in `src/client/__tests__/`
 (`.test.tsx` files that opt into the jsdom environment via a docblock —
@@ -638,6 +728,15 @@ every other suite stays headless/node; dev-only deps:
   projection aside), the turn passing, an elimination, an identical
   winner verdict for both, and that the client's snapshot is untouched
   while the server is idle (no local simulation).
+- `multiplayerReconnect.test.tsx` — seat recovery through the real stack
+  AND the real UI: a mid-match drop keeps the game screen (banner, last
+  snapshot, no lobby takeover) and the automatic retry recovers the same
+  seat (same room/playerId, banner gone, commands flowing again, the peer
+  seeing the seat disconnected → connected, no duplicates); a waiting-room
+  drop keeps the room panel (Start disabled, a third player cannot steal
+  the reserved seat) and recovery restores host + roster; an expired
+  credential returns the player to the lobby home with the server's error
+  shown, the room gone, and an immediate fresh start possible.
 - `client-boundary.test.ts` (engine part) now resolves import targets
   instead of matching strings, so the client's `components/game/` folder
   is correctly recognized as client code while deep engine imports

@@ -9,10 +9,13 @@ import type { RosterEntry, RoomState } from "./types";
  * browser bundle. This module knows nothing about sockets, React or state.
  *
  * Client → server envelopes (built here): create_room, join_room,
- * leave_room, start_match, command. The command payload is REBUILT from
- * known intent fields only — a playerId or any extra field a caller tries
- * to attach is dropped before the wire, because identity is assigned by the
- * server from the session, never claimed by the client.
+ * leave_room, start_match, reconnect, command. The command payload is REBUILT
+ * from known intent fields only — a playerId or any extra field a caller
+ * tries to attach is dropped before the wire, because identity is assigned by
+ * the server from the session, never claimed by the client. The reconnect
+ * credential is the exception: it is the opaque value the server issued for
+ * THIS seat, echoed back verbatim — it resolves to exactly that one seat,
+ * never to a chosen playerId/room.
  *
  * Server → client messages (parsed here): welcome, room_state, snapshot,
  * match_finished, error. parseServerMessage is a total function — anything
@@ -43,6 +46,16 @@ export function leaveRoomMessage(): string {
 
 export function startMatchMessage(): string {
   return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "start_match" });
+}
+
+/**
+ * The seat-recovery handshake: present the reconnect credential this
+ * client's seat was issued (in its personal welcome message). The server
+ * resolves the credential to exactly one seat — the client never chooses
+ * a room or playerId on this path.
+ */
+export function reconnectMessage(token: string): string {
+  return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "reconnect", token });
 }
 
 /**
@@ -90,6 +103,12 @@ export type ServerMessage =
       roomState: RoomState;
       roster: RosterEntry[];
       hostPlayerId: string | null;
+      /**
+       * This seat's reconnect credential — present in create/join/reconnect
+       * welcomes. Absent in older servers: the client then simply has no
+       * recovery path (fresh-session behavior). Never broadcast.
+       */
+      reconnectToken?: string;
     }
   | {
       type: "room_state";
@@ -140,7 +159,18 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
       const roomState = asRoomState(envelope.roomState);
       const roster = asRoster(envelope.roster);
       const hostPlayerId = asPlayerIdOrNull(envelope.hostPlayerId);
-      if (roomState === null || roster === null || hostPlayerId === undefined) {
+      // The credential is optional (older servers): absent is fine, but
+      // anything present must be an opaque non-empty string (or null).
+      const reconnectToken =
+        envelope.reconnectToken === undefined
+          ? null
+          : asPlayerIdOrNull(envelope.reconnectToken);
+      if (
+        roomState === null ||
+        roster === null ||
+        hostPlayerId === undefined ||
+        reconnectToken === undefined
+      ) {
         return reject("malformed-payload", "welcome has a malformed room payload");
       }
       return {
@@ -152,6 +182,7 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
           roomState,
           roster,
           hostPlayerId,
+          ...(reconnectToken !== null ? { reconnectToken } : {}),
         },
       };
     }

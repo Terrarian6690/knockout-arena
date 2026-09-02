@@ -128,6 +128,18 @@ const wire = {
         activePawnId: "p0",
       },
     }),
+  /** A v1.1 welcome: same shape plus the seat's reconnect credential. */
+  welcomeWithToken: (playerId: string, token: string, roomId = "r1") =>
+    JSON.stringify({
+      protocolVersion: 1,
+      type: "welcome",
+      roomId,
+      playerId,
+      roomState: "waiting",
+      roster: [{ playerId: "p0", connected: true }, { playerId: "p1", connected: true }],
+      hostPlayerId: "p0",
+      reconnectToken: token,
+    }),
   matchFinished: (winnerId: string | null) =>
     JSON.stringify({ protocolVersion: 1, type: "match_finished", winnerId }),
   error: (code: string, message = "nope") =>
@@ -314,6 +326,125 @@ describe("connection lifecycle", () => {
     client.connect(); // connecting (handshake not complete)
     expect(client.createRoom()).toBe(false);
     expect(sockets[0].sent).toHaveLength(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Seat recovery — the reconnect credential
+// ────────────────────────────────────────────────────────────────────────
+
+describe("seat recovery (reconnect credential)", () => {
+  it("a credential-bearing drop keeps the room state and sends the handshake on retry", async () => {
+    const { client, sockets } = makeClient({
+      reconnect: { maxAttempts: 3, baseDelayMs: 1 },
+    });
+    client.connect();
+    sockets[0].serverOpen();
+    sockets[0].serverMessage(wire.welcomeWithToken("p1", "cred-1"));
+    expect(client.getState().roomId).toBe("r1");
+
+    sockets[0].serverClose(); // the network drops us mid-room
+    const dropped = client.getState();
+    expect(dropped.status).toBe("reconnecting");
+    // The seat is server-reserved: the room picture survives the drop.
+    expect(dropped.roomId).toBe("r1");
+    expect(dropped.playerId).toBe("p1");
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sockets).toHaveLength(2);
+    sockets[1].serverOpen();
+    // The retry's first message is the reconnect handshake with the
+    // credential — never a create_room/join_room (no second player).
+    expect(sockets[1].sent).toHaveLength(1);
+    expect(JSON.parse(sockets[1].sent[0])).toEqual({
+      protocolVersion: 1,
+      type: "reconnect",
+      token: "cred-1",
+    });
+    // Not connected until the server confirms with a welcome.
+    expect(client.getState().status).toBe("reconnecting");
+
+    sockets[1].serverMessage(wire.welcomeWithToken("p1", "cred-1"));
+    const recovered = client.getState();
+    expect(recovered.status).toBe("connected");
+    expect(recovered.reconnectAttempt).toBe(0);
+    expect(recovered.roomId).toBe("r1");
+    expect(recovered.playerId).toBe("p1"); // the SAME seat
+  });
+
+  it("a rejected handshake clears the seat honestly and keeps the connection", async () => {
+    const { client, sockets } = makeClient({
+      reconnect: { maxAttempts: 3, baseDelayMs: 1 },
+    });
+    client.connect();
+    sockets[0].serverOpen();
+    sockets[0].serverMessage(wire.welcomeWithToken("p0", "cred-2"));
+    sockets[0].serverClose();
+
+    await new Promise((r) => setTimeout(r, 10));
+    sockets[1].serverOpen();
+    expect(JSON.parse(sockets[1].sent[0])).toMatchObject({ type: "reconnect" });
+
+    // The server rejects the credential (invalid or expired — same answer).
+    sockets[1].serverMessage(wire.error("invalid-reconnect", "nope"));
+    const state = client.getState();
+    expect(state.status).toBe("connected"); // the socket itself is fine
+    expect(state.roomId).toBeNull(); // …but the seat is gone
+    expect(state.playerId).toBeNull();
+    expect(state.lastError).toEqual({ code: "invalid-reconnect", message: "nope" });
+
+    // The credential was dropped: a later drop behaves like a fresh session.
+    sockets[1].serverClose();
+    await new Promise((r) => setTimeout(r, 10));
+    sockets[2].serverOpen();
+    expect(sockets[2].sent).toHaveLength(0); // no reconnect handshake
+    expect(client.getState().status).toBe("connected");
+    expect(client.getState().roomId).toBeNull();
+  });
+
+  it("leaveRoom drops the credential: a later drop reconnects fresh", async () => {
+    const { client, sockets } = makeClient({
+      reconnect: { maxAttempts: 3, baseDelayMs: 1 },
+    });
+    client.connect();
+    sockets[0].serverOpen();
+    sockets[0].serverMessage(wire.welcomeWithToken("p0", "cred-3"));
+    expect(client.leaveRoom()).toBe(true); // deliberate leave
+
+    sockets[0].serverClose();
+    await new Promise((r) => setTimeout(r, 10));
+    sockets[1].serverOpen();
+    expect(sockets[1].sent).toHaveLength(0); // no handshake: no seat to recover
+    expect(client.getState().status).toBe("connected");
+  });
+
+  it("close() is terminal even with a credential in hand", async () => {
+    const { client, sockets } = makeClient({
+      reconnect: { maxAttempts: 3, baseDelayMs: 1 },
+    });
+    client.connect();
+    sockets[0].serverOpen();
+    sockets[0].serverMessage(wire.welcomeWithToken("p0", "cred-4"));
+    client.close();
+    expect(client.getState().status).toBe("closed");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sockets).toHaveLength(1); // never retried, no handshake sent
+  });
+
+  it("a welcome without a credential keeps the fresh-session drop behavior", async () => {
+    const { client, sockets } = makeClient({
+      reconnect: { maxAttempts: 3, baseDelayMs: 1 },
+    });
+    client.connect();
+    sockets[0].serverOpen();
+    sockets[0].serverMessage(wire.welcome("p1")); // older server: no token
+    sockets[0].serverClose();
+    expect(client.getState().roomId).toBeNull(); // nothing to recover
+
+    await new Promise((r) => setTimeout(r, 10));
+    sockets[1].serverOpen();
+    expect(sockets[1].sent).toHaveLength(0); // plain fresh session
+    expect(client.getState().status).toBe("connected");
   });
 });
 

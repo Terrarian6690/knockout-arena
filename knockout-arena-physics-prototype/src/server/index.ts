@@ -40,6 +40,9 @@ export {
 export {
   createGameServer,
   type GameServer,
+  type GameServerOptions,
+  type ReconnectResult,
+  type SeatedResult,
 } from "./gameServer";
 export { createSession, isSession, type Session } from "./session";
 export {

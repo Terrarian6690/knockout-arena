@@ -11,8 +11,9 @@
  *   { "protocolVersion": 1, "type": "..." }
  *
  * Client → server (see ClientMessage): create_room, join_room, leave_room,
- * start_match, command. The envelope is STRICT: unknown top-level fields are
- * rejected (malformed-payload) so protocol mistakes surface early. The
+ * start_match, reconnect, command. The envelope is STRICT: unknown top-level
+ * fields are rejected (malformed-payload) so protocol mistakes surface early.
+ * The
  * `command` payload is the exception — it is passed to the server verbatim,
  * where unknown fields (including any playerId) are stripped and the
  * session's seat identity is stamped in.
@@ -32,6 +33,7 @@ export type ClientMessage =
   | { type: "join_room"; roomId: string }
   | { type: "leave_room" }
   | { type: "start_match" }
+  | { type: "reconnect"; token: string }
   | { type: "command"; command: unknown };
 
 export type ClientMessageRejection =
@@ -101,6 +103,22 @@ export function parseClientMessage(raw: string): ParsedClientMessage {
       }
       return { ok: false, code: "malformed-payload" };
 
+    case "reconnect":
+      // The seat-recovery credential. Opaque server-issued value; the
+      // server resolves it to exactly one seat — a credential is never
+      // a playerId, a roomId, or anything the client gets to choose.
+      if (
+        hasOnly(envelope, "type", "protocolVersion", "token") &&
+        typeof envelope.token === "string" &&
+        envelope.token.length > 0
+      ) {
+        return {
+          ok: true,
+          message: { type: "reconnect", token: envelope.token },
+        };
+      }
+      return { ok: false, code: "malformed-payload" };
+
     case "command":
       if (
         hasOnly(envelope, "type", "protocolVersion", "command") &&
@@ -133,11 +151,17 @@ function hasOnly(
 
 // ── server → client ───────────────────────────────────────────────────────
 
-/** The client's seat assignment + room status after create_room/join_room. */
+/**
+ * The client's seat assignment + room status after create_room, join_room
+ * or a successful reconnect. `reconnectToken` is the seat's recovery
+ * credential — it appears ONLY here, in this per-connection message,
+ * never in broadcasts, rosters or snapshots.
+ */
 export function welcomeMessage(
   roomId: string,
   playerId: string,
-  room: RoomInfo
+  room: RoomInfo,
+  reconnectToken: string
 ): string {
   return JSON.stringify({
     protocolVersion: PROTOCOL_VERSION,
@@ -147,6 +171,7 @@ export function welcomeMessage(
     roomState: room.state,
     roster: room.seats,
     hostPlayerId: room.hostPlayerId,
+    reconnectToken,
   });
 }
 
@@ -214,6 +239,7 @@ export const ERROR_DESCRIPTIONS: Record<string, string> = {
   "not-enough-players": "at least 2 players are required to start",
   "already-playing": "the match is already running",
   unauthorized: "not allowed for this session",
+  "invalid-reconnect": "the reconnect credential is invalid or expired",
   "invalid-command": "the command is malformed",
   "wrong-player": "not this player's turn, or the player is eliminated",
   "wrong-phase": "the command is not allowed in the current phase",

@@ -76,8 +76,11 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     }
   }, [inRoom, state.roomState]);
 
-  // A reconnect is a fresh session: once we are connected again but no
-  // longer seated, the match view is over (the seat did not survive).
+  // Once we are connected again but no longer seated, the match view is
+  // over. With seat recovery the room picture SURVIVES a drop (the server
+  // reserves the seat), so a recovered connection keeps its match screen;
+  // this hand-back only fires when the seat is really gone (rejected or
+  // expired credential — the client clears the room state itself).
   useEffect(() => {
     if (matchActive && state.status === "connected" && !inRoom) {
       setMatchActive(false);
@@ -153,8 +156,16 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               roster={state.roster}
               winnerId={state.winnerId}
               startPending={startPending}
+              connected={state.status === "connected"}
               onStart={handleStart}
               onLeave={handleLeave}
+            />
+            {/* The seat is server-reserved while the client reconnects —
+                the room stays, the hint says what is happening. */}
+            <ConnectionHint
+              status={state.status}
+              reconnectAttempt={state.reconnectAttempt}
+              onReconnect={handleReconnect}
             />
           </div>
         ) : (

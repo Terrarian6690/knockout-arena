@@ -128,8 +128,14 @@ afterEach(() => {
 });
 
 /** A real server stack; add players with addPlayer(). */
-export function createServerHarness() {
-  const gameServer = createGameServer();
+export function createServerHarness(
+  options?: { reconnectReservationMs?: number },
+  /** Per-player client overrides (e.g. a slower reconnect policy). */
+  playerOptions?: { reconnect?: Record<string, unknown> }
+) {
+  const gameServer = createGameServer({
+    reconnectReservationMs: options?.reconnectReservationMs,
+  });
   const core = createTransportCore(gameServer);
   liveServers.push(gameServer);
   liveCores.push(core);
@@ -145,7 +151,7 @@ export function createServerHarness() {
     const client = createNetworkClient({
       url: "ws://test",
       socketFactory: factory,
-      reconnect: { baseDelayMs: 1 },
+      reconnect: { baseDelayMs: 1, ...playerOptions?.reconnect },
     });
     liveClients.push(client);
     return { client, pairs };

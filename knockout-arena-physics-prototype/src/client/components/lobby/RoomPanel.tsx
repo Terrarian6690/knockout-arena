@@ -35,6 +35,12 @@ export interface RoomPanelProps {
   readonly winnerId: string | null;
   /** Local, purely visual: the host's Start click is awaiting the server. */
   readonly startPending: boolean;
+  /**
+   * Whether the network client is connected — while reconnecting (the seat
+   * is server-reserved) the Start button is disabled: the send would be a
+   * no-op. Optional for direct-use tests; absent means "not disconnected".
+   */
+  readonly connected?: boolean;
   onStart: () => void;
   onLeave: () => void;
 }
@@ -47,6 +53,7 @@ export function RoomPanel({
   roster,
   winnerId,
   startPending,
+  connected,
   onStart,
   onLeave,
 }: RoomPanelProps) {
@@ -135,7 +142,7 @@ export function RoomPanel({
           <button
             type="button"
             onClick={onStart}
-            disabled={startPending}
+            disabled={startPending || connected === false}
             data-testid="start-match"
             className={cn(
               "rounded-xl px-7 py-3 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
