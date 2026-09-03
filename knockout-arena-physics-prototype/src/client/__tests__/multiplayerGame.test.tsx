@@ -425,3 +425,75 @@ describe("lobby → game screen transition", () => {
     );
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// Round decision countdown — presentation of the server-stamped deadline.
+// The screen may SHOW the remaining decision time; it must never DO
+// anything about it.
+// ────────────────────────────────────────────────────────────────────────
+
+describe("multiplayer game: round decision countdown", () => {
+  it("shows the countdown only while the authoritative snapshot says aiming", async () => {
+    const { sockets } = await renderGame();
+    await feed(sockets, { roundDeadline: Date.now() + 10_000 });
+    expect(screen.getByTestId("round-countdown")).toHaveTextContent("Decision time");
+    expect(screen.getByTestId("round-countdown-seconds")).toHaveTextContent("10");
+
+    // The server resolves (early or by deadline) → the authoritative
+    // moving snapshot removes the countdown at once.
+    await feed(sockets, { phase: "moving", roundDeadline: null });
+    expect(screen.queryByTestId("round-countdown")).not.toBeInTheDocument();
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Round resolving…");
+
+    // Finished → still gone.
+    await feed(sockets, { phase: "finished", roundDeadline: null, winnerId: "p1" });
+    expect(screen.queryByTestId("round-countdown")).not.toBeInTheDocument();
+
+    // A fresh aiming round with a fresh deadline → back, from the NEW value.
+    await feed(sockets, { roundDeadline: Date.now() + 9_800 });
+    expect(screen.getByTestId("round-countdown-seconds")).toHaveTextContent("10");
+  });
+
+  it("renders no countdown without server deadline metadata (older servers)", async () => {
+    const { sockets } = await renderGame();
+    await feed(sockets, {}); // the default scripted snapshot has no deadline
+    expect(screen.queryByTestId("round-countdown")).not.toBeInTheDocument();
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
+  });
+
+  it("the countdown reaching zero sends NOTHING and resolves NOTHING — only the server moves the round on", async () => {
+    const { sockets } = await renderGame();
+    await feed(sockets, { roundDeadline: Date.now() + 250 });
+    // A short deadline: already "1" (or "0" on a very slow render — the
+    // display clamps; either way it is about to run out).
+    expect(screen.getByTestId("round-countdown-seconds").textContent).toMatch(/^[01]$/);
+
+    // The local clock passes the deadline and the display clamps at 0…
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 600));
+    });
+    expect(screen.getByTestId("round-countdown-seconds")).toHaveTextContent("0");
+
+    // …and NOTHING happened: no command left the client (there is no
+    // timeout command and no client authority over the round), and the
+    // screen still shows the last authoritative aiming state.
+    expect(sentCommands(sockets)).toEqual([]);
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
+    expect(screen.getByTestId("round-countdown-seconds")).toHaveTextContent("0");
+
+    // Only the SERVER's snapshot ends the round.
+    await feed(sockets, { phase: "moving", roundDeadline: null });
+    expect(screen.queryByTestId("round-countdown")).not.toBeInTheDocument();
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent("Round resolving…");
+  });
+
+  it("a new snapshot's deadline replaces the display (next round or reconnect)", async () => {
+    const { sockets } = await renderGame();
+    await feed(sockets, { roundDeadline: Date.now() + 2_000 });
+    expect(screen.getByTestId("round-countdown-seconds")).toHaveTextContent("2");
+    // A later authoritative snapshot (fresh round / recovered seat) wins —
+    // there is no locally stored deadline to restore.
+    await feed(sockets, { roundDeadline: Date.now() + 10_000 });
+    expect(screen.getByTestId("round-countdown-seconds")).toHaveTextContent("10");
+  });
+});

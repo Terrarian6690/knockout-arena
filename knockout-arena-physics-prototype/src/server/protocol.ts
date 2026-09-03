@@ -190,7 +190,9 @@ export function roomStateMessage(room: RoomInfo): string {
 /**
  * One authoritative match state, projected for the receiving client's own
  * pawn (the payload is the engine's GameStateSnapshot — reused, not
- * redefined). The transport does not interpret it.
+ * redefined — plus one server-stamped presentation field,
+ * `state.roundDeadline`: the current aiming round's absolute decision
+ * deadline, or null). The transport does not interpret it.
  */
 export function snapshotMessage(view: unknown): string {
   return JSON.stringify({

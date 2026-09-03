@@ -218,6 +218,38 @@ describe("server→client message parsing", () => {
     expect(parsed).toEqual({ ok: true, message: { type: "snapshot", state: snapshot } });
   });
 
+  it("parses a snapshot carrying the round decision deadline (and tolerates it absent)", () => {
+    const base = {
+      phase: "aiming",
+      pawns: [{ id: "p0", isLocal: true }],
+      localPawnId: "p0",
+      winnerId: null,
+      power: 3,
+      aimDirection: null,
+      isAiming: false,
+    };
+    // The server stamps an ABSOLUTE deadline on aiming snapshots; null
+    // means no aiming round is in progress. Both pass through untouched.
+    const withDeadline = { ...base, roundDeadline: 1_788_453_655_341 };
+    const parsed = parseServerMessage(
+      JSON.stringify({ protocolVersion: 1, type: "snapshot", state: withDeadline })
+    );
+    expect(parsed).toEqual({
+      ok: true,
+      message: { type: "snapshot", state: withDeadline },
+    });
+    const nulled = { ...base, roundDeadline: null };
+    const parsedNull = parseServerMessage(
+      JSON.stringify({ protocolVersion: 1, type: "snapshot", state: nulled })
+    );
+    expect(parsedNull).toEqual({ ok: true, message: { type: "snapshot", state: nulled } });
+    // Older servers send no deadline field at all — still a valid snapshot.
+    const parsedAbsent = parseServerMessage(
+      JSON.stringify({ protocolVersion: 1, type: "snapshot", state: base })
+    );
+    expect(parsedAbsent).toEqual({ ok: true, message: { type: "snapshot", state: base } });
+  });
+
   it("parses match_finished (winner and no-survivor)", () => {
     expect(
       parseServerMessage(

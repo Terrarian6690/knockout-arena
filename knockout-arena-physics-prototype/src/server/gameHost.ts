@@ -292,6 +292,18 @@ export function createGameHost(options: GameHostOptions): GameHost {
     // validator (safe against any hostile input — it cannot throw).
     const validated = validateCommand(command);
     if (!validated.ok) return validated;
+    // A reset opens a FRESH match with a FRESH decision window — and the
+    // engine emits the reset state synchronously INSIDE applyCommand,
+    // before any post-apply reconciliation could run. The token must be
+    // replaced FIRST so the broadcast that follows carries the NEW
+    // window: an aiming → aiming reset is invisible to the phase tracker,
+    // which only re-arms when the token is null. If the reset is rejected
+    // (no state change, no emit), the old window is restored untouched.
+    const isReset = (command as GameCommand).type === "reset";
+    const previousDeadline = isReset ? roundDeadline : null;
+    if (isReset) {
+      roundDeadline = clock() + roundDecisionTimeoutMs;
+    }
     // Ownership (unknown/wrong player), phase rules and all effects are
     // engine policy — the host adds none of its own. The try/catch is
     // defense-in-depth for the server boundary: nothing arriving from a
@@ -299,16 +311,10 @@ export function createGameHost(options: GameHostOptions): GameHost {
     // change introduces an accidental throw.
     try {
       const result = game.applyCommand(command as GameCommand);
-      // A successful reset starts a FRESH match: the aiming round it opens
-      // must get a FRESH decision deadline. Phase tracking alone cannot
-      // see a reset submitted during aiming (aiming → aiming), so re-arm
-      // explicitly. (From "finished"/"moving" the subscription already
-      // re-arms; overwriting with the same value is harmless.)
-      if (result.ok && (command as GameCommand).type === "reset") {
-        roundDeadline = clock() + roundDecisionTimeoutMs;
-      }
+      if (isReset && !result.ok) roundDeadline = previousDeadline;
       return result;
     } catch {
+      if (isReset) roundDeadline = previousDeadline;
       return { ok: false, reason: "invalid-command" };
     }
   }

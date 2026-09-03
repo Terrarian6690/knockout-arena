@@ -205,6 +205,14 @@ export interface RoomManager {
   restoreSeat(token: string): RestoreResult;
   /** Room snapshot by id, or null. */
   getRoom(roomId: string): RoomInfo | null;
+  /**
+   * The CURRENT round decision deadline of the room's match (the host's
+   * authoritative aiming-round token, an absolute wall-clock timestamp),
+   * or null when the room has no match or no aiming round in progress.
+   * Server-internal observability — used by the facade to stamp viewer
+   * snapshots for countdown displays; deliberately NOT part of RoomInfo.
+   */
+  roundDeadline(roomId: string): number | null;
   /** Resolve a session token to its room and assigned playerId. */
   resolveSeat(token: string): { room: RoomInfo; playerId: string } | null;
   /**
@@ -444,6 +452,14 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     return room ? infoOf(room) : null;
   }
 
+  function roundDeadline(roomId: string): number | null {
+    if (!validKey(roomId)) return null;
+    const room = rooms.get(roomId);
+    // The host arms/cancels this token before notifying its listeners, so
+    // reading it during a broadcast always matches the state being pushed.
+    return room?.host ? room.host.roundDeadline() : null;
+  }
+
   function resolveSeat(token: string): { room: RoomInfo; playerId: string } | null {
     if (!validKey(token)) return null;
     const seated = findSeat(token);
@@ -619,6 +635,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     reserveSeat,
     restoreSeat,
     getRoom,
+    roundDeadline,
     resolveSeat,
     startMatch,
     resetMatch,

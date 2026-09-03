@@ -43,7 +43,10 @@ async function waitFor(
 /**
  * Strip the per-viewer projection so two clients' snapshots compare equal.
  * (Simultaneous rounds: power/aimDirection/isAiming describe the VIEWER'S
- * OWN pawn, so they differ per client by design.)
+ * OWN pawn, so they differ per client by design. roundDeadline is
+ * server timing metadata — identical per broadcast, but two clients can
+ * momentarily hold snapshots from different broadcasts, so it is neutralized
+ * rather than compared.)
  */
 function asAuthoritative(snapshot: GameStateSnapshot) {
   return {
@@ -52,6 +55,7 @@ function asAuthoritative(snapshot: GameStateSnapshot) {
     power: 0,
     aimDirection: null,
     isAiming: false,
+    roundDeadline: null,
     pawns: snapshot.pawns.map((pawn) => ({ ...pawn, isLocal: false })),
   };
 }
@@ -86,6 +90,11 @@ describe("two clients play one authoritative match (full stack)", () => {
     const initialSnap = host.client.getState().snapshot as GameStateSnapshot;
     expect(initialSnap.pawns).toHaveLength(2);
     const initialPositions = initialSnap.pawns.map((p) => ({ ...p.position }));
+    // The server-stamped decision deadline arrives with the snapshot: the
+    // countdown starts at the full 10-second window (default config).
+    expect(typeof initialSnap.roundDeadline).toBe("number");
+    expect(screen.getByTestId("round-countdown")).toHaveTextContent("Decision time");
+    expect(screen.getByTestId("round-countdown-seconds")).toHaveTextContent("10");
 
     // ── [20] the HOST chooses first (aim: pointer input → intent → server) ──
     fireEvent.pointerMove(screen.getByTestId("arena-canvas"), {
@@ -146,13 +155,15 @@ describe("two clients play one authoritative match (full stack)", () => {
     await playerAct(() => guest.client.submitCommand({ type: "confirmLaunch" }));
 
     // The guest's confirmation completes the set → the round resolves with
-    // BOTH movements starting together.
+    // BOTH movements starting together — and the countdown disappears the
+    // moment the authoritative moving snapshot arrives.
     expect(
       await waitFor(
         () => (host.client.getState().snapshot as GameStateSnapshot).phase === "moving",
         5000
       )
     ).toBe(true);
+    expect(screen.queryByTestId("round-countdown")).not.toBeInTheDocument();
     expect(screen.getByTestId("launch")).toBeDisabled(); // not our call anymore
 
     // Both clients see the SAME authoritative movement.
@@ -231,12 +242,12 @@ describe("two clients play one authoritative match (full stack)", () => {
   }, 25000);
 
   it("the server's round decision deadline resolves a round not everyone confirms in", async () => {
-    // A short deadline (800 ms): the host confirms through the real UI,
+    // A short deadline (1200 ms): the host confirms through the real UI,
     // the guest never chooses — no client ever sends or receives a
     // "timeout" message (the wire has none). The SERVER resolves the
     // round at its own deadline, and both clients simply observe the
     // resulting state transitions.
-    const harness = createServerHarness({ roundDecisionTimeoutMs: 800 });
+    const harness = createServerHarness({ roundDecisionTimeoutMs: 1200 });
     const host = harness.addPlayer();
     const guest = harness.addPlayer();
 
@@ -247,6 +258,8 @@ describe("two clients play one authoritative match (full stack)", () => {
 
     await connectPlayer(guest);
     await playerAct(() => guest.client.joinRoom(roomId));
+    // While still in the waiting room there is no decision countdown at all.
+    expect(screen.queryByTestId("round-countdown")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("start-match"));
 
     expect(await screen.findByText("Multiplayer match", {}, { timeout: 5000 })).toBeInTheDocument();
@@ -256,6 +269,9 @@ describe("two clients play one authoritative match (full stack)", () => {
     const initialSnap = host.client.getState().snapshot as GameStateSnapshot;
     const spawn = initialSnap.pawns.map((p) => ({ ...p.position }));
     expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
+    // The short (1200 ms) server deadline is visible as a running countdown.
+    expect(typeof initialSnap.roundDeadline).toBe("number");
+    expect(screen.getByTestId("round-countdown-seconds").textContent).toMatch(/^[0-9]+$/);
 
     // The host aims and locks in — the only choice anyone makes.
     fireEvent.pointerMove(screen.getByTestId("arena-canvas"), {
@@ -291,13 +307,15 @@ describe("two clients play one authoritative match (full stack)", () => {
     );
 
     // The deadline fires on the server: the host's confirmed move executes
-    // and the silent guest's pawn stays frozen.
+    // and the silent guest's pawn stays frozen. The countdown vanished with
+    // the authoritative moving snapshot (it never resolved anything itself).
     expect(
       await waitFor(
         () => (host.client.getState().snapshot as GameStateSnapshot).phase === "moving",
         5000
       )
     ).toBe(true);
+    expect(screen.queryByTestId("round-countdown")).not.toBeInTheDocument();
     expect(
       await waitFor(
         () => (guest.client.getState().snapshot as GameStateSnapshot).phase === "moving",
@@ -314,6 +332,8 @@ describe("two clients play one authoritative match (full stack)", () => {
     ).toBe(true);
     expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
     expect(screen.getByTestId("launch")).toBeEnabled(); // a fresh choice
+    // …and the fresh round's countdown restarted from the NEW deadline.
+    expect(screen.getByTestId("round-countdown-seconds").textContent).toMatch(/^[0-9]+$/);
 
     // …and the timeout moved exactly the one confirmed pawn.
     const settled = host.client.getState().snapshot as GameStateSnapshot;

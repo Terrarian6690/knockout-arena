@@ -8,6 +8,7 @@ import { ArenaView } from "./ArenaView";
 import { MatchControls } from "./MatchControls";
 import { MatchRail } from "./MatchRail";
 import { MatchResultOverlay } from "./MatchResultOverlay";
+import { RoundCountdown } from "./RoundCountdown";
 import { canLocalPlayerAct } from "./localControl";
 
 /**
@@ -34,6 +35,10 @@ import { canLocalPlayerAct } from "./localControl";
  * Disconnects (seat recovery): the last authoritative snapshot stays
  * visible, input is refused while not connected, and the reconnect
  * handshake restores the same seat and its current-round choice state.
+ *
+ * The round decision countdown (RoundCountdown) is presentation of the
+ * server-stamped `snapshot.roundDeadline` only — the server remains the
+ * sole authority for when a round ends.
  */
 export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
   const client = useNetworkClient();
@@ -100,6 +105,12 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {snapshot !== null && (
+            <RoundCountdown
+              phase={snapshot.phase}
+              deadline={snapshot.roundDeadline}
+            />
+          )}
           {snapshot !== null && <RoundBadge snapshot={snapshot} />}
           <ConnectionStatusBadge status={state.status} />
         </div>

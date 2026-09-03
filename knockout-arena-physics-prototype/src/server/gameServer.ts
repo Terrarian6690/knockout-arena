@@ -360,7 +360,17 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     if (!seat) return () => {};
     return manager.onRoomState(s.token, (serialized) => {
       // Reuses the engine's own projection — no view logic lives here.
-      listener(projectSnapshot(deserializeGameState(serialized), seat.playerId));
+      // The round decision deadline is stamped from the room's host AT
+      // PUSH TIME: the host arms a fresh token on every entry into
+      // "aiming" and cancels it on every exit BEFORE notifying listeners,
+      // so this presentation metadata always matches the pushed state —
+      // fresh per aiming round, null the moment the round resolves, the
+      // match finishes or the room has no match. Read-only for clients:
+      // they may render a countdown from it, never act on it.
+      listener({
+        ...projectSnapshot(deserializeGameState(serialized), seat.playerId),
+        roundDeadline: manager.roundDeadline(seat.room.id),
+      });
     });
   }
 

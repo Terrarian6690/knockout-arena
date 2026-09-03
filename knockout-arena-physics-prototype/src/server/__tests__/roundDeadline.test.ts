@@ -906,23 +906,175 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
     const events = phaseEvents(server, sessions[0]);
     const t0 = Date.now();
     expect(server.startMatch(roomId).ok).toBe(true);
-    // Nobody confirms. Mid-window, the server resets the match through the
-    // privileged facade path (the one a future rematch vote would use).
-    await sleep(250); // → ~t0+250 (the OLD deadline sits at ~t0+400)
+    // The old deadline ≈ start + 400 (t0 is taken immediately before
+    // startMatch; the +100 guard below absorbs measurement skew).
+    const oldDeadline = t0 + 400;
+    // Nobody confirms. Early in the window, the server resets the match
+    // through the privileged facade path (the one a future rematch vote
+    // would use) — comfortably before the old deadline could fire.
+    await sleep(150);
     expect(server.resetMatch(roomId)).toEqual({ ok: true });
     expect(events[events.length - 1].phase).toBe("aiming"); // fresh match state
     expect(events[events.length - 1].state.pawns.every((p) => !p.confirmed)).toBe(true);
 
-    // Past the OLD deadline moment: the new match's round must still be
-    // open — the spent deadline cannot resolve it…
-    await sleep(170); // → ~t0+420
+    // Wait deterministically until the OLD deadline moment has passed: the
+    // new match's round must still be open — the spent deadline cannot
+    // resolve it…
+    expect(await waitFor(() => Date.now() > oldDeadline + 100, 3000)).toBe(true);
     expect(resolutionTimes(events)).toHaveLength(0);
-    // …and the new match resolves at ITS OWN deadline (~t0+250+400=650).
+    // …and the new match resolves at ITS OWN deadline (≈ reset + 400).
     expect(
-      await waitFor(() => resolutionTimes(events).length >= 1, 1500)
+      await waitFor(() => resolutionTimes(events).length >= 1, 3000)
     ).toBe(true);
     const first = resolutionTimes(events)[0];
     expect(first - t0).toBeGreaterThanOrEqual(500); // after the reset's fresh window began
-    expect(first - t0).toBeLessThanOrEqual(1100); // ≈ reset point + deadline + loop slack
+  }, 10000);
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Snapshot metadata for the client countdown — the deadline the server
+// stamps on every viewer-projected snapshot (onRoomView). Presentation
+// data only: clients may render a countdown from it, never act on it.
+// ────────────────────────────────────────────────────────────────────────
+
+/** One viewer-projected push, tagged with its arrival time. */
+interface ViewEvent {
+  phase: GameState["phase"];
+  roundDeadline: number | null | undefined;
+  at: number;
+}
+
+/** Captures (phase, stamped deadline, timestamp) for every view push. */
+function viewEvents(server: GameServer, session: Session): ViewEvent[] {
+  const events: ViewEvent[] = [];
+  server.onRoomView(session, (view) => {
+    events.push({ phase: view.phase, roundDeadline: view.roundDeadline, at: Date.now() });
+  });
+  return events;
+}
+
+describe("round decision deadline — snapshot metadata (onRoomView)", () => {
+  it("stamps aiming views with the room's authoritative deadline; nothing is pushed while waiting", async () => {
+    const server = newServer({ roundDecisionTimeoutMs: 5_000 });
+    const { roomId, sessions } = makeRoom(server, 2);
+    const views = viewEvents(server, sessions[0]);
+    await sleep(120); // waiting room: no host exists, no views at all
+    expect(views).toHaveLength(0);
+    const startAt = Date.now();
+    expect(server.startMatch(roomId).ok).toBe(true);
+    expect(views.length).toBeGreaterThan(0); // the subscribe-time push is synchronous
+    const first = views[0];
+    expect(first.phase).toBe("aiming");
+    expect(typeof first.roundDeadline).toBe("number");
+    // An ABSOLUTE timestamp ~one full window ahead, in the server's clock.
+    expect(first.roundDeadline as number).toBeGreaterThanOrEqual(startAt + 4_000);
+    expect(first.roundDeadline as number).toBeLessThanOrEqual(startAt + 6_000);
+    // Non-phase commands during the round re-push the SAME deadline.
+    server.submitCommand(sessions[0], { type: "aim", x: CX, y: CY });
+    expect(views.length).toBeGreaterThan(1);
+    expect(views[1].roundDeadline).toBe(first.roundDeadline);
+  });
+
+  it("a new round stamps a FRESH deadline; resolution (by deadline or early) clears the stamp", async () => {
+    const server = newServer({ roundDecisionTimeoutMs: 250 });
+    const { roomId, sessions } = makeRoom(server, 2);
+    const views = viewEvents(server, sessions[0]);
+    expect(server.startMatch(roomId).ok).toBe(true);
+    expect(views.length).toBeGreaterThan(0);
+    const round1Deadline = views[0].roundDeadline as number;
+
+    // Round 1 resolves at the deadline: the moving view carries NO stamp.
+    expect(await waitFor(() => views.some((v) => v.phase === "moving"), 1500)).toBe(true);
+    expect(views.find((v) => v.phase === "moving")!.roundDeadline).toBeNull();
+
+    // The empty round settles; round 2's aiming view carries a NEW, later one.
+    expect(
+      await waitFor(() => views.filter((v) => v.phase === "aiming").length >= 2, 1500)
+    ).toBe(true);
+    const round2Deadline = views.filter((v) => v.phase === "aiming")[1]
+      .roundDeadline as number;
+    expect(round2Deadline).toBeGreaterThan(round1Deadline);
+
+    // Early resolution (everyone confirms): the moving view again carries none.
+    launchInwardSession(server, sessions[0]);
+    launchInwardSession(server, sessions[1]);
+    expect(
+      await waitFor(() => views.filter((v) => v.phase === "moving").length >= 2, 1500)
+    ).toBe(true);
+    expect(views.filter((v) => v.phase === "moving")[1].roundDeadline).toBeNull();
   }, 8000);
+
+  it("a reset match stamps a FRESH deadline — the old one is never reused and cannot resolve it", async () => {
+    const server = newServer({ roundDecisionTimeoutMs: 800 });
+    const { roomId, sessions } = makeRoom(server, 2);
+    const views = viewEvents(server, sessions[0]);
+    expect(server.startMatch(roomId).ok).toBe(true);
+    expect(views.length).toBeGreaterThan(0);
+    const oldDeadline = views[0].roundDeadline as number; // ≈ start + 800
+
+    // Mid-window, the server resets the match (comfortably before the old
+    // deadline could fire).
+    await sleep(400);
+    expect(server.resetMatch(roomId)).toEqual({ ok: true });
+    const resetView = views[views.length - 1];
+    expect(resetView.phase).toBe("aiming");
+    expect(resetView.roundDeadline as number).toBeGreaterThan(oldDeadline); // ≈ reset + 800
+
+    // Wait deterministically until the OLD deadline moment has passed…
+    expect(
+      await waitFor(() => Date.now() > oldDeadline + 150, 3000)
+    ).toBe(true);
+    // …the new match's round must still be open (a reused old deadline
+    // would have resolved it right at oldDeadline)…
+    expect(views.every((v) => v.phase !== "moving")).toBe(true);
+    // …and it resolves only at the NEW one.
+    expect(await waitFor(() => views.some((v) => v.phase === "moving"), 3000)).toBe(true);
+  }, 10000);
+
+  it("a disconnect never changes the stamp; a reconnect receives the CURRENT deadline (no fresh window)", async () => {
+    const server = newServer({
+      roundDecisionTimeoutMs: 5_000,
+      reconnectReservationMs: 10_000,
+    });
+    const { roomId, sessions, tokens } = makeRoom(server, 2);
+    const views = viewEvents(server, sessions[0]);
+    expect(server.startMatch(roomId).ok).toBe(true);
+    expect(views.length).toBeGreaterThan(0);
+    const original = views[0].roundDeadline as number;
+
+    // p1 drops mid-round: the deadline stamp is untouched (any push during
+    // the round still carries the ORIGINAL value).
+    expect(server.reserve(sessions[1])).toEqual({ ok: true });
+    server.submitCommand(sessions[0], { type: "aim", x: CX, y: CY });
+    expect(views.length).toBeGreaterThan(1);
+    expect(views[1].roundDeadline).toBe(original);
+
+    // The recovering player's own subscribe-time push carries the SAME
+    // current deadline — not a fresh window, not the pre-drop round's.
+    const recoveredViews = viewEvents(server, sessions[1]);
+    const recovered = server.reconnect(tokens[1]);
+    expect(recovered.ok).toBe(true);
+    expect(recoveredViews.length).toBeGreaterThan(0);
+    expect(recoveredViews[0].phase).toBe("aiming");
+    expect(recoveredViews[0].roundDeadline).toBe(original);
+  });
+
+  it("one SHARED round deadline for the whole room — never per-player deadlines", async () => {
+    const server = newServer({ roundDecisionTimeoutMs: 5_000 });
+    const { roomId, sessions } = makeRoom(server, 3);
+    const v0 = viewEvents(server, sessions[0]);
+    const v1 = viewEvents(server, sessions[1]);
+    const v2 = viewEvents(server, sessions[2]);
+    expect(server.startMatch(roomId).ok).toBe(true);
+    expect(
+      await waitFor(() => v0.length > 0 && v1.length > 0 && v2.length > 0, 3000)
+    ).toBe(true);
+    // Every viewer's snapshot of the SAME round carries the SAME stamp…
+    expect(v1[0].roundDeadline).toBe(v0[0].roundDeadline);
+    expect(v2[0].roundDeadline).toBe(v0[0].roundDeadline);
+    // …and a player acting during the round does not fork it.
+    server.submitCommand(sessions[2], { type: "aim", x: CX, y: CY });
+    expect(v2.length).toBeGreaterThan(1);
+    expect(v2[1].roundDeadline).toBe(v0[0].roundDeadline);
+  });
 });

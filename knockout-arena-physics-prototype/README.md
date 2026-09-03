@@ -189,7 +189,11 @@ logic. Empty rooms are removed automatically (and sweepable via
   is checked inside the tick loop (never a `setTimeout` callback):
   wall-clock time decides only WHEN the existing resolution is invoked,
   never any simulation input — the physics keeps its fixed 60 Hz timestep,
-  and `stop()`/`destroy()` structurally prevent stale firings.
+  and `stop()`/`destroy()` structurally prevent stale firings. The room
+  manager exposes the current token (`roundDeadline(roomId)`) and the game
+  server STAMPS it onto every viewer-projected snapshot
+  (`state.roundDeadline`: an absolute timestamp while aiming, null
+  otherwise) — read-only presentation metadata for client countdowns.
 
 The intended transport flow (already the shape of the code):
 
@@ -383,6 +387,18 @@ viewer-projected snapshots and sends player intents — nothing else.
   choosing/ready/resolving, alive/eliminated — no local timers, no round
   advancement, no winner calculation. The winner is the server's
   `match_finished` / finished-snapshot verdict (null = no-survivor draw).
+- **Decision countdown** (`RoundCountdown.tsx`): during `aiming` the
+  header shows a "Decision time N" badge driven by the snapshot's
+  server-stamped `roundDeadline` (an absolute server timestamp). It is
+  PURE PRESENTATION: `remaining = max(0, roundDeadline − localNow)` on a
+  10 Hz display ticker — the local clock is not assumed synchronized and
+  the value clamps at 0 while awaiting the authoritative post-deadline
+  snapshot. The badge unmounts the moment a snapshot says
+  moving/finished, resets from each NEW round's stamp, marks the last
+  seconds as urgent, renders nothing in the lobby/waiting state and
+  nothing at all when an older server sends no deadline. It never sends a
+  command and nothing gameplay-related reads it — the client has no
+  timeout authority of any kind.
 - **Disconnects mid-match (seat recovery)**: the last authoritative
   snapshot stays visible under a "Connection lost — retrying" banner, input
   is refused and nothing simulates locally — but the screen STAYS, because
@@ -398,10 +414,7 @@ viewer-projected snapshots and sends player intents — nothing else.
 ### Remaining work (reconnection is in — hardening next)
 
 Real authentication (replacing the interim session and reconnect
-credentials), a visible round-deadline countdown in the client UI (the
-server-side deadline itself is in — see the GameHost section; for now the
-clients simply observe the state transitions it causes), rematch/vote
-policy on top of `resetMatch`,
+credentials), rematch/vote policy on top of `resetMatch`,
 purely-visual interpolation between snapshots, a production server entry
 script (the `scripts/smoke-server.ts` dev helper is manual-test tooling,
 not one), and rate limiting / abuse guards.
@@ -429,8 +442,9 @@ not one), and rate limiting / abuse guards.
   through the privileged `resolveRound` command — everyone chooses within
   the same window, an all-confirmed room resolves early, and a silent or
   disconnected player costs its own move but never blocks the round. No
-  client can force, extend or shorten it: the wire protocol has no timeout
-  concept at all. There is no turn queue, no active pawn and no
+  client can force, extend or shorten it: the protocol has no timeout
+  COMMAND — the only timer data on the wire is the read-only
+  `state.roundDeadline` stamp on snapshots, for countdown displays. There is no turn queue, no active pawn and no
   rotation anywhere in the model. A single-pawn match is the degenerate
   case: the lone player's confirmation completes the set, so movement
   starts immediately (the classic solo flow, unchanged).
@@ -664,7 +678,13 @@ The **server** has its own suites in `src/server/__tests__/`:
   blocking the deadline (pre-drop confirms still execute; silent
   disconnected pawns freeze), and the reconnect interactions (no fresh
   window granted, can still confirm, a post-deadline return sees the new
-  state).
+  state); plus the SNAPSHOT METADATA the countdown renders from
+  (onRoomView): aiming views stamped with the room's absolute deadline
+  (nothing pushed while waiting), a fresh stamp per round, null on every
+  resolution, a fresh stamp after a privileged reset (the old one is
+  never reused and cannot resolve the new match), disconnect/reconnect
+  leaving the stamp untouched, and ONE shared deadline for the whole
+  room — never per-player deadlines.
 - `server-boundary.test.ts` — the server package is DOM-free, imports no
   React/client code, reaches the engine only via its barrel (never
   `matter-js` directly), and is networked ONLY in the transport adapter
@@ -743,9 +763,11 @@ The **browser network client** has its own suites in
 - `protocolClient.test.ts` — pure protocol: every builder envelope exact,
   command payloads rebuilt from intent fields only (forged `playerId`s and
   extras dropped, `reset` refused, hostile getters never throw), and the
-  total parser: every server message shape accepted, malformed
-  JSON/null/arrays/primitives, wrong protocol versions, unknown types and
-  malformed payloads all rejected without throwing.
+  total parser: every server message shape accepted (including snapshots
+  carrying the `roundDeadline` presentation stamp — present, null or
+  absent), malformed JSON/null/arrays/primitives, wrong protocol
+  versions, unknown types and malformed payloads all rejected without
+  throwing.
 - `websocketClient.test.ts` — lifecycle and state over FAKE WebSockets:
   connect/duplicate-connect/close idempotency, explicit close never
   reconnecting, unexpected drop without a credential → `reconnecting`
@@ -817,8 +839,13 @@ every other suite stays headless/node; dev-only deps:
   normally), match completion (winner from the snapshot, match_finished,
   null winner = no-survivor draw, Back-to-lobby leaves the room), the
   mid-match disconnect behavior (last snapshot visible, input refused,
-  reconnect offered, nothing simulated), and the lobby → game screen
-  transition on the server's playing state.
+  reconnect offered, nothing simulated), the lobby → game screen
+  transition on the server's playing state, and the round decision
+  countdown (shown only while the authoritative snapshot says aiming,
+  absent without deadline metadata, replaced by each new snapshot's
+  deadline, and — when the local display reaches zero — sending NOTHING
+  and resolving NOTHING: only the server's next snapshot moves the round
+  on).
 - `multiplayerIntegration.test.tsx` — the FULL loop with nothing faked:
   real GameServer + GameHost + engine + transport core + the real
   network client + the real React UI, two clients, one match. Proves
@@ -833,8 +860,18 @@ every other suite stays headless/node; dev-only deps:
   end to end: one player locks in through the real UI, the other stays
   silent, and the SERVER's round decision deadline resolves the round
   (both clients observe the transition, the confirmed pawn moves, the
-  silent one freezes, a fresh round opens — and no timeout concept ever
-  crosses the wire).
+  silent one freezes, a fresh round opens — and no timeout command ever
+  crosses the wire), with the countdown verified end to end (nothing in
+  the waiting room, the full 10-second window on the first aiming
+  snapshot, gone the moment the authoritative resolution arrives,
+  restarted from the new round's stamp).
+- `roundCountdown.test.tsx` — the countdown component in isolation: the
+  label and remaining seconds rendered from the server's absolute
+  deadline (10 at a full window, rounded up on partial seconds), the
+  display ticking down, clamping at zero and holding it, the urgent
+  marking of the last seconds, NOTHING rendered outside aiming (even with
+  a deadline present) or without/with malformed metadata, and a new
+  round's deadline replacing the display without stale leakage.
 - `multiplayerReconnect.test.tsx` — seat recovery through the real stack
   AND the real UI: a mid-match drop keeps the game screen (banner, last
   snapshot, no lobby takeover) and the automatic retry recovers the same

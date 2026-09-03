@@ -92,4 +92,15 @@ export interface GameStateSnapshot {
    * pawn alive). False for spectator projections.
    */
   isAiming: boolean;
+  /**
+   * The CURRENT aiming round's decision deadline as an ABSOLUTE
+   * server wall-clock timestamp (ms) — presentation metadata for
+   * countdown displays. NEVER set by the engine (the engine has no wall
+   * clock); the game server stamps it on viewer-projected snapshots from
+   * the host's authoritative round timer. null/absent = no aiming round
+   * in progress (or an older server). Presentation ONLY: a client may
+   * render `max(0, roundDeadline - localNow)` but must never let it
+   * decide anything gameplay-related — the server alone resolves rounds.
+   */
+  roundDeadline?: number | null;
 }
