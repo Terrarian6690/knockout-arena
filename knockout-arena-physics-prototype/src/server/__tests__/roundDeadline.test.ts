@@ -30,21 +30,25 @@ import {
  *  D  a waiting room arms no deadline (no host exists before startMatch)
  *  E  the deadline fires at/after the configured time (manual + loop ticks)
  *  F  it never fires before the configured time
- *  G  all alive players confirmed → immediate resolution (engine rule)
+ *  G  all ELIGIBLE alive players confirmed → immediate resolution (the
+ *     engine's eligibility: an eliminated player never holds a round open)
  *  H  early resolution cancels the deadline
  *  I  a cancelled deadline can never resolve anything later
  *  J  timeout resolution moves NO unconfirmed pawn
  *  K  timeout resolution still executes confirmed moves
- *  L  a disconnected player never blocks the deadline
+ *  L  a disconnected player never blocks or resets the deadline (pinned
+ *     with a LATE drop, so a reset bug would miss the assertion window)
  *  M  a disconnected player's pre-drop confirmed move still executes
  *  N  a disconnected unconfirmed player does not move at the deadline
  *  O  reconnect does not reset the deadline (no fresh window)
  *  P  reconnect before the deadline may still confirm (and finish the set)
  *  Q  reconnect after the deadline sees the post-resolution state
  *  R  a spent deadline can never resolve a NEWER round
- *  S  reset starts a fresh match with a fresh deadline
+ *  S  reset starts a fresh match with a fresh deadline (host level AND the
+ *     privileged resetMatch facade)
  *  T  a finished match has no armed deadline; no future timeout mutates it
- *  U  destroy() tears the deadline down with the host (no leaked timers)
+ *  U  destroy() tears the deadline down with the host — room destruction,
+ *     server destruction and direct host destruction all leave no timer
  *  V  timeout/confirm races resolve the round exactly once (any order)
  *  W  no deadline is armed while the round is moving
  *  X  no deadline is armed once the match is finished
@@ -332,6 +336,39 @@ describe("round decision deadline — host behavior (fake clock, manual ticks)",
     expect(resolutions()).toBe(1);
   });
 
+  it("[G] only ELIGIBLE (alive) players count — an eliminated player's absence never holds a round open", () => {
+    let fakeNow = 0;
+    const h = host({
+      players: specs(3),
+      clock: () => fakeNow,
+      roundDecisionTimeoutMs: 5_000,
+    });
+    const resolutions = resolutionCounter(h);
+
+    // Round 1: p2 knocks itself out; p0 and p1 stay silent — the DEADLINE
+    // resolves the round (a disconnected or silent player never blocks it).
+    aimOutwardAndConfirm(h, "p2");
+    fakeNow = 5_000;
+    h.tick();
+    expect(resolutions()).toBe(1);
+    let guard = 0;
+    while (stateOf(h).phase === "moving" && guard++ < 700) h.tick();
+    expect(stateOf(h).phase).toBe("aiming"); // two survivors → the match goes on
+    expect(stateOf(h).pawns.find((p) => p.id === "p2")!.eliminated).toBe(true);
+
+    // Round 2: the TWO alive players confirm. The eliminated p2 is not
+    // eligible, so the set is complete and the round resolves immediately —
+    // long before this round's own deadline.
+    const fireAt2 = h.roundDeadline()!;
+    expect(fireAt2).toBeGreaterThan(5_000); // a fresh window for the new round
+    fakeNow = 5_400;
+    launchInward(h, "p0");
+    launchInward(h, "p1");
+    expect(stateOf(h).phase).toBe("moving"); // early, without p2
+    expect(resolutions()).toBe(2);
+    expect(h.roundDeadline()).toBeNull(); // the round-2 deadline was cancelled
+  });
+
   it("[J] a timeout resolution moves NO unconfirmed pawn (and eliminates nobody)", () => {
     let fakeNow = 0;
     const h = host({
@@ -592,6 +629,23 @@ describe("round decision deadline — teardown", () => {
     await sleep(200);
     expect(server.roomCount()).toBe(0);
   });
+
+  it("[U] destroying the ROOM mid-aiming tears its armed deadline down with it", async () => {
+    const server = newServer({ roundDecisionTimeoutMs: 60 });
+    const { roomId, sessions } = makeRoom(server, 2);
+    expect(server.startMatch(roomId).ok).toBe(true);
+    // Mid-aiming, with the deadline armed, both players leave cleanly: the
+    // last leave empties the room and destroys it (and its host) at once.
+    expect(server.leaveRoom(sessions[0]).ok).toBe(true);
+    expect(server.leaveRoom(sessions[1]).ok).toBe(true);
+    expect(server.getRoom(roomId)).toBeNull();
+    expect(server.roomCount()).toBe(0);
+    // Far past the configured deadline: no timer fires and nothing throws —
+    // a stale firing would submit to a destroyed host and crash the process.
+    await sleep(250);
+    expect(server.roomCount()).toBe(0);
+    expect(server.getRoom(roomId)).toBeNull();
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -650,6 +704,25 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
     const first = resolutionTimes(events)[0];
     expect(first - t0).toBeGreaterThanOrEqual(180); // not early (nobody confirmed)
     expect(first - t0).toBeLessThanOrEqual(800); // at the deadline, not blocked
+  }, 8000);
+
+  it("[L] a disconnect LATE in the window does not extend the deadline (a drop never resets it)", async () => {
+    const server = newServer({ roundDecisionTimeoutMs: 400 });
+    const { roomId, sessions } = makeRoom(server, 2);
+    const events = phaseEvents(server, sessions[0]);
+    const t0 = Date.now();
+    expect(server.startMatch(roomId).ok).toBe(true);
+    // Nobody confirms. p1's connection drops 80 ms before the deadline: if
+    // the drop had reset the timer, the round would resolve at ~t0+720 —
+    // outside this window. It must resolve at the ORIGINAL deadline (~400).
+    await sleep(320); // → ~t0+320 (the deadline sits at ~t0+400)
+    expect(server.reserve(sessions[1])).toEqual({ ok: true });
+    expect(
+      await waitFor(() => resolutionTimes(events).length >= 1, 1500)
+    ).toBe(true);
+    const first = resolutionTimes(events)[0];
+    expect(first - t0).toBeGreaterThanOrEqual(240); // not early (nobody confirmed)
+    expect(first - t0).toBeLessThanOrEqual(650); // the ORIGINAL deadline, not a reset one
   }, 8000);
 
   it("[M] a disconnected player's pre-drop confirmed move still executes at the deadline", async () => {
@@ -825,5 +898,31 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
     expect(
       server.submitCommand(sessions[1], { type: "confirmLaunch" })
     ).toEqual({ ok: true });
+  }, 8000);
+
+  it("[S] a privileged reset through the facade gives the new match a fresh deadline — the old one cannot resolve it", async () => {
+    const server = newServer({ roundDecisionTimeoutMs: 400 });
+    const { roomId, sessions } = makeRoom(server, 2);
+    const events = phaseEvents(server, sessions[0]);
+    const t0 = Date.now();
+    expect(server.startMatch(roomId).ok).toBe(true);
+    // Nobody confirms. Mid-window, the server resets the match through the
+    // privileged facade path (the one a future rematch vote would use).
+    await sleep(250); // → ~t0+250 (the OLD deadline sits at ~t0+400)
+    expect(server.resetMatch(roomId)).toEqual({ ok: true });
+    expect(events[events.length - 1].phase).toBe("aiming"); // fresh match state
+    expect(events[events.length - 1].state.pawns.every((p) => !p.confirmed)).toBe(true);
+
+    // Past the OLD deadline moment: the new match's round must still be
+    // open — the spent deadline cannot resolve it…
+    await sleep(170); // → ~t0+420
+    expect(resolutionTimes(events)).toHaveLength(0);
+    // …and the new match resolves at ITS OWN deadline (~t0+250+400=650).
+    expect(
+      await waitFor(() => resolutionTimes(events).length >= 1, 1500)
+    ).toBe(true);
+    const first = resolutionTimes(events)[0];
+    expect(first - t0).toBeGreaterThanOrEqual(500); // after the reset's fresh window began
+    expect(first - t0).toBeLessThanOrEqual(1100); // ≈ reset point + deadline + loop slack
   }, 8000);
 });
