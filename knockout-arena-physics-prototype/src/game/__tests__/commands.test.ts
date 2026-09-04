@@ -257,6 +257,7 @@ describe("applyCommand — command application", () => {
       spawnX: x, spawnY: y, eliminated,
       power: 3, confirmed: false,
       aim: { active: false, direction: { x: 0, y: -1 } },
+      lastLaunch: null,
       position: { x, y }, velocity: { x: 0, y: 0 },
       angle: 0, angularVelocity: 0,
     });

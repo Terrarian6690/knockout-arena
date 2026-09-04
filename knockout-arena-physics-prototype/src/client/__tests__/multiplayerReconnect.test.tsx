@@ -228,4 +228,87 @@ describe("seat recovery through the real UI", () => {
     expect(host.client.getState().playerId).toBe("p0");
     expect(screen.getByTestId("start-match")).toBeInTheDocument();
   }, 15000);
+
+  it("reconnect mid-round restores the OWN aim, keeps the opponent's aim private, and touches nothing about the round", async () => {
+    const harness = createServerHarness();
+    const host = harness.addPlayer();
+    const guest = harness.addPlayer();
+
+    renderLobby(host.client);
+    await connectPlayer(host);
+    fireEvent.click(screen.getByRole("button", { name: "Create Room" }));
+    const roomId = host.client.getState().roomId as string;
+
+    await connectPlayer(guest);
+    await playerAct(() => guest.client.joinRoom(roomId));
+    fireEvent.click(screen.getByTestId("start-match"));
+    expect(
+      await screen.findByText("Multiplayer match", {}, { timeout: 5000 })
+    ).toBeInTheDocument();
+    expect(
+      await waitFor(() => host.client.getState().snapshot !== null, 5000)
+    ).toBe(true);
+
+    // Both players aim in opposite directions (the host through the real
+    // UI; the guest headless, exactly like the integration test).
+    fireEvent.pointerMove(screen.getByTestId("arena-canvas"), {
+      clientX: 120,
+      clientY: 80,
+    });
+    expect(
+      await waitFor(
+        () =>
+          (host.client.getState().snapshot as GameStateSnapshot).isAiming ===
+          true,
+        5000
+      )
+    ).toBe(true);
+    await playerAct(() => guest.client.submitCommand({ type: "aim", x: 450, y: 150 }));
+    expect(
+      await waitFor(
+        () =>
+          (guest.client.getState().snapshot as GameStateSnapshot)
+            .aimDirection !== null,
+        5000
+      )
+    ).toBe(true);
+    const deadlineBefore = (host.client.getState().snapshot as GameStateSnapshot)
+      .roundDeadline;
+
+    // ── the host's connection dies mid-round and comes back ──
+    await act(async () => {
+      host.pairs[0].serverEnd.close();
+    });
+    await openRetrySocket(host);
+    expect(
+      await waitFor(() => host.client.getState().status === "connected", 3000)
+    ).toBe(true);
+    expect(
+      await waitFor(() => host.client.getState().snapshot !== null, 5000)
+    ).toBe(true);
+
+    // The CURRENT authoritative view comes back with the same seat:
+    // the host's OWN aim is restored from the server state (never a
+    // local cache, never reset)…
+    const recovered = host.client.getState().snapshot as GameStateSnapshot;
+    expect(recovered.aimDirection).toEqual({ x: 0, y: 1 }); // host aimed down
+    expect(recovered.localPawnId).toBe("p0");
+    // …the opponent's aim is still private (nothing of the guest's
+    // direction exists in the host's snapshot)…
+    expect(recovered.pawns.find((p) => p.id === "p1")!.launch).toBeNull();
+    // …and the round itself is untouched: same aiming phase, same armed
+    // decision deadline (reconnect neither pauses nor resets anything).
+    expect(recovered.phase).toBe("aiming");
+    expect(recovered.roundDeadline).toBe(deadlineBefore);
+    expect(screen.getByTestId("turn-badge")).toHaveTextContent(
+      "Choose your move — aim!"
+    );
+    expect(screen.getByTestId("launch")).toBeEnabled();
+
+    // The guest's view mirrors the privacy: each player's aim is theirs
+    // alone — the host's drop/reconnect changed nothing about that.
+    const guestView = guest.client.getState().snapshot as GameStateSnapshot;
+    expect(guestView.aimDirection).toEqual({ x: 0, y: -1 }); // guest aimed up
+    expect(guestView.pawns.find((p) => p.id === "p0")!.launch).toBeNull();
+  }, 15000);
 });

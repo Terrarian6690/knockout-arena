@@ -15,6 +15,13 @@ import type { GameStateSnapshot, PawnSnapshot } from "./types";
  * selection. A spectator projection (localPawnId null) has no pawn to
  * describe and reports the neutral defaults.
  *
+ * PRIVACY + REVEAL: during "aiming" no other pawn carries ANY aiming data —
+ * only public readiness (confirmed) — so a viewer physically cannot see
+ * another player's direction or power while the round is open (each
+ * PawnSnapshot.launch is null until the round resolves). Once the phase is
+ * "moving"/"finished", every pawn's COMMITTED launch (pawns[].launch) is
+ * public: the reveal of what everyone actually fired.
+ *
  * The local perspective is supplied BY THE CALLER: the engine has no notion
  * of a local player, so a server broadcasting to spectators passes null and
  * each client passes its own pawn id. The same authoritative state projects
@@ -27,6 +34,13 @@ export function projectSnapshot(
   const localPawn = localPawnId
     ? state.pawns.find((p) => p.id === localPawnId) ?? null
     : null;
+  // THE PRIVACY GATE: while a round is still being decided ("aiming"),
+  // every pawn's committed launch is hard-nulled — whatever the
+  // authoritative state holds. A player's direction/power become public
+  // ONLY through the movement phase's reveal (the projection below), so
+  // other players' private aiming can never leak into any viewer's
+  // snapshot, whatever field a client inspects.
+  const revealLaunches = state.phase !== "aiming";
   const pawns: PawnSnapshot[] = state.pawns.map((p: PawnState) => ({
     id: p.id,
     name: p.name,
@@ -36,6 +50,15 @@ export function projectSnapshot(
     eliminated: p.eliminated,
     /** Locked in for the current round (aiming phase only). */
     confirmed: p.confirmed,
+    // Public readiness only during aiming (see above); the committed
+    // launch once the round is resolving.
+    launch:
+      revealLaunches && p.lastLaunch
+        ? {
+            direction: { ...p.lastLaunch.direction },
+            power: p.lastLaunch.power,
+          }
+        : null,
     isLocal: p.id === localPawnId,
     colorIndex: p.colorIndex,
   }));

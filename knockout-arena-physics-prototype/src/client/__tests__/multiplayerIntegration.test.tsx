@@ -138,7 +138,7 @@ describe("two clients play one authoritative match (full stack)", () => {
     ).toBe(true);
     expect((host.client.getState().snapshot as GameStateSnapshot).phase).toBe("aiming"); // still the SAME round
     expect(screen.getByTestId("launch")).toBeDisabled(); // the choice is locked
-    expect(screen.getByTestId("launch")).toHaveTextContent("Waiting…");
+    expect(screen.getByTestId("launch")).toHaveTextContent("Confirmed — waiting…");
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
       "Ready — waiting for other players"
     );
@@ -150,7 +150,24 @@ describe("two clients play one authoritative match (full stack)", () => {
     // ── [20] the GUEST chooses independently (headless "browser B") ──
     const guestSnap = guest.client.getState().snapshot as GameStateSnapshot;
     expect(guestSnap.localPawnId).toBe("p1"); // server's projection for B
+    // PRIVACY, full stack: the guest's live choice goes to the server —
+    // and the host's next view of it exposes NOTHING of the direction.
+    const hostSnapBeforeGuestAim = host.client.getState().snapshot;
     await playerAct(() => guest.client.submitCommand({ type: "aim", x: CX, y: CY }));
+    // The aim's broadcast reached the host (a fresh snapshot arrived)…
+    expect(
+      await waitFor(
+        () => host.client.getState().snapshot !== hostSnapBeforeGuestAim,
+        5000
+      )
+    ).toBe(true);
+    const hostDuringGuestAim = host.client.getState().snapshot as GameStateSnapshot;
+    // …and it carries the host's OWN aim only: the guest's pawn has no
+    // launch datum, no direction, no power — readiness is all that is
+    // public during aiming.
+    expect(hostDuringGuestAim.aimDirection).toEqual({ x: 0, y: 1 }); // host's own
+    expect(hostDuringGuestAim.pawns.find((p) => p.id === "p1")!.launch).toBeNull();
+    expect(hostDuringGuestAim.pawns.find((p) => p.id === "p1")!.confirmed).toBe(false);
     await playerAct(() => guest.client.submitCommand({ type: "setPower", power: 2 }));
     await playerAct(() => guest.client.submitCommand({ type: "confirmLaunch" }));
 
@@ -171,6 +188,20 @@ describe("two clients play one authoritative match (full stack)", () => {
     const guestMoving = guest.client.getState().snapshot as GameStateSnapshot;
     expect(asAuthoritative(guestMoving)).toEqual(asAuthoritative(hostMoving));
 
+    // ── the REVEAL: both committed launches are public during moving ──
+    // The host fired down (power 2), the guest up (power 2) — and BOTH
+    // viewers now see BOTH arrows' data: exact direction, exact power.
+    for (const view of [hostMoving, guestMoving]) {
+      expect(view.pawns.find((p) => p.id === "p0")!.launch).toEqual({
+        direction: { x: 0, y: 1 },
+        power: 2,
+      });
+      expect(view.pawns.find((p) => p.id === "p1")!.launch).toEqual({
+        direction: { x: 0, y: -1 },
+        power: 2,
+      });
+    }
+
     // ── the round settles into a fresh aiming round (no turn queue) ──
     expect(
       await waitFor(() => {
@@ -190,6 +221,9 @@ describe("two clients play one authoritative match (full stack)", () => {
     expect(settledP0.position).not.toEqual(initialPositions[0]);
     expect(settledP1.position).not.toEqual(initialPositions[1]);
     expect(settledSnap.pawns.every((p) => !p.confirmed)).toBe(true);
+    // The previous round's launch reveal does NOT leak into the fresh
+    // aiming round: no pawn carries a launch arrow anymore.
+    expect(settledSnap.pawns.every((p) => p.launch === null)).toBe(true);
 
     // ── round 2: the guest knocks itself out; the deadline resolves ──
     const me = settledP1;
@@ -323,6 +357,18 @@ describe("two clients play one authoritative match (full stack)", () => {
       )
     ).toBe(true);
 
+    // The reveal at the deadline resolution: exactly the one committed
+    // launch (the host's, down at power 2) is public to BOTH viewers; the
+    // silent guest's pawn carries no launch at all.
+    for (const player of [host, guest]) {
+      const view = player.client.getState().snapshot as GameStateSnapshot;
+      expect(view.pawns.find((p) => p.id === "p0")!.launch).toEqual({
+        direction: { x: 0, y: 1 },
+        power: 2,
+      });
+      expect(view.pawns.find((p) => p.id === "p1")!.launch).toBeNull();
+    }
+
     // The round settles into a fresh aiming round for both clients…
     expect(
       await waitFor(() => {
@@ -343,6 +389,7 @@ describe("two clients play one authoritative match (full stack)", () => {
     expect(p1.position).toEqual(spawn[1]);
     expect(settled.pawns.every((p) => !p.eliminated)).toBe(true); // not an elimination
     expect(settled.pawns.every((p) => !p.confirmed)).toBe(true); // fresh round
+    expect(settled.pawns.every((p) => p.launch === null)).toBe(true); // no stale reveal
 
     // Both clients hold the SAME authoritative state.
     const guestSettled = guest.client.getState().snapshot as GameStateSnapshot;

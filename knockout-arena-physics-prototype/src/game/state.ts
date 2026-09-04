@@ -12,6 +12,8 @@ import type { GamePhase, Vec2 } from "./types";
  *   - per-pawn domain state (identity, colors, spawn, elimination flag)
  *   - per-pawn round selections (aim, power, and whether the player has
  *     confirmed their move for the CURRENT round)
+ *   - per-pawn committed launches (the reveal data for the round being
+ *     resolved — public once movements begin, private before)
  *   - per-pawn kinematics (position, velocity, angle, angular velocity) so
  *     physics bodies can be rebuilt deterministically
  *
@@ -42,6 +44,14 @@ export interface PawnAimState {
   direction: Vec2;
 }
 
+/** The launch one pawn committed for the round being resolved. */
+export interface LaunchSelection {
+  /** Launch direction as a unit vector (the direction actually launched). */
+  direction: Vec2;
+  /** The power level the launch was confirmed with (1..5). */
+  power: number;
+}
+
 /** Serializable state of a single pawn: domain data + controls + kinematics. */
 export interface PawnState {
   id: string;
@@ -65,6 +75,21 @@ export interface PawnState {
    * for every new aiming phase. Eliminated pawns are never confirmed.
    */
   confirmed: boolean;
+  /**
+   * The launch this pawn COMMITTED for the round being resolved: set the
+   * moment the round's movements begin (exactly the confirmed direction —
+   * the explicit aim or the default fallback — and the confirmed power),
+   * cleared when a NEW aiming round opens or the match is reset. null
+   * while an aiming round is in progress.
+   *
+   * This is the REVEAL datum: during "aiming" every player's aim/power is
+   * private (the projection exposes only the viewer's own); once the round
+   * resolves, committed launches become public knowledge and are projected
+   * to everyone. It lives in the authoritative state — not in any client —
+   * so a disconnected-but-confirmed player's launch is revealed exactly
+   * like anyone else's.
+   */
+  lastLaunch: LaunchSelection | null;
   /** Current center position in world units. */
   position: Vec2;
   /** Current velocity in world units per tick. */
@@ -219,7 +244,33 @@ function validatePawn(raw: unknown): PawnState {
   if (!isFiniteNumber(p.angularVelocity)) {
     throw new Error(`GameState: pawn ${p.id} angularVelocity must be finite`);
   }
+  validateLastLaunch(p.lastLaunch, p.id);
   return raw as PawnState;
+}
+
+/**
+ * The committed-launch reveal datum. Absent/null means "no committed
+ * launch" (an aiming round, or a pawn that did not confirm). Tolerating
+ * ABSENCE keeps states produced by older engine versions loadable; a
+ * present value must be a well-formed launch.
+ */
+function validateLastLaunch(raw: unknown, pawnId: string): void {
+  if (raw === undefined || raw === null) return;
+  if (typeof raw !== "object") {
+    throw new Error(`GameState: pawn ${pawnId} lastLaunch must be an object or null`);
+  }
+  const l = raw as Record<string, unknown>;
+  const direction = validateVec2(l.direction, `pawn ${pawnId} lastLaunch.direction`);
+  if (Math.hypot(direction.x, direction.y) > 1 + 1e-6) {
+    throw new Error(
+      `GameState: pawn ${pawnId} lastLaunch.direction is not a unit vector`
+    );
+  }
+  if (!isInteger(l.power) || l.power < CONFIG.power.min || l.power > CONFIG.power.max) {
+    throw new Error(
+      `GameState: pawn ${pawnId} lastLaunch.power must be an integer in [${CONFIG.power.min}, ${CONFIG.power.max}]`
+    );
+  }
 }
 
 function validateVec2(raw: unknown, what: string): Vec2 {

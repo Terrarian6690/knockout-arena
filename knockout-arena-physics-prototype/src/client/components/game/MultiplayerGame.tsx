@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNetworkClient, useNetworkState } from "../../network/react";
-import type { GameStateSnapshot } from "../../../game";
+import { aimAt, type GameStateSnapshot, type Vec2 } from "../../../game";
 import { cn } from "../../utils/cn";
 import { ConnectionStatusBadge } from "../lobby/ConnectionStatusBadge";
 import { ErrorBanner } from "../lobby/ErrorBanner";
@@ -32,6 +32,11 @@ import { canLocalPlayerAct } from "./localControl";
  * Rounds are SIMULTANEOUS: during the aiming phase every alive player
  * chooses independently (aim, power) and Launch locks in their OWN move
  * ("Ready"); the round resolves on the server once everyone is ready.
+ * While choosing, the mouse aims (the arrow previews the direction
+ * locally and every move also sends the real aim command — the server's
+ * echo always wins) and the power meter picks 1–5. Once the round
+ * resolves, everyone's COMMITTED launches are revealed by the server
+ * (pawns[].launch) and drawn as arrows during the movement phase.
  * Disconnects (seat recovery): the last authoritative snapshot stays
  * visible, input is refused while not connected, and the reconnect
  * handshake restores the same seat and its current-round choice state.
@@ -72,7 +77,62 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
       ?.confirmed ?? false;
   const connected = state.status === "connected";
 
+  // Local, purely visual pending AIM DIRECTION, computed exactly the way
+  // the server computes the real one (pawn center → cursor, same aimAt
+  // math): the arrow follows the mouse instantly instead of one
+  // round-trip behind. Presentation only — every move also sends the
+  // authoritative aim command, and the server's echo always wins: the
+  // preview is dropped the moment a snapshot catches up with it (or has
+  // no active aim at all, or the player loses input rights).
+  const [pendingAim, setPendingAim] = useState<Vec2 | null>(null);
+  useEffect(() => {
+    setPendingAim((pending) => {
+      if (pending === null) return null;
+      const echo = state.snapshot?.aimDirection ?? null;
+      if (echo === null) return null; // no active aim (fresh round/reset)
+      // Caught up: the authoritative direction equals the preview — show
+      // it straight from the snapshot. An older echo keeps the fresh
+      // preview until the newest aim command's echo arrives.
+      return echo.x === pending.x && echo.y === pending.y ? null : pending;
+    });
+  }, [state.snapshot]);
+  // Input rights gone (confirmed, round resolving, match over, dropped):
+  // the preview must never outlive the player's right to aim.
+  useEffect(() => {
+    if (!canAct || !connected) setPendingAim(null);
+  }, [canAct, connected]);
+
+  /**
+   * What the arena draws: the authoritative snapshot with the local
+   * pending selections overlaid (optimistic aim/power — the same trust
+   * level as the pending power readout). The overlay exists only while
+   * the player may actually act; the second the server says otherwise
+   * (confirmed, moving, finished), the pure authoritative snapshot draws.
+   */
+  const displaySnapshot = useMemo<GameStateSnapshot | null>(() => {
+    if (snapshot === null) return null;
+    const optimisticAim =
+      canAct && connected && pendingAim !== null && snapshot.phase === "aiming";
+    if (!optimisticAim && pendingPower === null) return snapshot;
+    return {
+      ...snapshot,
+      ...(optimisticAim
+        ? { aimDirection: pendingAim, isAiming: true }
+        : {}),
+      power: pendingPower ?? snapshot.power,
+    };
+  }, [snapshot, canAct, connected, pendingAim, pendingPower]);
+
   const handleAim = (point: { x: number; y: number }) => {
+    // The preview mirrors the server exactly: aimAt returns null when the
+    // cursor sits on the pawn's center (the server ignores that aim too,
+    // keeping the previous direction — so the preview keeps it as well).
+    const localPawn = snapshot?.pawns.find(
+      (pawn) => pawn.id === snapshot.localPawnId
+    );
+    const preview =
+      localPawn !== undefined ? aimAt(localPawn.position, point) : null;
+    if (preview !== null) setPendingAim(preview);
     client.submitCommand({ type: "aim", x: point.x, y: point.y });
   };
 
@@ -135,7 +195,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
 
           <main className="relative flex min-h-0 flex-1">
             <ArenaView
-              snapshot={snapshot}
+              snapshot={displaySnapshot ?? snapshot}
               interactive={canAct && connected}
               onAim={handleAim}
             />

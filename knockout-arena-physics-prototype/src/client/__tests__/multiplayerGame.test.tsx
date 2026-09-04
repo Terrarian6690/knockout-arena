@@ -153,7 +153,7 @@ describe("multiplayer game: round ownership", () => {
     await feed(sockets, {}, { p0: { confirmed: true } });
     expect(screen.getByTestId("launch")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Power 4" })).toBeDisabled();
-    expect(screen.getByTestId("launch")).toHaveTextContent("Waiting…");
+    expect(screen.getByTestId("launch")).toHaveTextContent("Confirmed — waiting…");
     pointerAim();
     expect(sentCommands(sockets)).toHaveLength(0);
   });

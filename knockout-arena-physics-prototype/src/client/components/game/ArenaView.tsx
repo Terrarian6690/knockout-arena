@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { createArena, type GameStateSnapshot } from "../../../game";
 import { computeTransform, render } from "../../renderer";
 import { cn } from "../../utils/cn";
@@ -75,6 +75,13 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
     onAim(worldPoint(event));
   }
 
+  // Right-click aiming: the browser's context menu must not steal the
+  // interaction ON THE ARENA. Scoped to this canvas only — nothing global,
+  // so the rest of the page (and the lobby) keeps its normal menus.
+  function handleContextMenu(event: MouseEvent<HTMLCanvasElement>) {
+    event.preventDefault();
+  }
+
   return (
     <div className="relative flex-1 overflow-hidden">
       <canvas
@@ -86,6 +93,7 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
         )}
         onPointerDown={handlePointer}
         onPointerMove={handlePointer}
+        onContextMenu={handleContextMenu}
       />
     </div>
   );

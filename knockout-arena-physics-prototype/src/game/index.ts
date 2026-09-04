@@ -33,7 +33,12 @@ export type {
 export { validateCommand, withPlayerId } from "./commands";
 
 // ── Authoritative state (serialization boundary) ──────────────────────────
-export type { GameState, PawnState, PawnAimState } from "./state";
+export type {
+  GameState,
+  PawnState,
+  PawnAimState,
+  LaunchSelection,
+} from "./state";
 export {
   validateGameState,
   serializeGameState,
@@ -51,4 +56,4 @@ export { projectSnapshot } from "./project";
 export { createArena, floorRadius, type Arena } from "./arena";
 export { CONFIG } from "./config";
 export { playerColor, playerStroke } from "./player";
-export { indicatorLength } from "./aiming";
+export { indicatorLength, aimAt } from "./aiming";

@@ -374,15 +374,54 @@ viewer-projected snapshots and sends player intents — nothing else.
   no new push, nothing changes (the GameHost broadcasts only on state
   changes, so idle phases cause zero rerenders through the existing
   external store — no second subscription system).
-- **Input gating** (`localControl.ts`, a pure function over the snapshot):
-  the local player may act only when the phase is `aiming`, they have a
-  pawn, it is alive, and it has not yet locked in its move for the current
-  round. Pointer position → world coordinates is an INPUT calculation; the
-  aim/power/confirmLaunch intents then travel the wire and the server alone
+- **Aiming input** (`localControl.ts` + `ArenaView.tsx`): during `aiming`
+  the mouse aims — the direction is pawn center → cursor, translated from
+  screen to world coordinates through the renderer's own transform (CSS
+  pixels via `getBoundingClientRect` + `computeTransform`, so device pixel
+  ratio, resizing and centering/letterboxing are all handled; the canvas
+  is never assumed to be screen pixels). Moving the cursor previews the
+  direction continuously; clicking with EITHER mouse button selects it;
+  nothing locks until Confirm (the selection stays freely changeable all
+  round). The browser context menu is suppressed ON THE ARENA CANVAS only
+  — right-click aims, and the rest of the page keeps its normal menus.
+  Gating is a pure function over the snapshot (`canLocalPlayerAct`:
+  aiming phase + own pawn + alive + not yet confirmed); the
+  aim/setPower/confirmLaunch intents travel the wire and the server alone
   decides whether they succeed (`wrong-player` / `wrong-phase` /
   `already-confirmed` / … rejections come back as normal error banners).
-  Power shows a local pending value for responsiveness that ANY fresh
-  snapshot replaces with the authoritative one.
+- **Optimistic aim preview** (`MultiplayerGame.tsx`): like the pending
+  power, the arrow follows the mouse instantly using the exact same
+  `aimAt` math the server runs (a cursor on the pawn's center previews
+  nothing, mirroring the server's no-op) — while every move also sends
+  the real aim command. The server's echo always wins: the preview is
+  dropped the moment a snapshot catches up with it, and it can never
+  outlive the player's input rights (confirmed / resolving / dropped).
+  This is display responsiveness only — no prediction, no client physics.
+- **Aiming privacy & launch reveal** (engine-level, in
+  `projectSnapshot`): while a round is open, each player's aim/power is
+  PRIVATE — the projection carries only the VIEWER'S OWN selection, and
+  other pawns expose nothing but public readiness (`confirmed`). There is
+  no per-pawn aim field on the wire at all, so privacy is structural
+  rather than a UI decision. The moment a round resolves, every confirmed
+  player's COMMITTED launch (`pawns[].launch`: exact direction + power,
+  straight from the authoritative `lastLaunch` state — including a
+  disconnected-but-confirmed player's, and the default direction for a
+  confirm without an explicit aim) becomes public: the renderer draws one
+  arrow per launcher, attached to their pawn, in the player's own color,
+  with the length of the confirmed power. Unconfirmed pawns get no arrow
+  (never a guessed one), and a fresh aiming round clears every launch —
+  the previous round's reveal never leaks into the next.
+- **Power meter & confirm** (`PowerMeter.tsx` + `MatchControls.tsx`): a
+  horizontal, progressively widening wedge at the bottom of the screen —
+  five discrete integer buttons 1–5 colored green → yellow → orange → red
+  (weak to strong), the filled run reading as a gauge. Each level keeps
+  the accessible name "Power N" (plain buttons: Tab/Enter/Space). The
+  arrow's length updates immediately on a choice (the pending value). The
+  confirm control reads "Confirm launch" and sends exactly one
+  `confirmLaunch` — it commits the CURRENT aim + power and never starts
+  the movement itself; after confirming it turns into a disabled
+  "Confirmed — waiting…" state with the meter locked, until the server
+  resolves the round.
 - **Round/result UI** (rail + badge + overlay) reads the snapshot:
   choosing/ready/resolving, alive/eliminated — no local timers, no round
   advancement, no winner calculation. The winner is the server's
@@ -462,6 +501,16 @@ not one), and rate limiting / abuse guards.
   exposes the VIEWER'S OWN controls (a spectator projection shows neutral
   defaults) — every player's screen describes their own choice, never
   "the active pawn's".
+- **Committed launches** (`lastLaunch` on `PawnState`): the moment a
+  round's movements begin, every confirmed pawn's launch (direction +
+  power, exactly as fired) is recorded in the authoritative state; it is
+  the REVEAL datum — projected to every viewer as `pawns[].launch` while
+  the phase is moving/finished, and hard-nulled by the projection during
+  `aiming` (so an open round's private aims cannot leak through ANY
+  field). A new aiming round or a reset clears it for every pawn. Because
+  it lives in the match state and not in any connection, a
+  disconnected-but-confirmed player's launch is revealed like anyone
+  else's.
 
 ### Multiplayer readiness (server-authoritative; reconnection built in, real auth pending)
 
@@ -531,10 +580,13 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
 1. Move the mouse to aim (a dashed arrow shows the direction; its length,
    opacity and chevron count grow with the selected power).
 2. Pick a power level **1–5** (higher = stronger launch).
-3. Click **Launch** to lock in your move — one launch per round (in
-   multiplayer the round resolves once everyone has locked in, or at the
-   server's round deadline — 10 seconds by default; solo starts
-   immediately).
+3. Click **Launch** (multiplayer: **Confirm launch**) to lock in your
+   move — one launch per round (in multiplayer the round resolves once
+   everyone has locked in, or at the server's round deadline — 10 seconds
+   by default; solo starts immediately). In multiplayer, moving the mouse
+   previews your direction continuously and either mouse button selects
+   it; once the round resolves, everyone's committed launches are revealed
+   as colored arrows during the movement phase.
 4. The pawn slides with friction. The rim is a low lip: slow or glancing
    contacts bounce off it, but a fast head-on launch clears it — and once the
    pawn has completely left the floor it is **knocked out** and the match is
@@ -636,7 +688,19 @@ movements starting in one simulation transition, no turn/current-player
 concept anywhere in the authoritative model, one player's commands never
 touching another's intent, physical knockouts, self-elimination, winner/
 no-winner detection, loadState normalization, serialization/replay
-determinism, and per-viewer projection).
+determinism, and per-viewer projection). `launchReveal.test.ts` pins the
+aiming-privacy / launch-reveal contract of the projection: during aiming
+each viewer's snapshot carries ONLY their own aim (other pawns have no
+per-pawn aim/power field at all — structural privacy — while readiness
+stays public), a resolution reveals every confirmed launch to every viewer
+(exact direction + power, including the default direction of a confirm
+without an aim and the silent player's guaranteed no-launch), 2- and
+4-player rosters choose independently with nobody overwriting anybody,
+confirmation locks the choice (`already-confirmed`) and the reveal keeps
+the locked values, the datum survives serialization, a fresh round/reset
+clears every launch, a finished match may keep its final launches, and
+`validateGameState` rejects malformed launch data while tolerating its
+absence (older serialized states).
 
 Three suites guard the **package boundary** itself:
 
@@ -685,6 +749,16 @@ The **server** has its own suites in `src/server/__tests__/`:
   never reused and cannot resolve the new match), disconnect/reconnect
   leaving the stamp untouched, and ONE shared deadline for the whole
   room — never per-player deadlines.
+- `snapshotPrivacy.test.ts` — privacy and reveal at the REAL server
+  boundary (`onRoomView`, exactly what crosses the wire): during aiming
+  each viewer's snapshot carries only their own aim/power while the other
+  player's pawn exposes nothing but public readiness (no per-pawn aim
+  field exists to leak through), resolution reveals the confirmed launch
+  to EVERY viewer with no launch for the unconfirmed one, a
+  disconnected-but-confirmed player's launch is revealed normally (the
+  datum lives in the match state, never in a connection), and a
+  reconnected viewer's fresh subscribe push restores their OWN aim with
+  the opponent's still private and the round/deadline untouched.
 - `server-boundary.test.ts` — the server package is DOM-free, imports no
   React/client code, reaches the engine only via its barrel (never
   `matter-js` directly), and is networked ONLY in the transport adapter
@@ -845,7 +919,35 @@ every other suite stays headless/node; dev-only deps:
   absent without deadline metadata, replaced by each new snapshot's
   deadline, and — when the local display reaches zero — sending NOTHING
   and resolving NOTHING: only the server's next snapshot moves the round
-  on).
+  on), and the confirmed-state control lock ("Confirmed — waiting…",
+  meter disabled).
+- `multiplayerAiming.test.tsx` — the aiming interaction over scripted
+  sockets, with the canvas "measured" via element-level size/rect mocks
+  and the renderer's draw captured through a module mock: mouse → world
+  coordinate conversion (identity with page offset, scaled/centered, and
+  unchanged at devicePixelRatio 2), left AND right click selecting the
+  direction, the context menu suppressed on the arena but NOT on the rest
+  of the page, the optimistic preview following the mouse instantly and
+  the server's echo taking over once it catches up (a cursor on the pawn's
+  own center previews nothing, mirroring the server), the direction
+  staying changeable until Confirm, confirming sending exactly one
+  `confirmLaunch` and locking every control (with the locked arrow drawn
+  straight from the authoritative snapshot), other players'
+  confirmations never locking local input, exactly the five integer power
+  levels with each `setPower` on the wire, a power choice reaching the
+  drawn arrow immediately, the meter disabled after confirmation, and the
+  movement reveal reaching the arena with unconfirmed pawns carrying no
+  launch.
+- `rendererAim.test.ts` — the arrow GEOMETRY against the pure renderer
+  with a recording 2D context (no DOM): the local aim arrow originates at
+  the local pawn and follows the aim direction, its length is exactly
+  `indicatorLength(power)` and grows strictly monotonically 1→5, exactly
+  one dashed arrow exists during aiming however many pawns are on
+  screen, and the movement reveal draws one arrow per confirmed launcher
+  at their pawn in the player's own color sized by the confirmed power —
+  none for unconfirmed pawns, none during aiming (even for a crafted
+  snapshot carrying launch data), and the final round's arrows staying
+  visible on the finished screen.
 - `multiplayerIntegration.test.tsx` — the FULL loop with nothing faked:
   real GameServer + GameHost + engine + transport core + the real
   network client + the real React UI, two clients, one match. Proves
@@ -864,7 +966,12 @@ every other suite stays headless/node; dev-only deps:
   crosses the wire), with the countdown verified end to end (nothing in
   the waiting room, the full 10-second window on the first aiming
   snapshot, gone the moment the authoritative resolution arrives,
-  restarted from the new round's stamp).
+  restarted from the new round's stamp), and with aiming privacy and the
+  launch reveal verified through the same stack (the guest's live aim
+  reaches the host's view as NO direction data; both committed launches
+  become public to both viewers the moment the round resolves — exact
+  direction and power; the deadline resolution reveals exactly the one
+  confirmed launch; and no launch leaks into the fresh aiming round).
 - `roundCountdown.test.tsx` — the countdown component in isolation: the
   label and remaining seconds rendered from the server's absolute
   deadline (10 at a full window, rounded up on partial seconds), the
@@ -880,7 +987,12 @@ every other suite stays headless/node; dev-only deps:
   drop keeps the room panel (Start disabled, a third player cannot steal
   the reserved seat) and recovery restores host + roster; an expired
   credential returns the player to the lobby home with the server's error
-  shown, the room gone, and an immediate fresh start possible.
+  shown, the room gone, and an immediate fresh start possible. A mid-round
+  drop with both players aimed pins the aiming semantics of recovery: the
+  reconnected viewer's OWN aim comes back from the authoritative state
+  (never a local cache, never reset), the opponent's aim stays private in
+  both directions, and the round/deadline are untouched (same aiming
+  phase, same armed deadline, controls re-enabled).
 - `client-boundary.test.ts` (engine part) now resolves import targets
   instead of matching strings, so the client's `components/game/` folder
   is correctly recognized as client code while deep engine imports

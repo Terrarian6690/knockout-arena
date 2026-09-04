@@ -1,5 +1,6 @@
 import { CONFIG } from "./config";
 import { createAimState, type AimState } from "./aiming";
+import type { LaunchSelection } from "./state";
 
 /**
  * Player / pawn model.
@@ -29,6 +30,12 @@ export interface Player {
   power: number;
   /** This player's aim selection. */
   aim: AimState;
+  /**
+   * The launch committed for the round being resolved (set when the
+   * round's movements begin, cleared when a new aiming round opens or the
+   * match resets). See PawnState.lastLaunch for the reveal contract.
+   */
+  lastLaunch: LaunchSelection | null;
 }
 
 export interface PlayerInput {
@@ -50,6 +57,7 @@ export function createPlayer(input: PlayerInput): Player {
     eliminated: false,
     power: CONFIG.power.default,
     aim: createAimState(),
+    lastLaunch: null,
   };
 }
 

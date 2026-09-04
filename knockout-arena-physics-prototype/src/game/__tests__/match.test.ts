@@ -68,6 +68,7 @@ function pawnAt(
     power: CONFIG.power.default,
     confirmed: false,
     aim: { active: false, direction: { x: 0, y: -1 } },
+    lastLaunch: null,
     position: { x, y },
     velocity: { x: 0, y: 0 },
     angle: 0,

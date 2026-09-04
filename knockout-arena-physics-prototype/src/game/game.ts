@@ -236,6 +236,12 @@ export function createGame(options?: GameOptions): GameHandle {
       const vel = launchVelocity(dir, p.power);
       physics.applyImpulse(body, vel.x, vel.y);
       p.aim.active = false; // the aim was consumed by this launch
+      // THE REVEAL: the committed launch becomes part of the authoritative
+      // state the moment movements begin. Until this exact moment the aim
+      // was private (only its owner's projection carried it); from here on
+      // it is public fact, projected to every viewer for the movement
+      // phase — including a disconnected-but-confirmed player's launch.
+      p.lastLaunch = { direction: { x: dir.x, y: dir.y }, power: p.power };
     }
     round.settleTicks = 0;
     accumulator = 0;
@@ -275,6 +281,12 @@ export function createGame(options?: GameOptions): GameHandle {
       if (p.eliminated) continue;
       confirmed.set(p.id, false);
       p.aim.active = false; // a new round means a fresh aim; power is kept
+    }
+    // The previous round's committed launches stop being revealed the
+    // moment a new aiming round opens — for EVERY pawn (eliminated ones
+    // included): a fresh round must show no stale launch arrows.
+    for (const p of players) {
+      p.lastLaunch = null;
     }
     round.settleTicks = 0;
     setPhase("aiming");
@@ -322,6 +334,13 @@ export function createGame(options?: GameOptions): GameHandle {
             direction: { ...p.aim.direction },
           },
           confirmed: confirmed.get(p.id) ?? false,
+          lastLaunch:
+            p.lastLaunch === null
+              ? null
+              : {
+                  direction: { ...p.lastLaunch.direction },
+                  power: p.lastLaunch.power,
+                },
           position: { ...k.position },
           velocity: {
             x: k.velocity.x,
@@ -399,6 +418,8 @@ export function createGame(options?: GameOptions): GameHandle {
           active: p.aim.active,
           direction: { ...p.aim.direction },
         },
+        // Absent (older serialized states) reads as "no committed launch".
+        lastLaunch: p.lastLaunch ? { ...p.lastLaunch } : null,
       });
       confirmed.set(p.id, p.eliminated ? false : p.confirmed);
     }
@@ -508,6 +529,7 @@ export function createGame(options?: GameOptions): GameHandle {
       p.eliminated = false;
       p.power = CONFIG.power.default;
       p.aim = createAimState();
+      p.lastLaunch = null; // a fresh match reveals nothing
       confirmed.set(p.id, false);
     }
     round.settleTicks = 0;

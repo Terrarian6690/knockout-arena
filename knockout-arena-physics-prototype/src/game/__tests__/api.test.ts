@@ -21,6 +21,7 @@ import type * as EngineApi from "../index";
 /** Every value (runtime) export of the engine entry point, sorted. */
 const EXPECTED_RUNTIME_EXPORTS = [
   "CONFIG",
+  "aimAt",
   "createArena",
   "createGame",
   "deserializeGameState",
@@ -113,6 +114,7 @@ describe("engine public API (src/game/index.ts)", () => {
       EngineApi.GameState,
       EngineApi.PawnState,
       EngineApi.PawnAimState,
+      EngineApi.LaunchSelection,
       EngineApi.GamePhase,
       EngineApi.GameStateSnapshot,
       EngineApi.PawnSnapshot,

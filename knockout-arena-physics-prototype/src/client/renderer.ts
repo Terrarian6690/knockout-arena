@@ -60,6 +60,20 @@ export function render(
     }
   }
 
+  // Reveal: once the round is resolving, every committed launch becomes
+  // public — one arrow per confirmed launcher, drawn under the pawns in
+  // the pawn's own color. Unconfirmed pawns have no launch datum (null),
+  // so they get no arrow — never a guessed one. (The projection already
+  // nulls launches during "aiming"; the phase check is defense-in-depth
+  // for hand-fed snapshots.)
+  if (snapshot.phase !== "aiming") {
+    for (const pawn of snapshot.pawns) {
+      if (pawn.launch) {
+        drawLaunchIndicator(ctx, pawn);
+      }
+    }
+  }
+
   // Draw pawns.
   for (const pawn of snapshot.pawns) {
     drawPawn(ctx, pawn, snapshot);
@@ -166,6 +180,22 @@ function drawPawn(
   }
 }
 
+/**
+ * Colors + emphasis of one indicator shaft. The local live aim uses the
+ * shared amber; a revealed committed launch uses the launching player's
+ * own palette color, slightly stronger (it is now committed fact).
+ */
+interface IndicatorStyle {
+  lineColor: string;
+  arrowColor: string;
+  alpha: number;
+}
+
+/**
+ * The viewer's OWN live aim indicator: dashed shaft + power chevrons +
+ * arrowhead, length ∝ power. Pure presentation of the projection's
+ * aimDirection/power — no trajectory prediction.
+ */
 function drawAimIndicator(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -173,21 +203,61 @@ function drawAimIndicator(
   direction: { x: number; y: number },
   power: number
 ) {
+  drawIndicator(ctx, x, y, direction, power, {
+    lineColor: CONFIG.colors.aimLine,
+    arrowColor: CONFIG.colors.aimArrow,
+    // Higher power → longer, more opaque indicator.
+    alpha: 0.55 + 0.09 * power,
+  });
+}
+
+/**
+ * A REVEALED committed launch, drawn attached to its (moving) pawn in the
+ * player's own color: same geometry as the live aim — direction is the
+ * confirmed launch direction, length ∝ the confirmed power — so a
+ * revealed arrow reads exactly like the aim arrows it is the answer to.
+ */
+function drawLaunchIndicator(
+  ctx: CanvasRenderingContext2D,
+  pawn: GameStateSnapshot["pawns"][number]
+) {
+  drawIndicator(
+    ctx,
+    pawn.position.x,
+    pawn.position.y,
+    pawn.launch!.direction,
+    pawn.launch!.power,
+    {
+      lineColor: playerColor(pawn.colorIndex),
+      arrowColor: playerColor(pawn.colorIndex),
+      alpha: 0.9,
+    }
+  );
+}
+
+/** Shared indicator geometry: dashed shaft, power chevrons, arrowhead. */
+function drawIndicator(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  direction: { x: number; y: number },
+  power: number,
+  style: IndicatorStyle
+) {
   const len = indicatorLength(power) + CONFIG.pawn.radius + 4;
   const tipX = x + direction.x * len;
   const tipY = y + direction.y * len;
   const angle = Math.atan2(direction.y, direction.x);
 
-  // Higher power → longer, more opaque indicator.
   ctx.save();
-  ctx.globalAlpha = 0.55 + 0.09 * power;
+  ctx.globalAlpha = style.alpha;
 
   // Dashed line.
   ctx.setLineDash([8, 7]);
   ctx.beginPath();
   ctx.moveTo(x + direction.x * (CONFIG.pawn.radius + 2), y + direction.y * (CONFIG.pawn.radius + 2));
   ctx.lineTo(tipX, tipY);
-  ctx.strokeStyle = CONFIG.colors.aimLine;
+  ctx.strokeStyle = style.lineColor;
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
   ctx.stroke();
@@ -209,7 +279,7 @@ function drawAimIndicator(
       cx - 7 * Math.cos(angle + 0.45),
       cy - 7 * Math.sin(angle + 0.45)
     );
-    ctx.strokeStyle = CONFIG.colors.aimArrow;
+    ctx.strokeStyle = style.arrowColor;
     ctx.lineWidth = 1.5;
     ctx.stroke();
   }
@@ -227,7 +297,7 @@ function drawAimIndicator(
     tipY - head * Math.sin(angle + Math.PI / 6)
   );
   ctx.closePath();
-  ctx.fillStyle = CONFIG.colors.aimArrow;
+  ctx.fillStyle = style.arrowColor;
   ctx.fill();
   ctx.restore();
 }

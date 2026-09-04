@@ -27,9 +27,19 @@ export interface PawnSnapshot {
   /**
    * Whether this pawn's player has locked in their move for the CURRENT
    * round (meaningful during the aiming phase; always false for
-   * eliminated pawns).
+   * eliminated pawns). Public by design: readiness is everyone's
+   * business, and it reveals NOTHING about the direction or power.
    */
   confirmed: boolean;
+  /**
+   * The launch this pawn COMMITTED for the round being resolved — the
+   * public reveal of a previously private choice. Non-null only while the
+   * round is resolving ("moving") or the match has finished: the
+   * projection hard-nulls it during "aiming", so other players' current
+   * aim/power are structurally never on the wire. Unconfirmed pawns never
+   * carry one (null = no launch arrow — never a guessed one).
+   */
+  launch: { direction: Vec2; power: number } | null;
   /** Whether this pawn belongs to the local player (client projection only). */
   isLocal: boolean;
   /** Color key (index into the player palette). */
