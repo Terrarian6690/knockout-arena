@@ -293,6 +293,8 @@ export const wire = {
     }),
   matchFinished: (winnerId: string | null) =>
     JSON.stringify({ protocolVersion: 1, type: "match_finished", winnerId }),
+  error: (code: string, message = code) =>
+    JSON.stringify({ protocolVersion: 1, type: "error", code, message }),
   /**
    * A snapshot message. `overrides` replaces top-level fields; pawns can be
    * supplied wholesale or per-pawn overrides applied to the defaults by id.

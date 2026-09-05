@@ -265,7 +265,8 @@ function HomeView({
             "mt-6 w-full rounded-xl px-7 py-3 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
             "bg-gradient-to-br from-amber-400 to-orange-600 text-white",
             "hover:from-amber-300 hover:to-orange-500 active:scale-95",
-            "shadow-orange-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+            "shadow-orange-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           )}
         >
           Create Room
@@ -305,7 +306,8 @@ function HomeView({
             className={cn(
               "rounded-xl border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white/80 transition-colors",
               "hover:bg-white/10 active:scale-95",
-              "disabled:cursor-not-allowed disabled:opacity-40"
+              "disabled:cursor-not-allowed disabled:opacity-40",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
             )}
           >
             Join Room
@@ -331,7 +333,7 @@ function HomeView({
         <button
           type="button"
           onClick={onPracticeSolo}
-          className="text-xs font-semibold text-white/40 underline-offset-4 transition-colors hover:text-white/70 hover:underline"
+          className="rounded-sm text-xs font-semibold text-white/40 underline-offset-4 transition-colors hover:text-white/70 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
         >
           Practice solo (local engine)
         </button>
@@ -376,7 +378,7 @@ function ConnectionHint({
       <button
         type="button"
         onClick={onReconnect}
-        className="rounded-xl border border-white/15 bg-white/5 px-5 py-2 text-sm font-semibold text-white/80 transition-colors hover:bg-white/10 active:scale-95"
+        className="rounded-xl border border-white/15 bg-white/5 px-5 py-2 text-sm font-semibold text-white/80 transition-colors hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
       >
         Reconnect
       </button>

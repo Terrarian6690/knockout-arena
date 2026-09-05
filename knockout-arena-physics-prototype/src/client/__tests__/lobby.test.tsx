@@ -85,7 +85,7 @@ describe("lobby initial screen", () => {
     const roomCode = player.client.getState().roomId as string;
     const shownCode = await screen.findByTestId("room-code");
     expect(shownCode).toHaveTextContent(roomCode);
-    expect(screen.getByTestId("local-player-id")).toHaveTextContent("p0");
+    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 1");
     expect(screen.getByTestId("room-state-badge")).toHaveTextContent(
       "Waiting for players"
     );
@@ -117,7 +117,7 @@ describe("lobby initial screen", () => {
     });
     const shownCode = await screen.findByTestId("room-code");
     expect(shownCode).toHaveTextContent(roomCode);
-    expect(screen.getByTestId("local-player-id")).toHaveTextContent("p1");
+    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 2");
   });
 
   it("refuses to send join_room for an empty code (client-side form guard only)", async () => {

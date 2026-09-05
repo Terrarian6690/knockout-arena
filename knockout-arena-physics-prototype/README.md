@@ -353,15 +353,21 @@ client-local assumptions.
 - **Waiting room**: the ROOM CODE — displayed big, with a **Copy Code**
   button that puts it on the clipboard and flashes a short-lived
   "Copied!" (the long internal room id is never shown; players share the
-  code), "you are `pN`" with a Host chip
-  when the server-reported host id equals your server-assigned seat, the
-  seat roster (`n / 4`, empty seats shown as placeholders, mid-match
-  leavers shown as disconnected), the room state badge, and the actions.
-  The **Start Match** button exists only for the server-reported host;
-  while awaiting the server's answer it shows "Starting…". Non-hosts see a
-  waiting note instead — and the server still authorizes the start itself:
-  an `unauthorized` rejection (or any other server error) is displayed as
-  a normal, dismissible error banner, never bypassed or retried silently.
+  code) — plus the **player list**: friendly `Player N` labels (the
+  server's own pawn naming — raw seat ids are never shown), a You chip on
+  the local player, a Host chip on the server-reported host,
+  Connected/Disconnected as text beside a status dot (never color-only),
+  and "Waiting for player…" placeholders for empty seats; the live
+  `n / 4` player count carries an accessible label; then the room state
+  badge and the actions. The **Start Match** button exists only for the
+  server-reported host and is additionally disabled while the room is
+  below the server's 2-player minimum, with a plain "Waiting for another
+  player…" reason (a UX mirror of the server's `not-enough-players`
+  rule); while awaiting the server's answer it shows "Starting…".
+  Non-hosts see a waiting note instead — and the server still authorizes
+  the start itself: an `unauthorized` rejection (or any other server
+  error) is displayed as a normal, dismissible error banner, never
+  bypassed or retried silently.
 - **States**: waiting → starting (local pending feedback only) → playing →
   finished (winner from `match_finished`), plus every connection state and
   a full room (4/4 — a fifth joiner sees the server's `room-full` error).
@@ -372,6 +378,11 @@ client-local assumptions.
   overrides the local view. A dropped connection keeps the room panel (the
   seat is server-reserved) with a connection hint; only a rejected/expired
   recovery clears it.
+- **Accessibility & layout**: every control is a real button/input with
+  a visible keyboard-focus ring (the game screen's own pattern), state
+  is never communicated by color alone (dots carry text + accessible
+  labels, badges carry words), and the single-column card layout holds
+  from narrow windows to desktop widths.
 - **DOM boundary kept**: the lobby renders in jsdom component tests over
   the REAL network client (in-memory socket pairs into the real server
   stack, or scripted sockets for timing-sensitive states) — no real
@@ -938,6 +949,20 @@ every other suite stays headless/node; dev-only deps:
   uppercases while typing and normalizes on submit (`k7 p4` → `K7P4` on
   the wire; Enter included), and malformed codes are an instant local
   error with nothing sent to the server.
+- `lobbyPlayers.test.tsx` — the player list & start-match UX: friendly
+  `Player N` labels with You/Host chips and Connected/Disconnected as
+  text (plus an accessible label on the status dot), "Waiting for
+  player…" empty-seat placeholders, the accessible `n / 4` count, LIVE
+  list updates on join and on leave (roster broadcasts only — no
+  refresh, no polling), a dropped player shown disconnected while the
+  seat stays reserved, the host-only Start button disabled below the
+  server's 2-player minimum with a plain-language reason and armed by a
+  second player seating, the real server starting the match for BOTH
+  clients at once, the "Starting…" pending state with clean recovery
+  from a server rejection (scripted socket: banner shown, button
+  re-armed), non-hosts seeing only the waiting note, and leaving
+  returning the leaver to the home surface while the remaining player's
+  room stays intact.
 - `app.test.tsx` — the real app shell (nothing injected): boots into the
   lobby, fails cleanly when no WebSocket/server exists (Disconnected, no
   crash, actions disabled), switches to the original solo screen and back;

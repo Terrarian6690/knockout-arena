@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RoomState, RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
-import { MAX_SEATS, SeatList } from "./SeatList";
+import { MAX_SEATS, MIN_PLAYERS, SeatList, seatLabel } from "./SeatList";
 
 /**
  * The waiting-room card: room identity, the seat roster and the room-level
@@ -9,12 +9,19 @@ import { MAX_SEATS, SeatList } from "./SeatList";
  * code and your seat from the welcome, the roster/host/room state from the
  * server's room_state broadcasts, the winner from match_finished. The
  * panel never derives any of it locally; even "am I the host" is a
- * comparison of two server-reported ids. The internal room id never
- * appears here — players share the 4-character code.
+ * comparison of two server-reported ids. Seats are shown with friendly
+ * "Player N" labels (the server's own pawn naming); the internal room id
+ * never appears here — players share the 4-character code. The Start
+ * button is additionally disabled below MIN_PLAYERS — a UX mirror of the
+ * server's own `not-enough-players` rule, never a replacement for it.
  */
 
 /** How long "Copied!" stays visible after a successful copy (ms). */
 const COPY_FEEDBACK_MS = 1_600;
+
+/** The app's keyboard-focus ring (same as the game screen's controls). */
+const FOCUS_RING =
+  "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70";
 
 const ROOM_STATE_BADGE: Record<RoomState, { label: string; className: string }> = {
   waiting: {
@@ -65,6 +72,11 @@ export function RoomPanel({
 }: RoomPanelProps) {
   const isHost = hostPlayerId !== null && hostPlayerId === playerId;
   const badge = ROOM_STATE_BADGE[roomState];
+  // UX mirror of the server's start rule (roomManager: MIN_PLAYERS): with
+  // fewer seated players the server would reject the start anyway. The
+  // button stays visible-but-disabled with a reason; the server remains
+  // the authority.
+  const enoughPlayers = roster.length >= MIN_PLAYERS;
 
   // Local, purely visual: whether the code was just copied, plus the timer
   // that reverts the "Copied!" feedback. Cleared on unmount.
@@ -146,7 +158,8 @@ export function RoomPanel({
             data-testid="copy-code"
             className={cn(
               "rounded-xl border border-white/15 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/80 transition-colors",
-              "hover:bg-white/10 active:scale-95"
+              "hover:bg-white/10 active:scale-95",
+              FOCUS_RING
             )}
           >
             Copy Code
@@ -170,9 +183,9 @@ export function RoomPanel({
         <span className="text-white/40">You are</span>
         <span
           data-testid="local-player-id"
-          className="font-mono text-sm font-bold text-white"
+          className="text-sm font-bold text-white"
         >
-          {playerId}
+          {seatLabel(playerId)}
         </span>
         {isHost && (
           <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
@@ -186,7 +199,11 @@ export function RoomPanel({
           <span className="text-[11px] uppercase tracking-widest text-white/40">
             Players
           </span>
-          <span className="text-[11px] tabular-nums text-white/30">
+          <span
+            data-testid="player-count"
+            aria-label={`${roster.length} of ${MAX_SEATS} players`}
+            className="text-[11px] tabular-nums text-white/30"
+          >
             {roster.length} / {MAX_SEATS}
           </span>
         </div>
@@ -204,27 +221,42 @@ export function RoomPanel({
         >
           <div className="text-3xl">🏆</div>
           <p className="mt-1 text-lg font-black text-emerald-300">
-            {winnerId ? `${winnerId} wins!` : "No survivor — total knockout!"}
+            {winnerId
+              ? `${seatLabel(winnerId)} wins!`
+              : "No survivor — total knockout!"}
           </p>
         </div>
       )}
 
       <div className="mt-6 flex flex-col gap-2">
         {isHost && roomState === "waiting" && (
-          <button
-            type="button"
-            onClick={onStart}
-            disabled={startPending || connected === false}
-            data-testid="start-match"
-            className={cn(
-              "rounded-xl px-7 py-3 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
-              "bg-gradient-to-br from-amber-400 to-orange-600 text-white",
-              "hover:from-amber-300 hover:to-orange-500 active:scale-95",
-              "shadow-orange-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+          <>
+            <button
+              type="button"
+              onClick={onStart}
+              disabled={
+                startPending || connected === false || !enoughPlayers
+              }
+              data-testid="start-match"
+              className={cn(
+                "rounded-xl px-7 py-3 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
+                "bg-gradient-to-br from-amber-400 to-orange-600 text-white",
+                "hover:from-amber-300 hover:to-orange-500 active:scale-95",
+                "shadow-orange-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",
+                FOCUS_RING
+              )}
+            >
+              {startPending ? "Starting…" : "Start Match"}
+            </button>
+            {!enoughPlayers && (
+              <p
+                data-testid="waiting-for-players"
+                className="text-center text-xs text-white/35"
+              >
+                Waiting for another player…
+              </p>
             )}
-          >
-            {startPending ? "Starting…" : "Start Match"}
-          </button>
+          </>
         )}
 
         {!isHost && roomState === "waiting" && (
@@ -242,7 +274,8 @@ export function RoomPanel({
           data-testid="leave-room"
           className={cn(
             "rounded-xl border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white/80",
-            "transition-colors hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300 active:scale-95"
+            "transition-colors hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300 active:scale-95",
+            FOCUS_RING
           )}
         >
           Leave Room

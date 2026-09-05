@@ -93,13 +93,16 @@ describe("lobby room screen", () => {
     const p1 = screen.getByTestId("seat-p1");
     expect(within(p1).getByText("You")).toBeInTheDocument();
     expect(within(p1).queryByText("Host")).toBeNull();
-    expect(screen.getByTestId("local-player-id")).toHaveTextContent("p1");
+    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 2");
   });
 
   it("shows the Start Match button only to the server-reported host", async () => {
     const { harness, view, roomId } = await seatedHost();
-    // Host view: the button exists and is enabled.
-    expect(screen.getByTestId("start-match")).toBeEnabled();
+    // Host view: the button exists — disabled while alone (the server's
+    // 2-player minimum, mirrored), armed once a second player seats.
+    expect(screen.getByTestId("start-match")).toBeDisabled();
+    await joinRoom(harness, roomId, { render: false });
+    expect(await screen.findByTestId("start-match")).toBeEnabled();
 
     // Guest view: no start button at all — just the waiting note.
     view.unmount();
@@ -161,7 +164,17 @@ describe("lobby room screen", () => {
     });
     await act(async () => {
       sockets[0].serverOpen();
-      sockets[0].serverMessage(wire.welcome("p0", "r1"));
+      sockets[0].serverMessage(
+        wire.welcome(
+          "p0",
+          "r1",
+          [
+            { playerId: "p0", connected: true },
+            { playerId: "p1", connected: true },
+          ],
+          "p0"
+        )
+      );
     });
 
     fireEvent.click(screen.getByTestId("start-match"));

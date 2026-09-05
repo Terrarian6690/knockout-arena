@@ -29,7 +29,7 @@ export function ErrorBanner({ error, onDismiss }: ErrorBannerProps) {
         type="button"
         onClick={onDismiss}
         aria-label="Dismiss error"
-        className="shrink-0 rounded-lg border border-red-400/20 px-2 py-1 text-xs font-bold text-red-300/70 transition-colors hover:bg-red-500/15 hover:text-red-200"
+        className="shrink-0 rounded-lg border border-red-400/20 px-2 py-1 text-xs font-bold text-red-300/70 transition-colors hover:bg-red-500/15 hover:text-red-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
       >
         ✕
       </button>
