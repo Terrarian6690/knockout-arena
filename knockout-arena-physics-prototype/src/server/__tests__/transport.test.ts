@@ -8,6 +8,7 @@ import {
   type TransportCore,
   type TransportSocket,
 } from "../index";
+import { isValidRoomCode } from "../roomCode";
 
 /**
  * Transport behavior over FAKE sockets — the same connection logic the real
@@ -313,6 +314,48 @@ describe("room operations", () => {
     const roomState = socket.lastOf("room_state")!;
     expect(roomState).toMatchObject({ type: "room_state", roomState: "waiting" });
     expect(server.roomCount()).toBe(1);
+  });
+
+  it("welcome/room_state carry the player-facing room CODE, never the internal id", () => {
+    const { server, core } = newCore();
+    const creator = connect(core);
+    creator.socket.receiveMsg(msg.create);
+
+    const welcome = creator.socket.lastOf("welcome") as { roomId: string };
+    // The wire's roomId field now carries the short, human-friendly code.
+    expect(isValidRoomCode(welcome.roomId)).toBe(true);
+    const room = server.getRoom(welcome.roomId);
+    expect(room).not.toBeNull();
+    const internalId = room!.id;
+    expect(internalId).not.toBe(welcome.roomId);
+
+    // The internal UUID never crosses the wire in any message.
+    for (const raw of creator.socket.sent) {
+      expect(raw).not.toContain(internalId);
+    }
+    // room_state broadcasts use the code too.
+    const roomState = creator.socket.lastOf("room_state") as { roomId: string };
+    expect(roomState.roomId).toBe(welcome.roomId);
+
+    // A second client joins BY CODE over the wire and is welcomed with it.
+    const joiner = connect(core);
+    joiner.socket.receiveMsg(join(welcome.roomId));
+    const joinerWelcome = joiner.socket.lastOf("welcome") as {
+      roomId: string;
+      playerId: string;
+    };
+    expect(joinerWelcome).toMatchObject({
+      roomId: welcome.roomId,
+      playerId: "p1",
+    });
+    // The joiner's welcome carries the code — and the reconnect credential
+    // is a DIFFERENT, opaque string (the code is a locator, not a secret).
+    expect(joinerWelcome.roomId).not.toBe(
+      (joiner.socket.lastOf("welcome") as { reconnectToken: string }).reconnectToken
+    );
+    for (const raw of joiner.socket.sent) {
+      expect(raw).not.toContain(internalId);
+    }
   });
 
   it("join_room assigns p1/p2/p3 and notifies existing members", () => {

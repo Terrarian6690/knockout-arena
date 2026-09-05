@@ -36,7 +36,7 @@ describe("lobby initial screen", () => {
     const join = screen.getByRole("button", { name: "Join Room" });
     expect(create).toBeDisabled();
     expect(join).toBeDisabled();
-    expect(screen.getByLabelText("Room ID")).toBeDisabled();
+    expect(screen.getByLabelText("Room code")).toBeDisabled();
     // A way back in is offered — reconnect goes through the client.
     expect(screen.getByRole("button", { name: "Reconnect" })).toBeDefined();
   });
@@ -81,17 +81,17 @@ describe("lobby initial screen", () => {
     expect(lastSent(pair)).toEqual({ protocolVersion: 1, type: "create_room" });
     expect(pair.clientSent).toHaveLength(1);
 
-    // The room screen shows the SERVER-assigned room id and seat.
-    const roomId = player.client.getState().roomId as string;
-    const shownId = await screen.findByTestId("room-id");
-    expect(shownId).toHaveTextContent(roomId);
+    // The room screen shows the SERVER-assigned room code and seat.
+    const roomCode = player.client.getState().roomId as string;
+    const shownCode = await screen.findByTestId("room-code");
+    expect(shownCode).toHaveTextContent(roomCode);
     expect(screen.getByTestId("local-player-id")).toHaveTextContent("p0");
     expect(screen.getByTestId("room-state-badge")).toHaveTextContent(
       "Waiting for players"
     );
   });
 
-  it("joins a room by id: join_room carries the typed id, seat is server-assigned", async () => {
+  it("joins a room by code: join_room carries the normalized code, seat is server-assigned", async () => {
     const harness = createServerHarness();
     const host = harness.addPlayer();
     const guest = harness.addPlayer();
@@ -101,24 +101,26 @@ describe("lobby initial screen", () => {
     // The host creates a room (no UI needed for the host here).
     await connectPlayer(host);
     await playerAct(() => host.client.createRoom());
-    const roomId = host.client.getState().roomId as string;
+    const roomCode = host.client.getState().roomId as string;
 
-    fireEvent.change(screen.getByLabelText("Room ID"), {
-      target: { value: `  ${roomId}  ` },
+    // Whitespace is tolerated around (and inside) the code — the client
+    // normalizes before sending.
+    fireEvent.change(screen.getByLabelText("Room code"), {
+      target: { value: ` ${roomCode.slice(0, 2)} ${roomCode.slice(2)} ` },
     });
     fireEvent.click(screen.getByRole("button", { name: "Join Room" }));
 
     expect(lastSent(guestPair)).toEqual({
       protocolVersion: 1,
       type: "join_room",
-      roomId,
+      roomId: roomCode,
     });
-    const shownId = await screen.findByTestId("room-id");
-    expect(shownId).toHaveTextContent(roomId);
+    const shownCode = await screen.findByTestId("room-code");
+    expect(shownCode).toHaveTextContent(roomCode);
     expect(screen.getByTestId("local-player-id")).toHaveTextContent("p1");
   });
 
-  it("refuses to send join_room for an empty id (client-side form guard only)", async () => {
+  it("refuses to send join_room for an empty code (client-side form guard only)", async () => {
     const harness = createServerHarness();
     const player = harness.addPlayer();
     renderLobby(player.client);
@@ -126,18 +128,20 @@ describe("lobby initial screen", () => {
 
     expect(screen.getByRole("button", { name: "Join Room" })).toBeDisabled();
     // …and Enter in the input does nothing either.
-    fireEvent.keyDown(screen.getByLabelText("Room ID"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Room code"), { key: "Enter" });
     expect(pair.clientSent).toHaveLength(0);
   });
 
-  it("shows a server error normally: unknown room id, connection stays usable", async () => {
+  it("shows a server error normally: unknown room code, connection stays usable", async () => {
     const harness = createServerHarness();
     const player = harness.addPlayer();
     renderLobby(player.client);
     await connectPlayer(player);
 
-    fireEvent.change(screen.getByLabelText("Room ID"), {
-      target: { value: "no-such-room" },
+    // Well-formed code (so the client's shape guard passes) that no room
+    // answers to: the server's unknown-room verdict is the error shown.
+    fireEvent.change(screen.getByLabelText("Room code"), {
+      target: { value: "ZZ9Z" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Join Room" }));
 

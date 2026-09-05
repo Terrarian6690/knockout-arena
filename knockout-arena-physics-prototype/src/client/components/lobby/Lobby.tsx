@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNetworkClient, useNetworkState } from "../../network/react";
+import { normalizeRoomCode } from "../../network/roomCode";
 import type { ConnectionStatus } from "../../network/types";
 import { cn } from "../../utils/cn";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
@@ -21,8 +22,9 @@ import { MultiplayerGame } from "../game/MultiplayerGame";
  * offers the reconnect affordance.
  *
  * Authority rules these screens live by:
- *   - every room fact (room id, your seat, host, roster, room state, winner)
- *     is displayed exactly as the server reported it — never inferred;
+ *   - every room fact (room code, your seat, host, roster, room state,
+ *     winner) is displayed exactly as the server reported it — never
+ *     inferred;
  *   - the Start Match button is shown only when the server-reported host id
  *     equals this client's server-assigned seat id; the server still
  *     authorizes the start itself and an `unauthorized` rejection is shown
@@ -40,7 +42,9 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
   const client = useNetworkClient();
   const state = useNetworkState();
 
-  const [joinId, setJoinId] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  /** Local, purely visual: the join input's shape validation error. */
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [leftRoom, setLeftRoom] = useState(false);
   const [startPending, setStartPending] = useState(false);
   const [dismissedError, setDismissedError] = useState(false);
@@ -91,9 +95,23 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     client.createRoom();
   };
 
+  const handleJoinCodeChange = (value: string) => {
+    // Uppercased as the player types (codes are uppercase); whitespace and
+    // shape are normalized at submit time, so pasting "k7 p4" still works.
+    setJoinCode(value.toUpperCase());
+    setJoinError(null);
+  };
+
   const handleJoin = () => {
-    const id = joinId.trim();
-    if (id.length > 0) client.joinRoom(id);
+    const code = normalizeRoomCode(joinCode);
+    if (code === null) {
+      setJoinError(
+        "Room codes are 4 characters: letters and digits, but not I, O, 0 or 1."
+      );
+      return;
+    }
+    setJoinError(null);
+    client.joinRoom(code);
   };
 
   const handleLeave = () => {
@@ -149,7 +167,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               />
             )}
             <RoomPanel
-              roomId={state.roomId as string}
+              roomCode={state.roomId as string}
               playerId={state.playerId as string}
               hostPlayerId={state.hostPlayerId}
               roomState={state.roomState ?? "waiting"}
@@ -172,8 +190,9 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
           <HomeView
             status={state.status}
             reconnectAttempt={state.reconnectAttempt}
-            joinId={joinId}
-            onJoinIdChange={setJoinId}
+            joinCode={joinCode}
+            joinError={joinError}
+            onJoinCodeChange={handleJoinCodeChange}
             onCreate={handleCreate}
             onJoin={handleJoin}
             onReconnect={handleReconnect}
@@ -196,8 +215,10 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
 interface HomeViewProps {
   readonly status: ConnectionStatus;
   readonly reconnectAttempt: number;
-  readonly joinId: string;
-  onJoinIdChange: (value: string) => void;
+  readonly joinCode: string;
+  /** Local shape-validation error, or null. */
+  readonly joinError: string | null;
+  onJoinCodeChange: (value: string) => void;
   onCreate: () => void;
   onJoin: () => void;
   onReconnect: () => void;
@@ -209,8 +230,9 @@ interface HomeViewProps {
 function HomeView({
   status,
   reconnectAttempt,
-  joinId,
-  onJoinIdChange,
+  joinCode,
+  joinError,
+  onJoinCodeChange,
   onCreate,
   onJoin,
   onReconnect,
@@ -219,7 +241,7 @@ function HomeView({
   onDismissError,
 }: HomeViewProps) {
   const connected = status === "connected";
-  const joinDisabled = !connected || joinId.trim().length === 0;
+  const joinDisabled = !connected || joinCode.trim().length === 0;
 
   return (
     <div className="w-full max-w-md">
@@ -232,7 +254,7 @@ function HomeView({
           Enter the arena
         </h2>
         <p className="mt-1 text-center text-sm text-white/40">
-          Create a room and share its ID, or join your friends.
+          Create a room and share its code, or join your friends.
         </p>
 
         <button
@@ -256,24 +278,25 @@ function HomeView({
         </div>
 
         <label
-          htmlFor="room-id-input"
+          htmlFor="room-code-input"
           className="text-[11px] uppercase tracking-widest text-white/40"
         >
-          Room ID
+          Room code
         </label>
         <div className="mt-2 flex gap-2">
           <input
-            id="room-id-input"
-            value={joinId}
-            onChange={(event) => onJoinIdChange(event.target.value)}
+            id="room-code-input"
+            data-testid="room-code-input"
+            value={joinCode}
+            onChange={(event) => onJoinCodeChange(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") onJoin();
             }}
-            placeholder="e.g. 4831"
+            placeholder="e.g. K7P4"
             disabled={!connected}
             autoComplete="off"
             spellCheck={false}
-            className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/5 px-4 py-3 font-mono text-sm text-white outline-none transition-colors placeholder:text-white/25 focus:border-amber-400/50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/5 px-4 py-3 font-mono text-sm uppercase text-white outline-none transition-colors placeholder:text-white/25 focus:border-amber-400/50 disabled:cursor-not-allowed disabled:opacity-40"
           />
           <button
             type="button"
@@ -288,6 +311,14 @@ function HomeView({
             Join Room
           </button>
         </div>
+        {joinError !== null && (
+          <p
+            data-testid="join-error"
+            className="mt-2 text-xs text-red-300"
+          >
+            {joinError}
+          </p>
+        )}
 
         <ConnectionHint
           status={status}

@@ -30,6 +30,8 @@ export const PROTOCOL_VERSION = 1;
 
 export type ClientMessage =
   | { type: "create_room" }
+  // roomId = the player-facing 4-character room code (the manager
+  // normalizes it: lowercase and whitespace are tolerated).
   | { type: "join_room"; roomId: string }
   | { type: "leave_room" }
   | { type: "start_match" }
@@ -153,9 +155,12 @@ function hasOnly(
 
 /**
  * The client's seat assignment + room status after create_room, join_room
- * or a successful reconnect. `reconnectToken` is the seat's recovery
- * credential — it appears ONLY here, in this per-connection message,
- * never in broadcasts, rosters or snapshots.
+ * or a successful reconnect. `roomId` carries the room's player-facing
+ * 4-character CODE (the internal UUID never crosses the wire).
+ * `reconnectToken` is the seat's recovery credential — it appears ONLY
+ * here, in this per-connection message, never in broadcasts, rosters or
+ * snapshots, and it is NOT the room code (codes locate, credentials
+ * authenticate).
  */
 export function welcomeMessage(
   roomId: string,
@@ -175,12 +180,15 @@ export function welcomeMessage(
   });
 }
 
-/** Roster/room-state change, broadcast to the members of a room. */
+/**
+ * Roster/room-state change, broadcast to the members of a room. As on the
+ * welcome, `roomId` is the player-facing room code.
+ */
 export function roomStateMessage(room: RoomInfo): string {
   return JSON.stringify({
     protocolVersion: PROTOCOL_VERSION,
     type: "room_state",
-    roomId: room.id,
+    roomId: room.code,
     roomState: room.state,
     roster: room.seats,
     hostPlayerId: room.hostPlayerId,

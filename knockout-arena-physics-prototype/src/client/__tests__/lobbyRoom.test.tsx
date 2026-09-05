@@ -31,7 +31,7 @@ async function seatedHost() {
   const view = renderLobby(host.client);
   await connectPlayer(host);
   fireEvent.click(screen.getByRole("button", { name: "Create Room" }));
-  expect(await screen.findByTestId("room-id")).toBeInTheDocument();
+  expect(await screen.findByTestId("room-code")).toBeInTheDocument();
   return {
     harness,
     host,
@@ -52,11 +52,11 @@ async function joinRoom(
   if (view === null) {
     await playerAct(() => guest.client.joinRoom(roomId));
   } else {
-    fireEvent.change(screen.getByLabelText("Room ID"), {
+    fireEvent.change(screen.getByLabelText("Room code"), {
       target: { value: roomId },
     });
     fireEvent.click(screen.getByRole("button", { name: "Join Room" }));
-    expect(await screen.findByTestId("room-id")).toHaveTextContent(roomId);
+    expect(await screen.findByTestId("room-code")).toHaveTextContent(roomId);
   }
   return { guest, view, pair };
 }
@@ -223,7 +223,7 @@ describe("lobby room screen", () => {
     const fifth = harness.addPlayer();
     renderLobby(fifth.client);
     await connectPlayer(fifth);
-    fireEvent.change(screen.getByLabelText("Room ID"), {
+    fireEvent.change(screen.getByLabelText("Room code"), {
       target: { value: roomId },
     });
     fireEvent.click(screen.getByRole("button", { name: "Join Room" }));

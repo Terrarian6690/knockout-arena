@@ -129,6 +129,16 @@ connection/session  →  server-assigned playerId  →  room membership
 - `createRoom(session)` seats the creator as `p0`; `joinRoom(session, roomId)`
   takes the **lowest free seat** (`p1`, `p2`, `p3` — max 4, duplicates
   impossible by construction).
+- Every room gets a short **room code**: exactly 4 characters from
+  `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no `I`, `O`, `0`, `1` — easy to read,
+  type and share over voice, e.g. `K7P4`). `joinRoom` accepts the code and
+  normalizes it (lowercase and whitespace tolerated — `k7 p4` joins `K7P4`);
+  the internal room id (a UUID) still resolves for server-internal callers.
+  Codes are crypto-random (never sequential), unique among ACTIVE rooms
+  (collisions retry; a code is reusable only after its room is destroyed),
+  and stable for the room's lifetime. A code is a LOCATOR, never a
+  credential: identity and reconnection stay on the opaque session and
+  reconnect tokens, unchanged.
 - `submitCommand(session, command)` **rebuilds** the command from known intent
   fields only, stamped with the session's seat: whatever `playerId` (or any
   other field) the client sent is dropped at the boundary. Ownership can
@@ -218,14 +228,16 @@ Malformed JSON, arrays, null, primitives, unknown types, wrong versions and
 strict-envelope violations are rejected with a clean `error` message; the
 connection stays alive.
 
-Client → server: `create_room` · `join_room {roomId}` · `leave_room` ·
+Client → server: `create_room` · `join_room {roomId}` (the room CODE —
+  case and whitespace tolerated: `k7 p4` joins `K7P4`) · `leave_room` ·
 `start_match` · `reconnect {token}` (seat recovery — see below) ·
 `command {command}` (the command's `playerId` — and every unknown field — is
 discarded; identity comes from the session's seat).
 
 Server → client: `welcome {roomId, playerId, roomState, roster,
 hostPlayerId, reconnectToken}` · `room_state {roomId, roomState, roster,
-hostPlayerId}` · `snapshot {state}` (the engine's `GameStateSnapshot`,
+hostPlayerId}` (on both, `roomId` is the player-facing 4-character room
+code — the internal room id never crosses the wire) · `snapshot {state}` (the engine's `GameStateSnapshot`,
 projected for the receiving client's own pawn via `projectSnapshot` — the
 same view model the single-player client renders) ·
 `match_finished {winnerId}` · `error {code, message}`.
@@ -288,7 +300,8 @@ simulation or other clients.
   exposes `getState()` + `subscribe()` — the exact `useSyncExternalStore`
   contract — over one immutable `NetworkClientState`:
   `status` (`disconnected / connecting / connected / reconnecting / closed`),
-  `roomId`, `playerId`, `roomState`, `roster`, `hostPlayerId`, the latest
+  `roomId` (the room code as welcomed by the server), `playerId`,
+  `roomState`, `roster`, `hostPlayerId`, the latest
   **server snapshot**, `winnerId`, `lastError` and `reconnectAttempt`.
   Snapshots **replace** the previous state (no merging, no prediction, no
   interpolation, no engine calls, no second `GameState` type — the snapshot
@@ -327,15 +340,20 @@ simulation or other clients.
 `src/client/components/lobby/` is the UI over that client — the app's entry
 screen (`App.tsx` boots into the lobby; the original single-player screen
 lives on as its "practice solo" mode). It is a display layer only: every
-room fact it shows — room id, your seat, the host, the roster, the room
+room fact it shows — room code, your seat, the host, the roster, the room
 state, the winner — is server-reported data; nothing is inferred from
 client-local assumptions.
 
-- **Initial screen**: Create Room, a Room ID input + Join Room, and the
-  connection status badge (disconnected / connecting / connected /
+- **Initial screen**: Create Room, a room-code input (uppercased while
+  typing; whitespace tolerated and stripped on submit — `k7 p4` joins
+  `K7P4`; a malformed code gets an instant local error and nothing is
+  sent) + Join Room, and the connection status badge (disconnected / connecting / connected /
   reconnecting), with a manual Reconnect affordance and a "practice solo"
   escape hatch. Actions are disabled unless the client is connected.
-- **Waiting room**: the room ID (share it), "you are `pN`" with a Host chip
+- **Waiting room**: the ROOM CODE — displayed big, with a **Copy Code**
+  button that puts it on the clipboard and flashes a short-lived
+  "Copied!" (the long internal room id is never shown; players share the
+  code), "you are `pN`" with a Host chip
   when the server-reported host id equals your server-assigned seat, the
   seat roster (`n / 4`, empty seats shown as placeholders, mid-match
   leavers shown as disconnected), the room state badge, and the actions.
@@ -623,8 +641,11 @@ engine's GameHost — see `scripts/smoke-server.ts`) on one port, so the
 browser's default same-origin server URL just works. Then:
 
 1. Open `http://localhost:4173` in two browser windows (A and B).
-2. A: **Create Room** → the room ID is shown.
-3. B: type that room ID → **Join Room**.
+2. A: **Create Room** → a 4-character ROOM CODE is shown (e.g. `K7P4`)
+   next to a **Copy Code** button.
+3. B: type that code → **Join Room** (lowercase and stray spaces are
+   fine: `k7 p4` joins `K7P4`; a malformed code gets an instant local
+   error and is never sent).
 4. Both windows show the same roster (A is `p0` + Host, B is `p1`).
 5. A: **Start Match** → both windows switch to the multiplayer game screen.
 6. BOTH windows (simultaneous round): move the mouse over the arena →
@@ -783,12 +804,27 @@ The **server** has its own suites in `src/server/__tests__/`:
   an unconfirmed disconnected player does not move), independent
   simultaneous rooms, and
   the `onRoomState` broadcast hook.
+- `roomCodes.test.ts` — short room codes: the helper contracts (exactly 4
+  characters from the unambiguous alphabet, case/whitespace normalization,
+  bounded collision retry), generation through the real facade
+  (well-formed and active-unique codes, deterministic collision retry and
+  loud exhaustion via the injectable factory with no partial room left
+  behind, no sequential first-codes), joining by code (exact, every
+  case/whitespace variant, internal-id compat, malformed and unknown
+  codes indistinguishably `unknown-room`, the normal room rules — full
+  and playing — unchanged for code joins), lifecycle (stable across joins
+  and match start, released for reuse once the room is destroyed, a
+  released code stops resolving), and reconnect UNCHANGED (the opaque
+  credential — not the code — recovers the same seat; presenting the code
+  as a credential fails like any other wrong credential).
 - `transport.test.ts` — the wire protocol and connection logic over FAKE
   sockets (the same `createTransportCore` the real server runs):
   connection/session lifecycle and idempotent cleanup, full protocol
   validation (versions, malformed JSON/arrays/null/primitives, unknown
   types, strict envelopes), room operations, seat assignment and forged
-  playerIds, command routing with engine rejections passed through,
+  playerIds, the welcome/room_state carrying the player-facing room CODE
+  (a join by it works; the internal id never appears on the wire), command
+  routing with engine rejections passed through,
   viewer-projected snapshot broadcasts (room-isolated), host-only start
   authorization, disconnect handling (a drop RESERVES the seat — reported
   disconnected, room alive — while a force-close releases it; a mid-flight
@@ -879,8 +915,9 @@ every other suite stays headless/node; dev-only deps:
 - `lobby.test.tsx` — the initial screen: disconnected/connecting/reconnected
   states (badge + disabled actions + manual Reconnect), connected-but-not-
   in-room, create room (exact wire envelope + server-reported room/seat),
-  join room by typed id, empty-id guard, a server error shown normally and
-  dismissibly (unknown room), the practice-solo escape hatch, and an
+  join room by typed code (case/whitespace normalized on the wire),
+  empty-code guard, a server error shown normally and dismissibly
+  (unknown code), the practice-solo escape hatch, and an
   unexpected drop → Reconnecting… → successful reconnect as a fresh
   session.
 - `lobbyRoom.test.tsx` — the waiting room: roster rendering with empty
@@ -893,6 +930,14 @@ every other suite stays headless/node; dev-only deps:
   waiting → playing transition through the real server, the full
   four-player room (4/4, no empty seats, fifth joiner rejected with
   `room-full`), and the finished state with the server-reported winner.
+- `lobbyRoomCode.test.tsx` — the room-code UX: the waiting room shows the
+  prominent ROOM CODE and never the internal room id (no UUID-shaped
+  string anywhere in the DOM), Copy Code copies it and flashes a
+  short-lived "Copied!" (both the async Clipboard API and the legacy
+  execCommand fallback for plain-http previews), the join input
+  uppercases while typing and normalizes on submit (`k7 p4` → `K7P4` on
+  the wire; Enter included), and malformed codes are an instant local
+  error with nothing sent to the server.
 - `app.test.tsx` — the real app shell (nothing injected): boots into the
   lobby, fails cleanly when no WebSocket/server exists (Disconnected, no
   crash, actions disabled), switches to the original solo screen and back;

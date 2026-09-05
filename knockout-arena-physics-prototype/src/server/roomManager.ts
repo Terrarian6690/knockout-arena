@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { CommandRejection, GameCommand, PlayerSpec } from "../game";
 import { createGameHost, type GameHost, type SerializedStateListener } from "./gameHost";
+import { generateUniqueRoomCode, normalizeRoomCode } from "./roomCode";
 
 /**
  * Room/Match manager — the server-side multiplayer layer above GameHost.
@@ -15,6 +16,10 @@ import { createGameHost, type GameHost, type SerializedStateListener } from "./g
  * manager wraps the host. What it does own is room policy:
  *
  *   - seats: 2..4 players, lowest free seat assigned, no duplicates;
+ *   - room codes: a random 4-character player-facing code per room
+ *     (unambiguous alphabet, unique among active rooms, reused only after
+ *     the room is destroyed) — a LOCATOR, never a credential: identity
+ *     and reconnection stay on the opaque session/reconnect tokens;
  *   - lifecycle: waiting → playing → finished (see RoomState);
  *   - identity: commands are re-stamped with the seat's playerId — any
  *     playerId (or unknown field) a client sends is dropped here;
@@ -65,6 +70,13 @@ export interface RoomManagerOptions {
    * (10 000 ms).
    */
   roundDecisionTimeoutMs?: number;
+  /**
+   * Room-code generator, injectable so tests can drive collisions and
+   * reuse deterministically. Must return a candidate 4-character code;
+   * the manager re-asks until the candidate is free among active rooms.
+   * Default: crypto-random codes (see roomCode.ts).
+   */
+  roomCodeFactory?: () => string;
 }
 
 /** One roster seat as seen from outside. */
@@ -77,7 +89,16 @@ export interface RoomSeatInfo {
 
 /** Immutable room snapshot (for transports, tests, observability). */
 export interface RoomInfo {
+  /** Authoritative INTERNAL identifier (a UUID) — never player-facing. */
   readonly id: string;
+  /**
+   * The player-facing 4-character room code (e.g. "K7P4") — what the
+   * lobby displays and what players type to join. Stable for the room's
+   * lifetime, unique among active rooms, released for reuse when the
+   * room is destroyed. NOT a credential: joining still runs the normal
+   * room rules and identity stays on the opaque session/reconnect tokens.
+   */
+  readonly code: string;
   readonly state: RoomState;
   /** Occupied seats in seat order (vacated match seats stay listed). */
   readonly seats: readonly RoomSeatInfo[];
@@ -163,7 +184,10 @@ export type ServerCommandResult =
   | { ok: false; reason: ServerCommandRejection };
 
 interface RoomEntry {
+  /** Authoritative internal identifier (UUID) — the `rooms` map key. */
   id: string;
+  /** Player-facing 4-character code — the `roomsByCode` map key. */
+  code: string;
   state: RoomState;
   /** seat index (0..3) → occupying session token; null = free seat. */
   seats: Array<string | null>;
@@ -187,7 +211,12 @@ interface RoomEntry {
 export interface RoomManager {
   /** Create a room; the creating session takes seat p0. */
   createRoom(token: string): SeatResult;
-  /** Join a waiting room; the session takes the lowest free seat. */
+  /**
+   * Join a waiting room; the session takes the lowest free seat. The
+   * identifier is the player-facing 4-character room CODE (normalized —
+   * lowercase and whitespace tolerated); the internal room UUID is also
+   * accepted for server-internal callers.
+   */
   joinRoom(token: string, roomId: string): SeatResult;
   /** Leave the session's room (frees the seat, or vacates it mid-match). */
   leaveRoom(token: string): LeaveResult;
@@ -203,7 +232,7 @@ export interface RoomManager {
    * reserved (its connection is still live) also restores fine.
    */
   restoreSeat(token: string): RestoreResult;
-  /** Room snapshot by id, or null. */
+  /** Room snapshot by room code (player-facing) or internal id, or null. */
   getRoom(roomId: string): RoomInfo | null;
   /**
    * The CURRENT round decision deadline of the room's match (the host's
@@ -251,11 +280,30 @@ export interface RoomManager {
 
 export function createRoomManager(options?: RoomManagerOptions): RoomManager {
   const rooms = new Map<string, RoomEntry>();
+  /** Player-facing room codes of ACTIVE rooms → their room (join lookup). */
+  const roomsByCode = new Map<string, RoomEntry>();
+  const roomCodeFactory = options?.roomCodeFactory;
 
   // ── internals ─────────────────────────────────────────────────────────
 
   function validKey(value: unknown): value is string {
     return typeof value === "string" && value.length > 0;
+  }
+
+  /**
+   * Resolve a room identifier the way the callers mean it: a player-facing
+   * room CODE (normalized — lowercase and whitespace tolerated) or, for
+   * server-internal/compat callers, the room's internal UUID. The two key
+   * spaces are disjoint (a 4-char code is never a UUID), so both lookups
+   * are safe to try in either order.
+   */
+  function resolveRoom(identifier: string): RoomEntry | null {
+    const code = normalizeRoomCode(identifier);
+    if (code !== null) {
+      const byCode = roomsByCode.get(code);
+      if (byCode !== undefined) return byCode;
+    }
+    return rooms.get(identifier) ?? null;
   }
 
   function findSeat(token: string): { room: RoomEntry; seat: number } | null {
@@ -296,6 +344,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     const hostSeat = room.seats.indexOf(room.hostToken);
     return {
       id: room.id,
+      code: room.code,
       state: room.state,
       seats,
       hostPlayerId: hostSeat === -1 ? null : `p${hostSeat}`,
@@ -313,6 +362,9 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     }
     room.listeners = [];
     rooms.delete(room.id);
+    // Release the player-facing code: it may be reused by a future room
+    // (uniqueness is required among ACTIVE rooms only).
+    roomsByCode.delete(room.code);
   }
 
   /** Cheap phase peek into a serialized state (lifecycle tracking only). */
@@ -330,8 +382,15 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
   function createRoom(token: string): SeatResult {
     if (!validKey(token)) return { ok: false, reason: "unknown-session" };
     if (findSeat(token)) return { ok: false, reason: "already-in-room" };
+    // The player-facing code: random (never sequential/predictable) and
+    // unique among ACTIVE rooms; collisions just trigger another draw.
+    const code = generateUniqueRoomCode(
+      (candidate) => roomsByCode.has(candidate),
+      roomCodeFactory
+    );
     const room: RoomEntry = {
       id: randomUUID(),
+      code,
       state: "waiting",
       seats: [null, null, null, null],
       vacated: new Set(),
@@ -342,14 +401,22 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       listeners: [],
     };
     rooms.set(room.id, room);
+    roomsByCode.set(room.code, room);
     room.seats[0] = token;
     return { ok: true, room: infoOf(room), playerId: "p0" };
   }
 
+  /**
+   * Join a waiting room by its player-facing room CODE. The identifier is
+   * normalized first (lowercase → uppercase, any whitespace stripped —
+   * "k7 p4" joins "K7P4"), and the internal UUID is accepted too for
+   * server-internal/compat callers. A code that is malformed or unknown
+   * is indistinguishably `unknown-room` (no existence leak, clean error).
+   */
   function joinRoom(token: string, roomId: string): SeatResult {
     if (!validKey(token)) return { ok: false, reason: "unknown-session" };
     if (!validKey(roomId)) return { ok: false, reason: "unknown-room" };
-    const room = rooms.get(roomId);
+    const room = resolveRoom(roomId);
     if (!room) return { ok: false, reason: "unknown-room" };
     if (findSeat(token)) return { ok: false, reason: "already-in-room" };
     if (room.state !== "waiting") return { ok: false, reason: "room-playing" };
@@ -448,13 +515,13 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
 
   function getRoom(roomId: string): RoomInfo | null {
     if (!validKey(roomId)) return null;
-    const room = rooms.get(roomId);
+    const room = resolveRoom(roomId);
     return room ? infoOf(room) : null;
   }
 
   function roundDeadline(roomId: string): number | null {
     if (!validKey(roomId)) return null;
-    const room = rooms.get(roomId);
+    const room = resolveRoom(roomId);
     // The host arms/cancels this token before notifying its listeners, so
     // reading it during a broadcast always matches the state being pushed.
     return room?.host ? room.host.roundDeadline() : null;
@@ -469,7 +536,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
 
   function startMatch(roomId: string): StartResult {
     if (!validKey(roomId)) return { ok: false, reason: "unknown-room" };
-    const room = rooms.get(roomId);
+    const room = resolveRoom(roomId);
     if (!room) return { ok: false, reason: "unknown-room" };
     if (room.state !== "waiting") return { ok: false, reason: "already-playing" };
 
@@ -509,7 +576,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
 
   function resetMatch(roomId: string): ResetResult {
     if (!validKey(roomId)) return { ok: false, reason: "unknown-room" };
-    const room = rooms.get(roomId);
+    const room = resolveRoom(roomId);
     if (!room) return { ok: false, reason: "unknown-room" };
     if (!room.host) return { ok: false, reason: "no-match" };
     // The server itself submits the engine's match-level reset command.
@@ -527,7 +594,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
    */
   function resolveRound(roomId: string): ResolveRoundResult {
     if (!validKey(roomId)) return { ok: false, reason: "unknown-room" };
-    const room = rooms.get(roomId);
+    const room = resolveRoom(roomId);
     if (!room) return { ok: false, reason: "unknown-room" };
     if (!room.host) return { ok: false, reason: "no-match" };
     return room.host.submitCommand({ type: "resolveRound" });

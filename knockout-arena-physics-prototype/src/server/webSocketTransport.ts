@@ -203,7 +203,7 @@ export function createTransportCore(
         send(
           state,
           welcomeMessage(
-            result.room.id,
+            result.room.code,
             result.playerId,
             result.room,
             result.reconnectToken
@@ -224,7 +224,7 @@ export function createTransportCore(
         send(
           state,
           welcomeMessage(
-            result.room.id,
+            result.room.code,
             result.playerId,
             result.room,
             result.reconnectToken
@@ -273,7 +273,7 @@ export function createTransportCore(
         send(
           state,
           welcomeMessage(
-            result.room.id,
+            result.room.code,
             result.playerId,
             result.room,
             result.reconnectToken

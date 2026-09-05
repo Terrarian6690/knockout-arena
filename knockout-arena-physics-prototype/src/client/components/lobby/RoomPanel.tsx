@@ -1,15 +1,20 @@
+import { useEffect, useRef, useState } from "react";
 import type { RoomState, RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
 import { MAX_SEATS, SeatList } from "./SeatList";
 
 /**
  * The waiting-room card: room identity, the seat roster and the room-level
- * actions. Everything displayed is server data — the room id and your seat
- * from the welcome, the roster/host/room state from the server's room_state
- * broadcasts, the winner from match_finished. The panel never derives any
- * of it locally; even "am I the host" is a comparison of two
- * server-reported ids.
+ * actions. Everything displayed is server data — the player-facing room
+ * code and your seat from the welcome, the roster/host/room state from the
+ * server's room_state broadcasts, the winner from match_finished. The
+ * panel never derives any of it locally; even "am I the host" is a
+ * comparison of two server-reported ids. The internal room id never
+ * appears here — players share the 4-character code.
  */
+
+/** How long "Copied!" stays visible after a successful copy (ms). */
+const COPY_FEEDBACK_MS = 1_600;
 
 const ROOM_STATE_BADGE: Record<RoomState, { label: string; className: string }> = {
   waiting: {
@@ -27,7 +32,8 @@ const ROOM_STATE_BADGE: Record<RoomState, { label: string; className: string }> 
 };
 
 export interface RoomPanelProps {
-  readonly roomId: string;
+  /** The player-facing 4-character room code (from the welcome). */
+  readonly roomCode: string;
   readonly playerId: string;
   readonly hostPlayerId: string | null;
   readonly roomState: RoomState;
@@ -46,7 +52,7 @@ export interface RoomPanelProps {
 }
 
 export function RoomPanel({
-  roomId,
+  roomCode,
   playerId,
   hostPlayerId,
   roomState,
@@ -59,6 +65,49 @@ export function RoomPanel({
 }: RoomPanelProps) {
   const isHost = hostPlayerId !== null && hostPlayerId === playerId;
   const badge = ROOM_STATE_BADGE[roomState];
+
+  // Local, purely visual: whether the code was just copied, plus the timer
+  // that reverts the "Copied!" feedback. Cleared on unmount.
+  const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    };
+  }, []);
+
+  const flashCopied = () => {
+    setCopied(true);
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => {
+      setCopied(false);
+      copyTimer.current = null;
+    }, COPY_FEEDBACK_MS);
+  };
+
+  const handleCopyCode = async () => {
+    try {
+      // Prefer the async Clipboard API; fall back to the legacy
+      // execCommand path for non-secure contexts (plain http previews).
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(roomCode);
+      } else {
+        const helper = document.createElement("textarea");
+        helper.value = roomCode;
+        helper.setAttribute("readonly", "");
+        helper.style.position = "fixed";
+        helper.style.opacity = "0";
+        document.body.appendChild(helper);
+        helper.select();
+        document.execCommand("copy");
+        document.body.removeChild(helper);
+      }
+      flashCopied();
+    } catch {
+      // Clipboard unavailable/permission denied — the code stays on
+      // screen, big and selectable; showing a false "Copied!" would lie.
+    }
+  };
 
   return (
     <div
@@ -81,15 +130,38 @@ export function RoomPanel({
       </div>
 
       <div className="mt-3 text-center">
+        <div className="text-[11px] uppercase tracking-widest text-white/40">
+          Room code
+        </div>
         <div
-          data-testid="room-id"
-          className="font-mono text-4xl font-black tracking-[0.2em] text-amber-400"
+          data-testid="room-code"
+          className="mt-1 font-mono text-4xl font-black tracking-[0.2em] text-amber-400"
         >
-          {roomId}
+          {roomCode}
+        </div>
+        <div className="mt-2 flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={handleCopyCode}
+            data-testid="copy-code"
+            className={cn(
+              "rounded-xl border border-white/15 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/80 transition-colors",
+              "hover:bg-white/10 active:scale-95"
+            )}
+          >
+            Copy Code
+          </button>
+          <span
+            data-testid="copy-feedback"
+            role="status"
+            className="text-xs font-semibold text-emerald-300"
+          >
+            {copied ? "Copied!" : ""}
+          </span>
         </div>
         {roomState === "waiting" && (
           <p className="mt-1 text-xs text-white/40">
-            Share this ID so others can join
+            Share this code so others can join
           </p>
         )}
       </div>
