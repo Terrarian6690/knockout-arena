@@ -90,6 +90,7 @@ always share the same game state.
 | -------------------------- | ---------------------------------------------------- |
 | `useGame.ts`               | React hook bridging engine → UI + the RAF loop; owns the client's local player id (solo mode). |
 | `renderer.ts`              | Pure canvas drawing from a snapshot.                 |
+| `interpolation.ts`         | Render-only snapshot interpolation (bounded arrival-time buffer + lerp) for smooth remote pawns. No game logic. |
 | `network/`                 | The multiplayer client: protocol v1 parsing/building, WebSocket lifecycle, external-store state, React provider + hooks (see below). |
 | `components/lobby/*`       | The multiplayer lobby: initial screen (create/join), waiting room (roster, host, start/leave). Server-authoritative display only. |
 | `components/game/*`       | The multiplayer game screen: authoritative snapshot rendering (canvas via `renderer.ts`), intent-only controls, round/rail, result overlay. No simulation. |
@@ -419,6 +420,18 @@ viewer-projected snapshots and sends player intents — nothing else.
   no new push, nothing changes (the GameHost broadcasts only on state
   changes, so idle phases cause zero rerenders through the existing
   external store — no second subscription system).
+- **Remote-pawn smoothing** (`interpolation.ts` + `ArenaView.tsx`): while
+  the round resolves, snapshots arrive as discrete pushes, so REMOTE pawns
+  are drawn BETWEEN the two bracketing authoritative snapshots
+  (`renderPosition = lerp(prev, next, alpha)`, the render clock lagging the
+  newest arrival by a fixed 50 ms ≈ three server ticks). RENDER-ONLY: the
+  buffer is bounded (8 entries / 250 ms), stamped with client arrival
+  times (no protocol change), ignores duplicates and late arrivals, and
+  resets on every phase change. The local pawn, the aiming phase, the
+  finished phase, eliminations and any starved timeline snap to the NEWEST
+  authoritative state — no prediction, no extrapolation, and nothing
+  interpolated ever leaves the draw path (a `requestAnimationFrame` loop
+  repaints the canvas between pushes without touching React state).
 - **Aiming input** (`localControl.ts` + `ArenaView.tsx`): during `aiming`
   the mouse aims — the direction is pawn center → cursor, translated from
   screen to world coordinates through the renderer's own transform (CSS
@@ -1065,6 +1078,26 @@ every other suite stays headless/node; dev-only deps:
   none for unconfirmed pawns, none during aiming (even for a crafted
   snapshot carrying launch data), and the final round's arrows staying
   visible on the finished screen.
+- `interpolation.test.ts` — the pure interpolation math and buffer,
+  headless and clock-scripted: alpha at the endpoints/midpoint and clamped
+  outside [0, 1], identical timestamps resolving to the newer snapshot,
+  never-NaN lerps from non-finite endpoints, the buffer staying
+  chronological, dropping exact duplicates at the same timestamp, ignoring
+  late/out-of-order arrivals, staying bounded (8 entries / 250 ms), and
+  resetting on phase changes; the interpolated snapshot placing a remote
+  pawn between two authoritative positions while the LOCAL pawn keeps its
+  newest position, never interpolating across an elimination, and falling
+  back to the newest authoritative state whenever no pair brackets the
+  render time (aiming/finished untouched, starved or stalled timelines).
+- `arenaInterpolation.test.tsx` — the arena's draw path wired end-to-end
+  (renderer module-mocked, `performance.now` scripted, the rAF loop driven
+  as a manual frame queue): a remote pawn rendered halfway between two
+  pushes and the animation loop repainting BETWEEN pushes, the local pawn
+  and aiming snapshots drawn instantly (no interpolation lag), the
+  aiming→moving boundary resetting without a smear, eliminations and the
+  finished verdict snapped to the authoritative positions, a starved
+  timeline falling back to the newest state, and duplicate/late pushes
+  never teleporting a pawn or moving the timeline backwards.
 - `multiplayerIntegration.test.tsx` — the FULL loop with nothing faked:
   real GameServer + GameHost + engine + transport core + the real
   network client + the real React UI, two clients, one match. Proves

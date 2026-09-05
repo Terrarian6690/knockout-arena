@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { createArena, type GameStateSnapshot } from "../../../game";
 import { computeTransform, render } from "../../renderer";
+import {
+  INTERPOLATION_DELAY_MS,
+  SnapshotBuffer,
+  interpolateSnapshot,
+  nowMs,
+} from "../../interpolation";
 import { cn } from "../../utils/cn";
 
 /**
@@ -13,6 +19,17 @@ import { cn } from "../../utils/cn";
  * translated from screen to world coordinates and handed to `onAim` —
  * an INPUT calculation, nothing more: no trajectory, no simulation, no
  * state mutation on this side of the wire.
+ *
+ * Draw smoothing (render-only): authoritative snapshots arrive as discrete
+ * pushes, so remote pawns would visibly step at the network cadence. Each
+ * push is stamped with its arrival time into a bounded buffer, and the
+ * arena draws remote pawn positions BETWEEN the two bracketing snapshots
+ * (see src/client/interpolation.ts). The local pawn, the aiming phase, the
+ * finished phase and every state boundary snap to the newest authoritative
+ * state — no prediction, no extrapolation, and nothing about the smoothed
+ * positions ever leaves the draw path. The buffer and the latest snapshot
+ * live in refs: the animation loop repaints the canvas directly and never
+ * touches React state, so interpolation adds no re-renders.
  */
 interface ArenaViewProps {
   /** The latest authoritative (viewer-projected) snapshot. */
@@ -28,30 +45,100 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
   const arenaRef = useRef(createArena());
   const canvasSize = useCanvasSize(canvasRef, snapshot !== null);
 
-  // Redraw whenever the authoritative state (or the canvas size) changes.
-  useEffect(() => {
+  // --- Render-only interpolation state (refs — the draw loop must never
+  // cause React updates; see the component doc comment). ---
+  const bufferRef = useRef<SnapshotBuffer>(new SnapshotBuffer());
+  const latestRef = useRef<GameStateSnapshot>(snapshot);
+  const canvasSizeRef = useRef(canvasSize);
+  // Last painted frame, so identical frames (static scenes, no motion
+  // between a pair) are skipped instead of repainted every display frame.
+  const lastFrameRef = useRef<{
+    visual: GameStateSnapshot;
+    width: number;
+    height: number;
+    dpr: number;
+  } | null>(null);
+  // Written during render deliberately: the callbacks below read the newest
+  // snapshot/canvas size through refs without depending on them.
+  latestRef.current = snapshot;
+  canvasSizeRef.current = canvasSize;
+
+  /** Paint one frame: the interpolated visual state of the newest snapshot. */
+  const draw = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const latest = latestRef.current;
+    if (!canvas || latest === null) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const w = canvasSize.width;
-    const h = canvasSize.height;
+    const w = canvasSizeRef.current.width;
+    const h = canvasSizeRef.current.height;
     if (w === 0 || h === 0) return;
 
+    let resized = false;
     if (
       canvas.width !== Math.round(w * dpr) ||
       canvas.height !== Math.round(h * dpr)
     ) {
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
+      resized = true;
     }
+
+    const visual = interpolateSnapshot(
+      bufferRef.current,
+      nowMs() - INTERPOLATION_DELAY_MS,
+      latest
+    );
+
+    // Skip the repaint when nothing observable changed since the last one
+    // (same visual object AND same geometry). Resizing the backing store
+    // clears the canvas, so a resize always repaints.
+    const last = lastFrameRef.current;
+    if (
+      !resized &&
+      last !== null &&
+      last.visual === visual &&
+      last.width === w &&
+      last.height === h &&
+      last.dpr === dpr
+    ) {
+      return;
+    }
+    lastFrameRef.current = { visual, width: w, height: h, dpr };
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    render(ctx, snapshot, arenaRef.current, computeTransform(w, h));
-  }, [snapshot, canvasSize]);
+    render(ctx, visual, arenaRef.current, computeTransform(w, h));
+  }, []);
+
+  // Every authoritative push: stamp it into the buffer and reflect it
+  // immediately. This is also the complete draw path wherever
+  // requestAnimationFrame is unavailable (e.g. jsdom) — behavior identical
+  // to a push-driven repaint, just with interpolated positions.
+  useEffect(() => {
+    bufferRef.current.push(snapshot, nowMs());
+    draw();
+  }, [snapshot, draw]);
+
+  // Canvas (re)measured: repaint the current visual state.
+  useEffect(() => {
+    draw();
+  }, [canvasSize, draw]);
+
+  // Display-cadence repaint (browsers): between pushes, advance the
+  // interpolation clock every frame so remote pawns glide instead of
+  // stepping at the network cadence. Pure canvas work — no React state.
+  useEffect(() => {
+    if (typeof requestAnimationFrame !== "function") return;
+    let handle = requestAnimationFrame(frame);
+    function frame() {
+      handle = requestAnimationFrame(frame);
+      draw();
+    }
+    return () => cancelAnimationFrame(handle);
+  }, [draw]);
 
   function worldPoint(event: PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
