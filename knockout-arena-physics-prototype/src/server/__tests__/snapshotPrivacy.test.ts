@@ -194,6 +194,7 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
     expect(server.getRoom(roomId)!.seats[0]).toEqual({
       playerId: "p0",
       connected: false,
+      displayName: null,
     });
 
     // The round resolves while p0 is gone. The committed launch lives in

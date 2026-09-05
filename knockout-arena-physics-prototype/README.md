@@ -139,6 +139,13 @@ connection/session  →  server-assigned playerId  →  room membership
   and stable for the room's lifetime. A code is a LOCATOR, never a
   credential: identity and reconnection stay on the opaque session and
   reconnect tokens, unchanged.
+- `setName(session, name)` sets the session's OWN seat's display name —
+  a purely cosmetic, room-scoped, NON-unique label (validated server
+  side: trimmed, 1–16 Unicode code points, no control characters). Only
+  while the room waits: names freeze into the match (each pawn's engine
+  name) at `startMatch`. The name lives on the seat, so it survives
+  drop/reconnect untouched and dies with a freed lobby seat; it is never
+  part of any credential. Unnamed players fall back to `Player N`.
 - `submitCommand(session, command)` **rebuilds** the command from known intent
   fields only, stamped with the session's seat: whatever `playerId` (or any
   other field) the client sent is dropped at the boundary. Ownership can
@@ -230,14 +237,19 @@ connection stays alive.
 
 Client → server: `create_room` · `join_room {roomId}` (the room CODE —
   case and whitespace tolerated: `k7 p4` joins `K7P4`) · `leave_room` ·
-`start_match` · `reconnect {token}` (seat recovery — see below) ·
+`start_match` · `set_name {name}` (the sender's OWN cosmetic display
+  name; there is no playerId field — the seat is derived from the
+  session, and the server validates: trimmed, 1–16 Unicode code points,
+  no control characters) · `reconnect {token}` (seat recovery — see
+  below) ·
 `command {command}` (the command's `playerId` — and every unknown field — is
 discarded; identity comes from the session's seat).
 
 Server → client: `welcome {roomId, playerId, roomState, roster,
 hostPlayerId, reconnectToken}` · `room_state {roomId, roomState, roster,
 hostPlayerId}` (on both, `roomId` is the player-facing 4-character room
-code — the internal room id never crosses the wire) · `snapshot {state}` (the engine's `GameStateSnapshot`,
+code — the internal room id never crosses the wire; roster seats carry
+an ADDITIVE `displayName` field, emitted only when a player set one) · `snapshot {state}` (the engine's `GameStateSnapshot`,
 projected for the receiving client's own pawn via `projectSnapshot` — the
 same view model the single-player client renders) ·
 `match_finished {winnerId}` · `error {code, message}`.
@@ -353,9 +365,13 @@ client-local assumptions.
 - **Waiting room**: the ROOM CODE — displayed big, with a **Copy Code**
   button that puts it on the clipboard and flashes a short-lived
   "Copied!" (the long internal room id is never shown; players share the
-  code) — plus the **player list**: friendly `Player N` labels (the
-  server's own pawn naming — raw seat ids are never shown), a You chip on
-  the local player, a Host chip on the server-reported host,
+  code) — plus a **YOUR NAME** editor (waiting rooms only): set or
+  change your own display name; the input is labelled and length-bounded,
+  invalid names get an instant local error and nothing is sent, Save (or
+  Enter) sends one `set_name`, and the server's roster push confirms it —
+  and the **player list**: each player's chosen display name, or the
+  seat-derived `Player N` fallback (raw seat ids are never shown), a You
+  chip on the local player, a Host chip on the server-reported host,
   Connected/Disconnected as text beside a status dot (never color-only),
   and "Waiting for player…" placeholders for empty seats; the live
   `n / 4` player count carries an accessible label; then the room state
@@ -654,45 +670,49 @@ browser's default same-origin server URL just works. Then:
 1. Open `http://localhost:4173` in two browser windows (A and B).
 2. A: **Create Room** → a 4-character ROOM CODE is shown (e.g. `K7P4`)
    next to a **Copy Code** button.
-3. B: type that code → **Join Room** (lowercase and stray spaces are
+3. A: type a name under **YOUR NAME** → **Save Name** → the player list
+   renames your seat (1–16 characters; leave it empty to stay
+   "Player 1"). B: do the same after joining.
+4. B: type that code → **Join Room** (lowercase and stray spaces are
    fine: `k7 p4` joins `K7P4`; a malformed code gets an instant local
-   error and is never sent).
-4. Both windows show the same roster (A is `p0` + Host, B is `p1`).
-5. A: **Start Match** → both windows switch to the multiplayer game screen.
-6. BOTH windows (simultaneous round): move the mouse over the arena →
+   error and is never sent) — both windows now show each other's chosen
+   names, live.
+5. Both windows show the same roster (A is `p0` + Host, B is `p1`) — with the chosen names.
+6. A: **Start Match** → both windows switch to the multiplayer game screen.
+7. BOTH windows (simultaneous round): move the mouse over the arena →
    each side's own aim indicator follows (authoritative snapshots echo
    each player's own aim).
-7. A: pick a power (1–5) → the readout follows. B does the same,
+8. A: pick a power (1–5) → the readout follows. B does the same,
    independently — both control bars are live at the same time.
-8. A: **Launch** → A's choice is LOCKED (badge "Ready — waiting for other
+9. A: **Launch** → A's choice is LOCKED (badge "Ready — waiting for other
    players…", A's controls disabled) but nobody moves yet.
-9. B: aim + power + **Launch** → the round resolves: BOTH pawns start
+10. B: aim + power + **Launch** → the round resolves: BOTH pawns start
    moving together in both windows (phase "Round resolving…").
-10. After everything settles a fresh round opens for the survivors
+11. After everything settles a fresh round opens for the survivors
     ("Choose your move — aim!" again; unconfirmed players never moved).
     Let a round go by with NOBODY confirming → the server's round
     decision deadline (10 s by default) resolves it anyway: confirmed
     pawns move, silent ones do not, and the next round opens by itself.
     (Set `ROUND_DECISION_TIMEOUT_MS=3000` before `npm run smoke` to
     watch it sooner.)
-11. Knock a pawn out of the arena → both windows mark it **Out**.
-12. The match finishes → both windows show the same winner overlay.
-13. **Back to lobby** returns to the initial screen on each side.
-14. **Practice solo** still runs the fully local single-player game.
+12. Knock a pawn out of the arena → both windows mark it **Out**.
+13. The match finishes → both windows show the same winner overlay.
+14. **Back to lobby** returns to the initial screen on each side.
+15. **Practice solo** still runs the fully local single-player game.
 
 Seat recovery (optional, uses the same server):
 
-15. A and B reach a running match (steps 1–5, a few rounds in).
-16. In window B, close the TAB (or kill the network) → A's roster shows
+16. A and B reach a running match (steps 1–6, a few rounds in).
+17. In window B, close the TAB (or kill the network) → A's roster shows
     B **disconnected**; B's screen (if only the socket died) keeps the
     match under a "Connection lost — retrying" banner.
-17. Reopen the page (or restore the network) → B reconnects
+18. Reopen the page (or restore the network) → B reconnects
     automatically with its credential and lands back in the SAME seat,
     same match, same round — the roster shows B connected again and
     B's controls work right away (rounds are open to every alive player).
     A previously-confirmed move even survives the disconnect: it still
     executes when the round resolves. No new player appears.
-18. To watch the expiry path instead: set `RECONNECT_RESERVATION_MS=5000`
+19. To watch the expiry path instead: set `RECONNECT_RESERVATION_MS=5000`
     before `npm run smoke`, drop B, and wait >5 s before reconnecting —
     the credential is then rejected (`invalid-reconnect`), B returns to
     the lobby home, and B's old seat is claimable per the normal rules.
@@ -828,6 +848,21 @@ The **server** has its own suites in `src/server/__tests__/`:
   released code stops resolving), and reconnect UNCHANGED (the opaque
   credential — not the code — recovers the same seat; presenting the code
   as a credential fails like any other wrong credential).
+- `displayName.test.ts` — player display names: the validation contract
+  (1–16 Unicode CODE POINTS after trimming — emoji count as one — no
+  control characters, Unicode letters/numbers/punctuation fine,
+  empty-after-trim rejected), identity at the facade (a caller can only
+  name their OWN seat; names are not unique), clean `invalid-name` /
+  `not-in-room` / `room-playing` rejections, chosen names becoming the
+  engine's pawn names at startMatch with unnamed players keeping the
+  `Player N` fallback, survival across drop/reconnect (same seat, same
+  name, the credential never contains it), no name inheritance when a
+  lobby seat is freed, and the wire behavior through the real transport
+  core: the roster broadcast carrying `displayName` ADDITIVELY (absent
+  key when unset), a forged `playerId` being a strict-envelope
+  `malformed-payload`, shape errors (`malformed-payload`) vs semantic
+  errors (`invalid-name`) both leaving the connection usable, and no
+  credential material ever riding along in roster broadcasts.
 - `transport.test.ts` — the wire protocol and connection logic over FAKE
   sockets (the same `createTransportCore` the real server runs):
   connection/session lifecycle and idempotent cleanup, full protocol
@@ -963,6 +998,18 @@ every other suite stays headless/node; dev-only deps:
   re-armed), non-hosts seeing only the waiting note, and leaving
   returning the leaver to the home surface while the remaining player's
   room stays intact.
+- `lobbyNames.test.tsx` — the display-name editor: accessible rendering
+  (label, bounded input, Save button, fallback hint), one trimmed
+  `set_name` on Save or Enter with the own seat renaming from the
+  server's roster push (You/Host chips intact), local validation (the
+  Save button refusing whitespace-only input; oversize/tab/control
+  characters getting an explicit error) with nothing ever sent, the
+  editor disappearing once the match starts (names are frozen into it),
+  remote players' names appearing live (and renaming live, exact-text
+  checked), unnamed players keeping the `Player N` fallback, Unicode
+  names round-tripping through the real stack, and the name surviving an
+  unexpected drop + reconnect (same seat, same name, input restored from
+  the server's roster — the name lives on the seat, never locally).
 - `app.test.tsx` — the real app shell (nothing injected): boots into the
   lobby, fails cleanly when no WebSocket/server exists (Disconnected, no
   crash, actions disabled), switches to the original solo screen and back;

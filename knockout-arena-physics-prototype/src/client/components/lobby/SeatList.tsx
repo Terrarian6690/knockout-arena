@@ -3,9 +3,11 @@ import { cn } from "../../utils/cn";
 
 /**
  * The room's seat list. Everything shown here comes from the server's
- * roster (seat order, who is host, who is connected, who left); the only
- * client-side input is which playerId is "you" — itself server-assigned
- * in the welcome.
+ * roster (seat order, names, who is host, who is connected, who left);
+ * the only client-side input is which playerId is "you" — itself
+ * server-assigned in the welcome. Each seat shows the player's chosen
+ * display name when they set one, and the seat-derived "Player N"
+ * fallback otherwise.
  *
  * MAX_SEATS mirrors the server's room capacity and MIN_PLAYERS its start
  * rule (both UX mirrors only — the roster stays authoritative and the
@@ -64,7 +66,7 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
               )}
             />
             <span className="text-sm font-bold text-white">
-              {seatLabel(seat.playerId)}
+              {seat.displayName ?? seatLabel(seat.playerId)}
             </span>
             {seat.playerId === selfPlayerId && <YouChip />}
             {seat.playerId === hostPlayerId && <HostChip />}

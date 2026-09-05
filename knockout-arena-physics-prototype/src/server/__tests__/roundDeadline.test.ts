@@ -749,8 +749,8 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
 
     const room = server.getRoom(roomId)!;
     expect(room.seats).toEqual([
-      { playerId: "p0", connected: true },
-      { playerId: "p1", connected: false }, // still just disconnected
+      { playerId: "p0", connected: true, displayName: null },
+      { playerId: "p1", connected: false, displayName: null }, // still just disconnected
     ]);
     const latest = events[events.length - 1].state;
     const p0 = latest.pawns.find((p) => p.id === "p0")!;
@@ -792,6 +792,7 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
     expect(server.getRoom(roomId)!.seats[1]).toEqual({
       playerId: "p1",
       connected: false,
+      displayName: null,
     });
   }, 15000);
 
@@ -811,6 +812,7 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
     expect(server.getRoom(roomId)!.seats[1]).toEqual({
       playerId: "p1",
       connected: true,
+      displayName: null,
     });
 
     // If reconnect had reset the deadline, the round would resolve at

@@ -176,6 +176,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               startPending={startPending}
               connected={state.status === "connected"}
               onStart={handleStart}
+              onSetName={(name) => client.setName(name)}
               onLeave={handleLeave}
             />
             {/* The seat is server-reserved while the client reconnects —

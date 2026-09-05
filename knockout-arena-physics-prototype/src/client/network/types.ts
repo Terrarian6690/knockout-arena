@@ -31,6 +31,12 @@ export type RoomState = "waiting" | "playing" | "finished";
 export interface RosterEntry {
   readonly playerId: string;
   readonly connected: boolean;
+  /**
+   * The player's chosen display name, or null when they never set one
+   * (also when an older server omits the field) — the UI then falls
+   * back to the seat-derived "Player N". Purely cosmetic.
+   */
+  readonly displayName: string | null;
 }
 
 /**

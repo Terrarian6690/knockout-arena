@@ -3,6 +3,7 @@ import {
   createRoomManager,
   DEFAULT_RESERVATION_MS,
   type LeaveResult,
+  type NameResult,
   type ResetResult,
   type ResolveRoundResult,
   type RoomInfo,
@@ -136,6 +137,12 @@ export interface GameServer {
   joinRoom(session: unknown, roomId: unknown): SeatedResult;
   /** Leave the session's current room (revokes its credential). */
   leaveRoom(session: unknown): LeaveResult;
+  /**
+   * Set the session's OWN display name (cosmetic; see roomManager).
+   * The seat is derived from the session — a caller can never name
+   * another player, and the server validates the name for real.
+   */
+  setName(session: unknown, name: unknown): NameResult;
   /** Room snapshot by id (null if unknown/malformed). */
   getRoom(roomId: unknown): RoomInfo | null;
   /** Resolve the identity chain: session → { room, assigned playerId }. */
@@ -295,6 +302,13 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     return withCredential(s.token, manager.joinRoom(s.token, id));
   }
 
+  function setName(session: unknown, name: unknown): NameResult {
+    const s = resolve(session);
+    if (!s) return { ok: false, reason: "unknown-session" };
+    if (typeof name !== "string") return { ok: false, reason: "invalid-name" };
+    return manager.setName(s.token, name);
+  }
+
   function leaveRoom(session: unknown): LeaveResult {
     const s = resolve(session);
     if (!s) return { ok: false, reason: "unknown-session" };
@@ -400,6 +414,7 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     createRoom,
     joinRoom,
     leaveRoom,
+    setName,
     getRoom,
     getSeat,
     startMatch,

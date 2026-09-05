@@ -136,6 +136,7 @@ describe("seat recovery through the real UI", () => {
     expect(harness.gameServer.getRoom(roomId)!.seats[0]).toEqual({
       playerId: "p0",
       connected: true,
+      displayName: null,
     });
   }, 15000);
 

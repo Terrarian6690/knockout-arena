@@ -735,8 +735,8 @@ describe("disconnect", () => {
     roomA.sockets[1].close();
     expect(server.getRoom(roomA.roomId)).not.toBeNull();
     expect(server.getRoom(roomA.roomId)!.seats).toEqual([
-      { playerId: "p0", connected: false },
-      { playerId: "p1", connected: false },
+      { playerId: "p0", connected: false, displayName: null },
+      { playerId: "p1", connected: false, displayName: null },
     ]);
     expect(server.sessionCount()).toBe(4); // reservations keep sessions
 

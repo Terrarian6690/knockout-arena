@@ -22,7 +22,7 @@
  * match_finished.
  */
 
-import type { RoomInfo } from "./roomManager";
+import type { RoomInfo, RoomSeatInfo } from "./roomManager";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -36,6 +36,12 @@ export type ClientMessage =
   | { type: "leave_room" }
   | { type: "start_match" }
   | { type: "reconnect"; token: string }
+  // The sender's OWN display name (cosmetic). There is deliberately no
+  // playerId field: the server derives the seat from the authenticated
+  // session, exactly like every other command — a client can never name
+  // another player. Validated server-side (1..16 code points, trimmed,
+  // no control characters).
+  | { type: "set_name"; name: string }
   | { type: "command"; command: unknown };
 
 export type ClientMessageRejection =
@@ -105,6 +111,17 @@ export function parseClientMessage(raw: string): ParsedClientMessage {
       }
       return { ok: false, code: "malformed-payload" };
 
+    case "set_name":
+      // Shape only: a string. Whether the string is a VALID name is the
+      // room manager's semantic call (clean "invalid-name" error).
+      if (
+        hasOnly(envelope, "type", "protocolVersion", "name") &&
+        typeof envelope.name === "string"
+      ) {
+        return { ok: true, message: { type: "set_name", name: envelope.name } };
+      }
+      return { ok: false, code: "malformed-payload" };
+
     case "reconnect":
       // The seat-recovery credential. Opaque server-issued value; the
       // server resolves it to exactly one seat — a credential is never
@@ -162,6 +179,23 @@ function hasOnly(
  * snapshots, and it is NOT the room code (codes locate, credentials
  * authenticate).
  */
+/**
+ * One roster seat on the wire. `displayName` is ADDITIVE (protocol v1):
+ * it is emitted ONLY when the player set one, so older payloads and
+ * payload assertions stay byte-identical when nobody has a name.
+ * Clients fall back to the seat-derived "Player N" when it is absent.
+ */
+function wireSeat(seat: RoomSeatInfo): Record<string, unknown> {
+  if (seat.displayName === null) {
+    return { playerId: seat.playerId, connected: seat.connected };
+  }
+  return {
+    playerId: seat.playerId,
+    connected: seat.connected,
+    displayName: seat.displayName,
+  };
+}
+
 export function welcomeMessage(
   roomId: string,
   playerId: string,
@@ -174,7 +208,7 @@ export function welcomeMessage(
     roomId,
     playerId,
     roomState: room.state,
-    roster: room.seats,
+    roster: room.seats.map(wireSeat),
     hostPlayerId: room.hostPlayerId,
     reconnectToken,
   });
@@ -190,7 +224,7 @@ export function roomStateMessage(room: RoomInfo): string {
     type: "room_state",
     roomId: room.code,
     roomState: room.state,
-    roster: room.seats,
+    roster: room.seats.map(wireSeat),
     hostPlayerId: room.hostPlayerId,
   });
 }

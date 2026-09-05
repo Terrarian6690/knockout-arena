@@ -194,7 +194,9 @@ describe("room creation and joining", () => {
     expect(result.playerId).toBe("p0");
     expect(result.room.id).toBeTruthy();
     expect(result.room.state).toBe("waiting");
-    expect(result.room.seats).toEqual([{ playerId: "p0", connected: true }]);
+    expect(result.room.seats).toEqual([
+      { playerId: "p0", connected: true, displayName: null },
+    ]);
   });
 
   it("assigns p0/p1/p2/p3 exclusively by join order", () => {
@@ -353,8 +355,8 @@ describe("match lifecycle", () => {
     const room = server.getRoom(roomId)!;
     expect(room.state).toBe("playing");
     expect(room.seats).toEqual([
-      { playerId: "p0", connected: true },
-      { playerId: "p1", connected: false }, // vacated, still in the roster
+      { playerId: "p0", connected: true, displayName: null },
+      { playerId: "p1", connected: false, displayName: null }, // vacated, still in the roster
     ]);
 
     // The match continues for the remaining player; the leaver is out.

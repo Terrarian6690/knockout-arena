@@ -202,7 +202,9 @@ describe("browser client ↔ real server (in-memory wire)", () => {
     expect(hostState.playerId).toBe("p0");
     expect(hostState.hostPlayerId).toBe("p0");
     expect(hostState.roomState).toBe("waiting");
-    expect(hostState.roster).toEqual([{ playerId: "p0", connected: true }]);
+    expect(hostState.roster).toEqual([
+      { playerId: "p0", connected: true, displayName: null },
+    ]);
 
     // The guest joins and is seated p1; the host sees the roster grow.
     expect(guest.client.joinRoom(roomId)).toBe(true);

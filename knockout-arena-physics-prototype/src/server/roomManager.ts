@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CommandRejection, GameCommand, PlayerSpec } from "../game";
+import { normalizeDisplayName } from "./displayName";
 import { createGameHost, type GameHost, type SerializedStateListener } from "./gameHost";
 import { generateUniqueRoomCode, normalizeRoomCode } from "./roomCode";
 
@@ -20,6 +21,10 @@ import { generateUniqueRoomCode, normalizeRoomCode } from "./roomCode";
  *     (unambiguous alphabet, unique among active rooms, reused only after
  *     the room is destroyed) — a LOCATOR, never a credential: identity
  *     and reconnection stay on the opaque session/reconnect tokens;
+ *   - display names: an optional, cosmetic, seat-scoped label a player
+ *     may set while the room waits (set_name). Not unique, not an
+ *     identity, never part of any credential; frozen into the match's
+ *     pawn names when the match starts;
  *   - lifecycle: waiting → playing → finished (see RoomState);
  *   - identity: commands are re-stamped with the seat's playerId — any
  *     playerId (or unknown field) a client sends is dropped here;
@@ -85,6 +90,11 @@ export interface RoomSeatInfo {
   readonly playerId: string;
   /** false once that player left after the match started (roster frozen). */
   readonly connected: boolean;
+  /**
+   * The player's chosen display name, or null when they never set one
+   * (clients fall back to the seat-derived "Player N"). Purely cosmetic.
+   */
+  readonly displayName: string | null;
 }
 
 /** Immutable room snapshot (for transports, tests, observability). */
@@ -120,6 +130,18 @@ export type SeatResult =
         | "unknown-room"
         | "room-full" // > MAX_PLAYERS
         | "room-playing"; // roster frozen (playing or finished)
+    };
+
+/** Setting a display name: the seat's own player only, lobby state only. */
+export type NameResult =
+  | { ok: true; room: RoomInfo }
+  | {
+      ok: false;
+      reason:
+        | "unknown-session" // malformed/absent session token
+        | "not-in-room" // the session holds no seat
+        | "invalid-name" // empty/oversized/control characters
+        | "room-playing"; // names are frozen once the match starts
     };
 
 export type LeaveResult =
@@ -191,6 +213,8 @@ interface RoomEntry {
   state: RoomState;
   /** seat index (0..3) → occupying session token; null = free seat. */
   seats: Array<string | null>;
+  /** seat index (0..3) → the seat's display name; null = none (fallback). */
+  names: Array<string | null>;
   /** Seats vacated after the match started — the roster is frozen. */
   vacated: Set<number>;
   /**
@@ -244,6 +268,14 @@ export interface RoomManager {
   roundDeadline(roomId: string): number | null;
   /** Resolve a session token to its room and assigned playerId. */
   resolveSeat(token: string): { room: RoomInfo; playerId: string } | null;
+  /**
+   * Set the calling session's OWN display name (cosmetic, seat-scoped,
+   * not unique). The seat is derived from the session token — callers
+   * cannot name anyone else. Only while the room waits: once the match
+   * starts, names are frozen into it. The updated room is returned for
+   * transports to broadcast.
+   */
+  setName(token: string, name: string): NameResult;
   /**
    * Start the match with the current stable roster (creates the GameHost).
    * Reserved (disconnected) seats count — the roster is occupied seats;
@@ -333,9 +365,19 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       if (room.seats[i] !== null) {
         // Reserved seats stay occupied but report disconnected — the
         // player's connection dropped and their reconnect window is open.
-        seats.push({ playerId: `p${i}`, connected: !room.reserved.has(i) });
+        seats.push({
+          playerId: `p${i}`,
+          connected: !room.reserved.has(i),
+          displayName: room.names[i],
+        });
       } else if (room.vacated.has(i)) {
-        seats.push({ playerId: `p${i}`, connected: false });
+        // Vacated mid-match: the frozen roster keeps the seat (and its
+        // name) listed as disconnected.
+        seats.push({
+          playerId: `p${i}`,
+          connected: false,
+          displayName: room.names[i],
+        });
       }
     }
     // The host is whoever the creating session is seated as right now;
@@ -393,6 +435,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       code,
       state: "waiting",
       seats: [null, null, null, null],
+      names: [null, null, null, null],
       vacated: new Set(),
       reserved: new Map(),
       hostToken: token, // the creator is the room host
@@ -463,6 +506,10 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       // The roster is frozen once the match started: the pawn stays in the
       // match, the seat is simply vacated.
       room.vacated.add(seat);
+    } else {
+      // A freed lobby seat is joinable again: its display name must not
+      // survive into the next occupant.
+      room.names[seat] = null;
     }
     return infoOf(room);
   }
@@ -534,6 +581,21 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     return { room: infoOf(seated.room), playerId: `p${seated.seat}` };
   }
 
+  function setName(token: string, rawName: string): NameResult {
+    if (!validKey(token)) return { ok: false, reason: "unknown-session" };
+    const seated = findSeat(token);
+    if (!seated) return { ok: false, reason: "not-in-room" };
+    if (seated.room.state !== "waiting") {
+      // Names are frozen into the match (pawn names) once it starts;
+      // changing them mid-match would diverge the roster from the field.
+      return { ok: false, reason: "room-playing" };
+    }
+    const name = normalizeDisplayName(rawName);
+    if (name === null) return { ok: false, reason: "invalid-name" };
+    seated.room.names[seated.seat] = name;
+    return { ok: true, room: infoOf(seated.room) };
+  }
+
   function startMatch(roomId: string): StartResult {
     if (!validKey(roomId)) return { ok: false, reason: "unknown-room" };
     const room = resolveRoom(roomId);
@@ -551,9 +613,12 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     // The stable roster: exactly the occupied seats, in seat order. The
     // engine receives server-built PlayerSpecs — clients contributed
     // nothing but their presence.
+    // The stable roster: exactly the occupied seats, in seat order. Each
+    // pawn carries the player's chosen display name, or the seat-derived
+    // fallback — the engine's own name field, nothing new is invented.
     const roster: PlayerSpec[] = occupied.map((i) => ({
       id: `p${i}`,
-      name: `Player ${i + 1}`,
+      name: room.names[i] ?? `Player ${i + 1}`,
     }));
 
     const host = createGameHost({
@@ -708,6 +773,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     resetMatch,
     resolveRound,
     removeEmptyRooms,
+  setName,
     onRoomState,
     roomCount,
     destroy,

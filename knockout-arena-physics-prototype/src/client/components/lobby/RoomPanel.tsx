@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  MAX_DISPLAY_NAME_LENGTH,
+  normalizeDisplayName,
+} from "../../network/displayName";
 import type { RoomState, RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
 import { MAX_SEATS, MIN_PLAYERS, SeatList, seatLabel } from "./SeatList";
@@ -9,9 +13,10 @@ import { MAX_SEATS, MIN_PLAYERS, SeatList, seatLabel } from "./SeatList";
  * code and your seat from the welcome, the roster/host/room state from the
  * server's room_state broadcasts, the winner from match_finished. The
  * panel never derives any of it locally; even "am I the host" is a
- * comparison of two server-reported ids. Seats are shown with friendly
- * "Player N" labels (the server's own pawn naming); the internal room id
- * never appears here — players share the 4-character code. The Start
+ * comparison of two server-reported ids. Seats are shown with each
+ * player's chosen display name, or the friendly "Player N" fallback;
+ * the internal room id never appears here — players share the
+ * 4-character code. The Start
  * button is additionally disabled below MIN_PLAYERS — a UX mirror of the
  * server's own `not-enough-players` rule, never a replacement for it.
  */
@@ -54,6 +59,11 @@ export interface RoomPanelProps {
    * no-op. Optional for direct-use tests; absent means "not disconnected".
    */
   readonly connected?: boolean;
+  /**
+   * Send this player's own display name (the network client's setName —
+   * the server validates and broadcasts; the roster push comes back).
+   */
+  onSetName: (name: string) => boolean;
   onStart: () => void;
   onLeave: () => void;
 }
@@ -67,6 +77,7 @@ export function RoomPanel({
   winnerId,
   startPending,
   connected,
+  onSetName,
   onStart,
   onLeave,
 }: RoomPanelProps) {
@@ -95,6 +106,31 @@ export function RoomPanel({
       setCopied(false);
       copyTimer.current = null;
     }, COPY_FEEDBACK_MS);
+  };
+
+  // ── the local player's display name (own seat only) ────────────────
+  const ownSeat = roster.find((entry) => entry.playerId === playerId) ?? null;
+  const [nameDraft, setNameDraft] = useState(ownSeat?.displayName ?? "");
+  const [nameError, setNameError] = useState<string | null>(null);
+
+  // The own name only ever changes through our own Save (or a reconnect
+  // restoring the seat) — both arrive while the input is not being
+  // edited — so adopting the server's value keeps the input truthful
+  // without clobbering anyone's typing.
+  useEffect(() => {
+    setNameDraft(ownSeat?.displayName ?? "");
+  }, [ownSeat?.displayName]);
+
+  const saveName = () => {
+    const name = normalizeDisplayName(nameDraft);
+    if (name === null) {
+      setNameError(
+        "Names are 1\u201316 characters — letters, digits, punctuation; no line breaks."
+      );
+      return;
+    }
+    setNameError(null);
+    onSetName(name); // the server validates again and broadcasts
   };
 
   const handleCopyCode = async () => {
@@ -194,6 +230,69 @@ export function RoomPanel({
         )}
       </div>
 
+      {roomState === "waiting" && (
+        <div className="mt-3">
+          <label
+            htmlFor="display-name-input"
+            className="text-[11px] uppercase tracking-widest text-white/40"
+          >
+            Your name
+          </label>
+          <div className="mt-2 flex gap-2">
+            <input
+              id="display-name-input"
+              data-testid="display-name-input"
+              value={nameDraft}
+              onChange={(event) => {
+                setNameDraft(event.target.value);
+                setNameError(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") saveName();
+              }}
+              placeholder={seatLabel(playerId)}
+              // maxLength bounds the UTF-16 units, so 2× the code-point
+              // maximum still admits any valid name (surrogate pairs)
+              // while keeping pasted novels out of the field.
+              maxLength={2 * MAX_DISPLAY_NAME_LENGTH}
+              disabled={connected === false}
+              autoComplete="off"
+              spellCheck={false}
+              aria-invalid={nameError !== null}
+              className={cn(
+                "min-w-0 flex-1 rounded-xl border bg-white/5 px-4 py-2 text-sm text-white outline-none transition-colors",
+                "placeholder:text-white/25 focus:border-amber-400/50",
+                "disabled:cursor-not-allowed disabled:opacity-40",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+                nameError !== null ? "border-red-400/50" : "border-white/15"
+              )}
+            />
+            <button
+              type="button"
+              onClick={saveName}
+              disabled={connected === false || nameDraft.trim().length === 0}
+              data-testid="save-name"
+              className={cn(
+                "rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-white/80 transition-colors",
+                "hover:bg-white/10 active:scale-95",
+                "disabled:cursor-not-allowed disabled:opacity-40",
+                FOCUS_RING
+              )}
+            >
+              Save Name
+            </button>
+          </div>
+          {nameError !== null && (
+            <p data-testid="name-error" role="alert" className="mt-2 text-xs text-red-300">
+              {nameError}
+            </p>
+          )}
+          <p className="mt-1 text-[11px] text-white/30">
+            1–16 characters; leave empty to stay {seatLabel(playerId)}.
+          </p>
+        </div>
+      )}
+
       <div className="mt-6">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[11px] uppercase tracking-widest text-white/40">
@@ -222,7 +321,10 @@ export function RoomPanel({
           <div className="text-3xl">🏆</div>
           <p className="mt-1 text-lg font-black text-emerald-300">
             {winnerId
-              ? `${seatLabel(winnerId)} wins!`
+              ? `${
+                  roster.find((entry) => entry.playerId === winnerId)
+                    ?.displayName ?? seatLabel(winnerId)
+                } wins!`
               : "No survivor — total knockout!"}
           </p>
         </div>

@@ -1,6 +1,7 @@
 import {
   commandMessage,
   createRoomMessage,
+  setNameMessage,
   joinRoomMessage,
   leaveRoomMessage,
   parseServerMessage,
@@ -72,6 +73,12 @@ export interface NetworkClient {
   joinRoom(roomId: string): boolean;
   leaveRoom(): boolean;
   startMatch(): boolean;
+  /**
+   * Set THIS client's own display name (cosmetic, lobby-only; the server
+   * derives the seat from the session and validates the name — a local
+   * pre-check is UX, not authority).
+   */
+  setName(name: string): boolean;
   /**
    * Send a player intent. Only the intent fields required by protocol v1
    * are transmitted — any playerId or unknown field is dropped here, and
@@ -328,6 +335,10 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     joinRoom(roomId: string): boolean {
       if (typeof roomId !== "string" || roomId.length === 0) return false;
       return sendRaw(joinRoomMessage(roomId));
+    },
+    setName(name: string): boolean {
+      if (typeof name !== "string" || name.length === 0) return false;
+      return sendRaw(setNameMessage(name));
     },
     leaveRoom(): boolean {
       const sent = sendRaw(leaveRoomMessage());

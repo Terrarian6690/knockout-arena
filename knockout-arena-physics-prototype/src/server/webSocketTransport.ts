@@ -318,6 +318,25 @@ export function createTransportCore(
         return;
       }
 
+      case "set_name": {
+        // Cosmetic display name for the sender's OWN seat. Identity comes
+        // from the session — there is no playerId in the payload to forge,
+        // and the server validates the name for real.
+        const result = gameServer.setName(state.session, message.name);
+        if (!result.ok) {
+          const note =
+            result.reason === "invalid-name"
+              ? "names are 1\u201316 characters (no control characters)"
+              : result.reason === "room-playing"
+                ? "names can only be changed while the room is in the lobby"
+                : undefined;
+          sendError(state, result.reason, note);
+          return;
+        }
+        broadcastRoomState(result.room); // everyone sees the new name
+        return;
+      }
+
       case "command": {
         // Identity comes from the session; the server stamps it and
         // strips whatever the payload claimed.

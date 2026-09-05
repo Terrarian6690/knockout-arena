@@ -256,7 +256,7 @@ describe("reconnect over the wire", () => {
     // the session — the identity lives on in the new connection.
     expect(server.sessionCount()).toBe(1);
     expect(server.getRoom(creator.roomId)!.seats).toEqual([
-      { playerId: "p0", connected: true },
+      { playerId: "p0", connected: true, displayName: null },
     ]);
     // Messages on the dead socket go nowhere.
     const sentBefore = creator.socket.sent.length;
@@ -302,7 +302,7 @@ describe("reconnect over the wire", () => {
     });
     // The seat is untouched by the rejected attempt.
     expect(server.getRoom(creator.roomId)!.seats).toEqual([
-      { playerId: "p0", connected: true },
+      { playerId: "p0", connected: true, displayName: null },
     ]);
   });
 

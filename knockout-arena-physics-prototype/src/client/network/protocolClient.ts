@@ -44,6 +44,14 @@ export function leaveRoomMessage(): string {
   return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "leave_room" });
 }
 
+/**
+ * set_name: the sender's OWN display name. No playerId field exists —
+ * the server derives the seat from the session (see protocol.ts).
+ */
+export function setNameMessage(name: string): string {
+  return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "set_name", name });
+}
+
 export function startMatchMessage(): string {
   return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "start_match" });
 }
@@ -276,7 +284,15 @@ function asRoster(value: unknown): RosterEntry[] | null {
     if (!isNonEmptyString(seat.playerId) || typeof seat.connected !== "boolean") {
       return null;
     }
-    roster.push({ playerId: seat.playerId, connected: seat.connected });
+    // displayName is additive (v1): absent on older servers and for
+    // players who never set one → null → the seat-derived fallback.
+    // When present it must be a string, or the payload is malformed.
+    let displayName: string | null = null;
+    if (seat.displayName !== undefined && seat.displayName !== null) {
+      if (typeof seat.displayName !== "string") return null;
+      displayName = seat.displayName;
+    }
+    roster.push({ playerId: seat.playerId, connected: seat.connected, displayName });
   }
   return roster;
 }

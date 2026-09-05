@@ -464,8 +464,8 @@ describe("server message handling", () => {
     expect(state.playerId).toBe("p1"); // server-assigned, never chosen
     expect(state.roomState).toBe("waiting");
     expect(state.roster).toEqual([
-      { playerId: "p0", connected: true },
-      { playerId: "p1", connected: true },
+      { playerId: "p0", connected: true, displayName: null },
+      { playerId: "p1", connected: true, displayName: null },
     ]);
     expect(state.hostPlayerId).toBe("p0");
   });
@@ -480,7 +480,11 @@ describe("server message handling", () => {
     const state = client.getState();
     expect(state.roomState).toBe("playing");
     expect(state.roster).toHaveLength(2);
-    expect(state.roster[0]).toEqual({ playerId: "p0", connected: false });
+    expect(state.roster[0]).toEqual({
+      playerId: "p0",
+      connected: false,
+      displayName: null,
+    });
   });
 
   it("snapshots replace the previous one (no simulation, no merging)", () => {
