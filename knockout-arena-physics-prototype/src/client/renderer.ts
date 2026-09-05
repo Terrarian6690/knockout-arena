@@ -1,10 +1,18 @@
 import { CONFIG, floorRadius, playerColor, playerStroke, indicatorLength, type Arena, type GameStateSnapshot } from "../game";
+import type { EffectFrame } from "./effects";
 
 /**
  * Rendering module — pure canvas drawing, no game logic.
  *
  * The renderer is given a snapshot of state and draws it. This separation lets
  * us reuse the renderer for spectating, replays, or a server preview later.
+ *
+ * The optional `effects` frame (Task 18) is baked visual-only data produced
+ * by src/client/effects.ts: trails, rings and particles drawn UNDER the
+ * pawns/indicators, plus a persistent winner halo derived from the
+ * AUTHORITATIVE snapshot (finished phase + winnerId — never an effect-side
+ * guess). Callers that pass nothing (e.g. the solo screen) render exactly
+ * as before.
  */
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -35,7 +43,8 @@ export function render(
   ctx: CanvasRenderingContext2D,
   snapshot: GameStateSnapshot,
   arena: Arena,
-  transform: { scale: number; offsetX: number; offsetY: number }
+  transform: { scale: number; offsetX: number; offsetY: number },
+  effects?: EffectFrame
 ) {
   const { scale, offsetX, offsetY } = transform;
 
@@ -50,6 +59,13 @@ export function render(
   ctx.scale(scale, scale);
 
   drawArena(ctx, arena);
+
+  // Visual effects sit between the arena floor and every gameplay element:
+  // trails deepest, then rings, then particles — nothing may obscure the
+  // pawns, aim indicators or launch arrows.
+  if (effects) {
+    drawEffectsBehind(ctx, effects);
+  }
 
   // Draw the viewer's own aim indicator under the pawns (simultaneous
   // rounds: every player sees their own current-round selection).
@@ -79,8 +95,62 @@ export function render(
     drawPawn(ctx, pawn, snapshot);
   }
 
+  // Winner halo: a pure render rule from the AUTHORITATIVE verdict — the
+  // finished phase plus the server's winnerId. Static (no animation, no
+  // extra repaints), subtle, and it cannot appear for a non-winner.
+  if (snapshot.phase === "finished" && snapshot.winnerId) {
+    const winner = snapshot.pawns.find((p) => p.id === snapshot.winnerId);
+    if (winner && !winner.eliminated) {
+      drawWinnerHalo(ctx, winner.position.x, winner.position.y, winner.radius);
+    }
+  }
+
   ctx.restore();
 }
+
+/** Trails → rings → particles, all under the gameplay layer. */
+function drawEffectsBehind(ctx: CanvasRenderingContext2D, effects: EffectFrame) {
+  for (const dot of effects.trails) {
+    ctx.beginPath();
+    ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2);
+    ctx.globalAlpha = dot.alpha;
+    ctx.fillStyle = dot.color;
+    ctx.fill();
+  }
+  for (const ring of effects.rings) {
+    ctx.beginPath();
+    ctx.arc(ring.x, ring.y, ring.r, 0, Math.PI * 2);
+    ctx.globalAlpha = ring.alpha;
+    ctx.strokeStyle = ring.color;
+    ctx.lineWidth = ring.width;
+    ctx.stroke();
+  }
+  for (const dot of effects.particles) {
+    ctx.beginPath();
+    ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2);
+    ctx.globalAlpha = dot.alpha;
+    ctx.fillStyle = dot.color;
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** The champion's crown: two thin accent rings around the winner pawn. */
+function drawWinnerHalo(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  ctx.save();
+  ctx.strokeStyle = "#ffd166";
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, y, r + 6, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 0.25;
+  ctx.beginPath();
+  ctx.arc(x, y, r + 11, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
 
 function drawArena(ctx: CanvasRenderingContext2D, arena: Arena) {
   const cx = arena.centerX;

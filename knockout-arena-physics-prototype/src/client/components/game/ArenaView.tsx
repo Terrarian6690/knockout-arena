@@ -7,6 +7,7 @@ import {
   interpolateSnapshot,
   nowMs,
 } from "../../interpolation";
+import { Vfx, prefersReducedMotion } from "../../effects";
 import { cn } from "../../utils/cn";
 
 /**
@@ -30,6 +31,15 @@ import { cn } from "../../utils/cn";
  * positions ever leaves the draw path. The buffer and the latest snapshot
  * live in refs: the animation loop repaints the canvas directly and never
  * touches React state, so interpolation adds no re-renders.
+ *
+ * Visual effects (render-only, Task 18): every authoritative push is also
+ * diffed against its predecessor by a Vfx instance (launch bursts,
+ * eliminations, winner celebration, round-start pulse, impacts, shake —
+ * see src/client/effects.ts), and the draw path layers the baked effect
+ * frame UNDER the pawns. Screen shake is applied by adding a tiny
+ * decaying offset to the RENDER transform only — the pointer → world
+ * conversion keeps using the unshaken computeTransform, so aiming
+ * coordinates are never affected.
  */
 interface ArenaViewProps {
   /** The latest authoritative (viewer-projected) snapshot. */
@@ -50,6 +60,11 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
   const bufferRef = useRef<SnapshotBuffer>(new SnapshotBuffer());
   const latestRef = useRef<GameStateSnapshot>(snapshot);
   const canvasSizeRef = useRef(canvasSize);
+  // --- Render-only effects state (same discipline: refs, no React state). ---
+  const vfxRef = useRef<Vfx>(
+    new Vfx({ reducedMotion: prefersReducedMotion(), arena: arenaRef.current })
+  );
+  const prevSnapshotRef = useRef<GameStateSnapshot | null>(null);
   // Last painted frame, so identical frames (static scenes, no motion
   // between a pair) are skipped instead of repainted every display frame.
   const lastFrameRef = useRef<{
@@ -63,7 +78,7 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
   latestRef.current = snapshot;
   canvasSizeRef.current = canvasSize;
 
-  /** Paint one frame: the interpolated visual state of the newest snapshot. */
+  /** Paint one frame: the interpolated visual state + render-only effects. */
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const latest = latestRef.current;
@@ -84,11 +99,16 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
       resized = true;
     }
 
+    const now = nowMs();
     const visual = interpolateSnapshot(
       bufferRef.current,
-      nowMs() - INTERPOLATION_DELAY_MS,
+      now - INTERPOLATION_DELAY_MS,
       latest
     );
+
+    // Any effect still animating forces a repaint (fading trails, flying
+    // particles, decaying shake) — static scenes stay at zero extra paints.
+    const effectsActive = vfxRef.current.hasActivity(now);
 
     // Skip the repaint when nothing observable changed since the last one
     // (same visual object AND same geometry). Resizing the backing store
@@ -96,6 +116,7 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
     const last = lastFrameRef.current;
     if (
       !resized &&
+      !effectsActive &&
       last !== null &&
       last.visual === visual &&
       last.width === w &&
@@ -106,19 +127,41 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
     }
     lastFrameRef.current = { visual, width: w, height: h, dpr };
 
+    // Effects: sample trails from the RENDERED positions, then bake the
+    // frame (particle physics advance + expiry happen inside).
+    vfxRef.current.sampleTrails(visual, now);
+    const effects = vfxRef.current.buildFrame(now);
+
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    render(ctx, visual, arenaRef.current, computeTransform(w, h));
+    // Screen shake rides the RENDER transform (a few CSS px, decaying) so
+    // no new canvas calls and no input-path involvement: worldPoint below
+    // keeps using the unshaken computeTransform for aiming.
+    const shake = vfxRef.current.shakeOffset(now);
+    const transform = computeTransform(w, h);
+    const shaken =
+      shake.x !== 0 || shake.y !== 0
+        ? {
+            ...transform,
+            offsetX: transform.offsetX + shake.x,
+            offsetY: transform.offsetY + shake.y,
+          }
+        : transform;
+    render(ctx, visual, arenaRef.current, shaken, effects);
   }, []);
 
-  // Every authoritative push: stamp it into the buffer and reflect it
-  // immediately. This is also the complete draw path wherever
-  // requestAnimationFrame is unavailable (e.g. jsdom) — behavior identical
-  // to a push-driven repaint, just with interpolated positions.
+  // Every authoritative push: stamp it into the buffer, diff it against
+  // the previous push for one-shot effects, and reflect it immediately.
+  // This is also the complete draw path wherever requestAnimationFrame is
+  // unavailable (e.g. jsdom) — behavior identical to a push-driven
+  // repaint, just with interpolated positions.
   useEffect(() => {
-    bufferRef.current.push(snapshot, nowMs());
+    const now = nowMs();
+    bufferRef.current.push(snapshot, now);
+    vfxRef.current.observe(prevSnapshotRef.current, snapshot, now);
+    prevSnapshotRef.current = snapshot;
     draw();
   }, [snapshot, draw]);
 

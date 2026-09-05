@@ -91,6 +91,7 @@ always share the same game state.
 | `useGame.ts`               | React hook bridging engine → UI + the RAF loop; owns the client's local player id (solo mode). |
 | `renderer.ts`              | Pure canvas drawing from a snapshot.                 |
 | `interpolation.ts`         | Render-only snapshot interpolation (bounded arrival-time buffer + lerp) for smooth remote pawns. No game logic. |
+| `effects.ts`               | Render-only game-feel VFX (launch bursts, trails, impacts, eliminations, winner celebration, round-start pulse, bounded shake). Derived from authoritative snapshots; reduced-motion aware. |
 | `network/`                 | The multiplayer client: protocol v1 parsing/building, WebSocket lifecycle, external-store state, React provider + hooks (see below). |
 | `components/lobby/*`       | The multiplayer lobby: initial screen (create/join), waiting room (roster, host, start/leave). Server-authoritative display only. |
 | `components/game/*`       | The multiplayer game screen: authoritative snapshot rendering (canvas via `renderer.ts`), intent-only controls, round/rail, result overlay. No simulation. |
@@ -432,6 +433,25 @@ viewer-projected snapshots and sends player intents — nothing else.
   authoritative state — no prediction, no extrapolation, and nothing
   interpolated ever leaves the draw path (a `requestAnimationFrame` loop
   repaints the canvas between pushes without touching React state).
+- **Game-feel effects** (`effects.ts` + `ArenaView.tsx` + the renderer's
+  optional effects layer): every authoritative push is diffed against its
+  predecessor to spawn one-shot, render-only VFX — a short burst behind
+  each revealed launch (using the committed direction/power, ≤ 200 ms), a
+  bounded fading trail behind moving pawns (≤ 10 points, ~320 ms, sampled
+  from the interpolated positions), a small impact ring + sparks when two
+  alive pawns close into contact while approaching (conservatively
+  derived from authoritative positions — the wire carries no collision
+  events, and resting/sliding contact never fires), an arcade-style
+  elimination burst + expanding ring at the exact authoritative position
+  (~500 ms), a gold winner celebration on the authoritative finished
+  verdict plus a persistent static halo, and a subtle round-start ring
+  from the arena center. Screen shake (≤ 3 px, ≤ 200 ms, eliminations /
+  hard impacts / power-5 launches) rides the RENDER transform only — the
+  pointer → world conversion used for aiming is untouched. Everything is
+  capped (≤ 96 particles globally), expires on its own, is cleared at
+  every round/match boundary, and `prefers-reduced-motion` disables shake
+  and halves particle counts. Nothing feeds back into interpolation,
+  input or the wire.
 - **Aiming input** (`localControl.ts` + `ArenaView.tsx`): during `aiming`
   the mouse aims — the direction is pawn center → cursor, translated from
   screen to world coordinates through the renderer's own transform (CSS
@@ -1098,6 +1118,32 @@ every other suite stays headless/node; dev-only deps:
   finished verdict snapped to the authoritative positions, a starved
   timeline falling back to the newest state, and duplicate/late pushes
   never teleporting a pawn or moving the timeline backwards.
+- `effects.test.ts` — the VFX layer headless with a pinned RNG and a
+  scripted clock: launch bursts firing once per launch (never on
+  re-pushes) behind the revealed direction and expiring in budget, trails
+  appearing/bounded/expiring with stationary pawns adding nothing,
+  impacts firing once per contact crossing (cooldown, no resting-contact
+  repeats, no slow-nudge or near-miss false positives, nothing outside
+  the resolving phase), eliminations once at the authoritative position
+  with the trail dropped and the shake bounded and decaying, the winner
+  celebration only for the authoritative winner after finished (never on
+  a draw or a mid-match leak), round-start once per aiming → moving with
+  nothing crossing round boundaries and resets clearing everything,
+  reduced motion (no shake at all, ~half the particles, celebrations
+  kept), and the global particle cap.
+- `rendererEffects.test.ts` — the renderer's effect layer against a
+  recording context: trails, rings and particles are painted UNDER the
+  pawns, the winner halo appears only for the authoritative finished
+  winner (never mid-match, never for an eliminated verdict), and the
+  four-argument call renders exactly as before.
+- `arenaEffects.test.tsx` — the VFX pipeline wired into the arena
+  component (renderer mocked, clock scripted): launch + round-start
+  effects on the aiming → moving push, trails following the interpolated
+  pawn, the elimination burst at the authoritative position with shake
+  riding the render transform — while the pointer → world aiming
+  coordinates stay EXACTLY canonical — effects cleared at round
+  boundaries, the winner celebration, and reduced motion verified
+  end-to-end (no shake, fewer particles).
 - `multiplayerIntegration.test.tsx` — the FULL loop with nothing faked:
   real GameServer + GameHost + engine + transport core + the real
   network client + the real React UI, two clients, one match. Proves
