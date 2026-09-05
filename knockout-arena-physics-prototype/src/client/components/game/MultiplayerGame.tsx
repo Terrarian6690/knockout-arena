@@ -5,6 +5,8 @@ import { cn } from "../../utils/cn";
 import { ConnectionStatusBadge } from "../lobby/ConnectionStatusBadge";
 import { ErrorBanner } from "../lobby/ErrorBanner";
 import { ArenaView } from "./ArenaView";
+import { AudioControl } from "./AudioControl";
+import { audio } from "../../audio";
 import { MatchControls } from "./MatchControls";
 import { MatchRail } from "./MatchRail";
 import { MatchResultOverlay } from "./MatchResultOverlay";
@@ -137,12 +139,14 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
   };
 
   const handlePowerChange = (power: number) => {
+    audio.unlock(); // a real click: legit moment to enable audio
     if (client.submitCommand({ type: "setPower", power })) {
       setPendingPower(power);
     }
   };
 
   const handleLaunch = () => {
+    audio.unlock();
     client.submitCommand({ type: "confirmLaunch" });
   };
 
@@ -165,6 +169,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <AudioControl />
           {snapshot !== null && (
             <RoundCountdown
               phase={snapshot.phase}

@@ -92,6 +92,7 @@ always share the same game state.
 | `renderer.ts`              | Pure canvas drawing from a snapshot.                 |
 | `interpolation.ts`         | Render-only snapshot interpolation (bounded arrival-time buffer + lerp) for smooth remote pawns. No game logic. |
 | `effects.ts`               | Render-only game-feel VFX (launch bursts, trails, impacts, eliminations, winner celebration, round-start pulse, bounded shake). Derived from authoritative snapshots; reduced-motion aware. |
+| `audio.ts`                 | Client-side sound effects synthesized with the Web Audio API (no files, no library). Consumes the VFX event stream; volume/mute persisted; autoplay-safe. |
 | `network/`                 | The multiplayer client: protocol v1 parsing/building, WebSocket lifecycle, external-store state, React provider + hooks (see below). |
 | `components/lobby/*`       | The multiplayer lobby: initial screen (create/join), waiting room (roster, host, start/leave). Server-authoritative display only. |
 | `components/game/*`       | The multiplayer game screen: authoritative snapshot rendering (canvas via `renderer.ts`), intent-only controls, round/rail, result overlay. No simulation. |
@@ -452,6 +453,23 @@ viewer-projected snapshots and sends player intents — nothing else.
   every round/match boundary, and `prefers-reduced-motion` disables shake
   and halves particle counts. Nothing feeds back into interpolation,
   input or the wire.
+- **Sound effects** (`audio.ts`, Task 19): the same per-push event diff
+  that drives the VFX also feeds a small Web Audio manager — one
+  detector, two consumers. Launches play a short filtered whoosh that
+  gets lower/stronger with the revealed power (simultaneous launches
+  coalesce into one sound), impacts a quick thock scaled by the closing
+  strength, eliminations a soft descending arcade sweep, each new round a
+  rising blip, and the authoritative winner a three-note arpeggio. All
+  tones are synthesized (oscillator + gain + optional lowpass), ≤ 16
+  scheduled at once, click-free envelopes, and cleaned up on end.
+  Autoplay policy respected: audio initializes only from real gestures
+  (pointer press on the arena, the Launch/power buttons, the volume
+  control) and stays silently skipped until the browser allows it. A
+  compact 🔊 toggle + volume slider sits in the game header (native
+  elements, keyboard operable, persisted in localStorage; mute = gain 0,
+  never teardown). Mute/volume-0, a missing AudioContext (headless) and
+  suspended contexts are all silent no-ops — gameplay never waits on
+  audio.
 - **Aiming input** (`localControl.ts` + `ArenaView.tsx`): during `aiming`
   the mouse aims — the direction is pawn center → cursor, translated from
   screen to world coordinates through the renderer's own transform (CSS
@@ -1144,6 +1162,30 @@ every other suite stays headless/node; dev-only deps:
   coordinates stay EXACTLY canonical — effects cleared at round
   boundaries, the winner celebration, and reduced motion verified
   end-to-end (no shake, fewer particles).
+- `audio.test.ts` — the audio manager over a structural mock of the Web
+  Audio API (no real context, no speakers): default settings, volume
+  clamping, master gain applied/muted through the persistent node, zero
+  volume never destroying the system, a distinct sound per event, launch
+  power scaling, simultaneous-launch coalescing, the winner arpeggio
+  budget, click-free envelopes, the ≤ 16 active-sound bound with node
+  cleanup on end, lazy single-context creation, suspended-context and
+  no-context safety, rejected resumes, and settings persistence (plus
+  corrupt storage tolerance).
+- `effectsEvents.test.ts` — the exactly-once event stream the audio
+  layer consumes: round-start + per-launch events, duplicates and aim
+  echoes silent, eliminations/winner once (never on draws, re-pushes or
+  mounts into finished), reconnect mounts replaying nothing, impacts
+  cooldown-gated with their strength, resets clearing history, and fresh
+  events firing normally in the next match.
+- `audioControl.test.tsx` — the in-game sound control: accessible
+  mute button + volume slider (roles/names), toggling without losing the
+  volume, slider updates, unmute-on-slider, the zero-volume state, and
+  localStorage persistence across mounts.
+- `arenaAudio.test.tsx` — the arena wiring with the audio module
+  mocked: the aiming → moving push sending round-start + launch events,
+  duplicates/finished re-pushes never replaying, eliminations and the
+  winner verdict reaching audio exactly once, and a pointer PRESS (never
+  mere motion) unlocking audio.
 - `multiplayerIntegration.test.tsx` — the FULL loop with nothing faked:
   real GameServer + GameHost + engine + transport core + the real
   network client + the real React UI, two clients, one match. Proves

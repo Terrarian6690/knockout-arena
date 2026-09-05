@@ -8,6 +8,7 @@ import {
   nowMs,
 } from "../../interpolation";
 import { Vfx, prefersReducedMotion } from "../../effects";
+import { audio } from "../../audio";
 import { cn } from "../../utils/cn";
 
 /**
@@ -31,6 +32,10 @@ import { cn } from "../../utils/cn";
  * positions ever leaves the draw path. The buffer and the latest snapshot
  * live in refs: the animation loop repaints the canvas directly and never
  * touches React state, so interpolation adds no re-renders.
+ *
+ * Sound (render-only, Task 19): the same per-push VFX event diff feeds
+ * the client-side audio manager — one detector, two consumers. A pointer
+ * press on the canvas doubles as the audio unlock gesture.
  *
  * Visual effects (render-only, Task 18): every authoritative push is also
  * diffed against its predecessor by a Vfx instance (launch bursts,
@@ -160,8 +165,11 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
   useEffect(() => {
     const now = nowMs();
     bufferRef.current.push(snapshot, now);
-    vfxRef.current.observe(prevSnapshotRef.current, snapshot, now);
+    // The single event detector: VFX spawn from these authoritative
+    // transitions, and the same batch feeds the (render-only) sounds.
+    const events = vfxRef.current.observe(prevSnapshotRef.current, snapshot, now);
     prevSnapshotRef.current = snapshot;
+    if (events.length > 0) audio.play(events);
     draw();
   }, [snapshot, draw]);
 
@@ -201,6 +209,9 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
   }
 
   function handlePointer(event: PointerEvent<HTMLCanvasElement>) {
+    // A real pointer press on the arena is a legitimate user gesture —
+    // the moment browsers allow audio to start. Never blocks input.
+    if (event.type === "pointerdown") audio.unlock();
     if (!interactive) return;
     onAim(worldPoint(event));
   }

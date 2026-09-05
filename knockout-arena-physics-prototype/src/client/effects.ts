@@ -101,6 +101,23 @@ export interface EffectFrame {
 
 const EMPTY_FRAME: EffectFrame = { trails: [], rings: [], particles: [] };
 
+/**
+ * A gameplay event detected by diffing two consecutive AUTHORITATIVE
+ * snapshots. The VFX system spawns its visuals from these transitions;
+ * the audio system (src/client/audio.ts) consumes the SAME events — there
+ * is exactly one detector (§ Task 19: no second collision/event system).
+ */
+export type VfxEvent =
+  | { readonly type: "round-start" }
+  /** A pawn's revealed launch (power 1..5) as the round starts resolving. */
+  | { readonly type: "launch"; readonly power: number }
+  /** A supported pawn-vs-pawn impact (strength = closing distance/tick). */
+  | { readonly type: "impact"; readonly strength: number }
+  /** A pawn transitioned to eliminated. */
+  | { readonly type: "elimination" }
+  /** The match finished with an authoritative winner. */
+  | { readonly type: "winner" };
+
 /** A live particle (world units; velocities in units per ms). */
 interface Particle {
   x: number;
@@ -188,12 +205,15 @@ export class Vfx {
   // ── Event detection (once per authoritative push) ──────────────────────
 
   /**
-   * Compare two consecutive AUTHORITATIVE snapshots and spawn one-shot
-   * effects from the observed transitions. `prev === null` (mount) never
-   * spawns — a joining viewer sees the field, not a fireworks show.
+   * Compare two consecutive AUTHORITATIVE snapshots, spawn one-shot
+   * effects from the observed transitions and RETURN the detected events
+   * (consumed by the audio layer — this is the single event source).
+   * `prev === null` (mount/reconnect) never spawns: no fireworks and no
+   * replayed history for a joining viewer.
    */
-  observe(prev: GameStateSnapshot | null, next: GameStateSnapshot, now: number): void {
-    if (prev === null) return;
+  observe(prev: GameStateSnapshot | null, next: GameStateSnapshot, now: number): readonly VfxEvent[] {
+    const events: VfxEvent[] = [];
+    if (prev === null) return events;
     const phaseChanged = prev.phase !== next.phase;
 
     if (phaseChanged) {
@@ -202,12 +222,14 @@ export class Vfx {
       this.clearTransient();
       if (prev.phase === "aiming" && next.phase === "moving") {
         this.roundStart(now);
+        events.push({ type: "round-start" });
         for (const pawn of next.pawns) {
           // Truthy check, mirroring the renderer: wire pawns may omit the
           // launch field entirely (older/looser fixtures) — only a real
           // revealed launch earns a burst.
           if (pawn.launch && !pawn.eliminated) {
             this.launchBurst(pawn, now);
+            events.push({ type: "launch", power: pawn.launch.power });
           }
         }
       }
@@ -220,6 +242,7 @@ export class Vfx {
       if (before === undefined) continue;
       if (!before.eliminated && pawn.eliminated) {
         this.eliminationBurst(pawn, now);
+        events.push({ type: "elimination" });
       } else if (before.eliminated && !pawn.eliminated) {
         // A pawn coming back alive = the match was reset. Drop every
         // transient effect so the new match starts visually clean.
@@ -233,7 +256,10 @@ export class Vfx {
     const winnerId = next.winnerId ?? null; // tolerate an absent field
     if (phaseChanged && next.phase === "finished" && winnerId !== null) {
       const winner = next.pawns.find((p) => p.id === winnerId && !p.eliminated);
-      if (winner !== undefined) this.winnerBurst(winner, now);
+      if (winner !== undefined) {
+        this.winnerBurst(winner, now);
+        events.push({ type: "winner" });
+      }
     }
 
     // Pawn-vs-pawn impacts, derived conservatively from AUTHORITATIVE
@@ -242,12 +268,20 @@ export class Vfx {
     // carries no collision events, so this is a visual approximation —
     // resting/sliding contact (no approach) and slow nudges never fire.
     if (prev.phase === "moving" && next.phase === "moving") {
-      this.detectImpacts(prev, next, now);
+      for (const strength of this.detectImpacts(prev, next, now)) {
+        events.push({ type: "impact", strength });
+      }
     }
+    return events;
   }
 
-  /** Pairwise contact approach test (see observe). */
-  private detectImpacts(prev: GameStateSnapshot, next: GameStateSnapshot, now: number): void {
+  /**
+   * Pairwise contact approach test (see observe). Returns the closing
+   * strength of every impact that fired (the same cooldown/event
+   * semantics the visual effect uses — there is only this one detector).
+   */
+  private detectImpacts(prev: GameStateSnapshot, next: GameStateSnapshot, now: number): number[] {
+    const fired: number[] = [];
     const pawns = next.pawns;
     for (let i = 0; i < pawns.length; i++) {
       for (let j = i + 1; j < pawns.length; j++) {
@@ -277,8 +311,10 @@ export class Vfx {
         if (closing >= VFX.collisionShakeClosing) {
           this.addShake(2, 150, now);
         }
+        fired.push(closing);
       }
     }
+    return fired;
   }
 
   // ── Trail sampling (draw path, from RENDERED positions) ────────────────
