@@ -722,7 +722,7 @@ command (player intent + playerId) → validateCommand → engine.applyCommand
 npm install
 npm run dev       # local dev (boots into the multiplayer lobby; "practice solo" runs the engine locally)
 npm test          # full suite: engine + server + transport + lobby + multiplayer UI (Vitest)
-npm run build     # typecheck + production build (single-file dist/index.html)
+npm run build     # typecheck + production build (client dist/index.html + server dist/server.mjs)
 npm run smoke     # build + serve the app AND a real protocol-v1 game server on one port (manual testing)
 npm start         # the PRODUCTION server (build first): app + /health + protocol v1 + graceful shutdown
 ```
@@ -798,21 +798,38 @@ through the real server, engine and UI), `multiplayerGame.test.tsx`
 `multiplayerReconnect.test.tsx` (the drop/recover/expire flows through
 the real stack and UI).
 
-## Production deployment
+## Deploying Knockout Arena
 
-`npm start` (scripts/start-server.ts → `createHttpGameServer()` in
-`src/server/httpServer.ts`) is the production entrypoint. ONE node:http
-server carries everything: the client bundle (`GET /`), the health probe
-(`GET /health` → `200 {"status":"ok"}`, stateless and room-free — fit for
-load-balancer checks), and the protocol-v1 WebSocket endpoint on the same
-origin. It binds `0.0.0.0` by default so containers and reverse proxies
-work out of the box; restrict with `HOST` where needed.
+**Runtime requirement: Node.js ≥ 20** (see `engines` in package.json —
+the graceful shutdown uses `server.closeAllConnections()`, Node 18.2+).
+The server is a plain Node process with long-lived WebSocket connections
+and in-memory room state — any host that runs a Node process, honors
+`PORT`, keeps WebSockets alive and terminates TLS in front of it works.
+
+`npm start` runs `dist/server.mjs` — the SELF-CONTAINED production
+server bundle that `npm run build` emits next to the client. At runtime
+the process needs only Node and the `ws` package (a production
+dependency); esbuild and every other dev tool are build-time only, so
+`npm start` works even on hosts that prune devDependencies after the
+build phase. (scripts/start-server.ts → `createHttpGameServer()` in
+`src/server/httpServer.ts` is the source behind the bundle.)
+
+ONE node:http server carries everything: the client bundle (`GET /`),
+the health probe (`GET /health` → `200 {"status":"ok"}`, stateless and
+room-free — fit for load-balancer checks), and the protocol-v1 WebSocket
+endpoint on the same origin. It binds `0.0.0.0` by default so containers
+and reverse proxies work out of the box; restrict with `HOST` where
+needed. The BROWSER needs no configuration either: the client derives
+its WebSocket endpoint from the page's own origin — `https://…` pages
+connect via `wss://…` automatically (no hardcoded hosts, no mixed
+content).
 
 ### Local production test
 
 ```bash
 npm ci
-npm run build            # typecheck + the single-file client bundle
+npm run build            # typecheck + client bundle (dist/index.html)
+                         #   + server bundle (dist/server.mjs)
 npm start                # serves http://<HOST>:<PORT>/ + /health + ws
 curl http://localhost:4173/health    # → {"status":"ok"}
 ```
@@ -820,7 +837,9 @@ curl http://localhost:4173/health    # → {"status":"ok"}
 Then open `http://localhost:4173` in two browser windows and play a match
 (the manual smoke test above). The server refuses to start without
 `dist/index.html` and exits non-zero with a clear log line — run the
-build first.
+build first. On a hosting platform the same three commands are the build
+and start phases; set `PORT` (and optionally the limits below) in the
+platform's environment configuration.
 
 ### Environment variables
 

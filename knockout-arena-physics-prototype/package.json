@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && esbuild scripts/start-server.ts --bundle --platform=node --format=esm --external:ws --outfile=dist/server.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "npm run build && esbuild scripts/smoke-server.ts --bundle --platform=node --format=esm --external:ws --outfile=node_modules/.cache/smoke-server.mjs && node node_modules/.cache/smoke-server.mjs",
-    "start": "esbuild scripts/start-server.ts --bundle --platform=node --format=esm --external:ws --outfile=node_modules/.cache/start-server.mjs && node node_modules/.cache/start-server.mjs"
+    "start": "node dist/server.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",
@@ -31,11 +31,15 @@
     "@types/react-dom": "19.2.3",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "5.1.1",
+    "esbuild": "0.27.7",
     "jsdom": "^30.0.1",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
     "vite": "7.3.2",
     "vite-plugin-singlefile": "2.3.0",
     "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
