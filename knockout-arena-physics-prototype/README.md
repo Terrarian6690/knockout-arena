@@ -156,6 +156,29 @@ connection/session  →  server-assigned playerId  →  room membership
 - `reset` is privileged: players submitting it get `unauthorized`; only the
   server path `resetMatch(roomId)` (for the future host/vote policy) resets.
 
+#### Trust boundary (security model)
+
+The UI is never the security boundary; the server enforces every rule.
+The full model, as pinned wire-level by `adversarial.test.ts`:
+
+| Input                  | Trust treatment                                                            |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `playerId` / seat      | NEVER accepted from a client — derived from the session's seat; any forged value in a command payload is dropped at the boundary and the command applies to the sender's own pawn. |
+| host status            | Server-derived (the creating session); `start_match` is authorized server-side — non-hosts get `unauthorized` regardless of what the UI shows. |
+| room id / code         | The 4-char code is a public locator (normalized; unique among active rooms; malformed and unknown codes are indistinguishably `unknown-room`). The internal UUID never crosses the wire. |
+| reconnect credential   | 256-bit server-issued random value; the registry stores only SHA-256 digests; it appears ONLY in the holder's own welcome, resolves to exactly one seat, dies with the seat (leave/expiry/teardown), and never logs. |
+| `resolveRound` / `reset` | Privileged — rejected as `unauthorized` on the player path (and absent as wire types); only the server's deadline/facade paths invoke them. |
+| winner / elimination / phases | Pure server/engine outcomes; forged command types (`setPhase`, `setWinner`, `eliminate`, …) are `invalid-command`. |
+| aim / power            | Client-chosen INTENT only: any finite number survives (directions are normalized to unit vectors; power is rounded and clamped to 1–5); NaN/Infinity/non-numbers are rejected; the choice is private until the round resolves (per-pawn aim/power is structurally absent from other viewers' snapshots — only readiness is public). |
+| display names          | Cosmetic, seat-scoped, server-validated; never an identity, never in credentials. |
+| snapshots              | Per-viewer projections of authoritative state, broadcast only to the same room's members; a slow client is dropped snapshots (backpressure), never the reverse. |
+
+Untrusted input is total-function everywhere: malformed JSON, wrong
+protocol versions, unknown types, strict-envelope violations, hostile
+getters and proxies are all rejected without crashing the connection or
+corrupting room state, and rooms are isolated universes (codes, rosters,
+snapshots, commands and credentials never cross rooms).
+
 #### Room lifecycle (minimal — no matchmaking)
 
 ```
@@ -963,6 +986,28 @@ The **server** has its own suites in `src/server/__tests__/`:
   releasing the seat, the already-in-room guard, strict-envelope
   rejection of malformed reconnect messages, and reserved seats being
   invisible to joiners.
+- `adversarial.test.ts` — the Task-21 security audit as executable wire
+  attacks: identity spoofing (a forged `playerId` lands on the SENDER's
+  own pawn, never the victim's; hostile getters/proxies/null-prototype
+  objects never crash the facade or the connection), room isolation (two
+  live matches — no code, name, credential, snapshot or command effect
+  ever crosses rooms; a room-A credential recovers only room A's seat;
+  destroying room A leaves B fully playable), privileged commands
+  (`resolveRound`/`reset` unauthorized over the wire and unknown as
+  top-level types; `start_match` host-only server-side), wire privacy
+  (per-pawn aim/power structurally absent from other viewers' messages
+  while readiness stays public; each credential appears exactly once —
+  the holder's own welcome; no UUID ever on the wire), malformed-input
+  sweeps (raw garbage, wrong versions, strict-envelope violations,
+  NaN/Infinity/wrong-type/forged-outcome commands — every one rejected
+  with the connection and room state intact), power clamping (0/−99/99/
+  2.7 → the legal integer set) and extreme-aim normalization (1e308 → a
+  finite unit vector), wrong-phase/after-leave/after-finish rejections,
+  reconnect security (43-char base64url 256-bit credentials, all
+  distinct; garbage/foreign credentials uniform `invalid-reconnect`
+  stealing nothing; an expired reservation dead with the seat freed for
+  joiners; post-finish recovery without restarting anything), and
+  lifecycle edges (destroyed-room join, double leave/disconnect).
 
 The **browser network client** has its own suites in
 `src/client/network/__tests__/` (no DOM, no real server needed):
