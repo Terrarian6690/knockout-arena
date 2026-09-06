@@ -90,13 +90,25 @@ const files = serverSourceFiles(serverDir);
 const roomManagementFiles = files.filter(
   (f) => path.basename(f) !== "gameHost.ts"
 );
-/** The transport adapter + wire protocol — the only networked modules. */
+/** The transport adapter + wire protocol — the ws-networked modules. */
 const transportFiles = files.filter((f) =>
   /^(?:webSocketTransport|protocol)\.ts$/.test(path.basename(f))
 );
-/** Gameplay-bearing modules: everything except the transport adapter. */
+/**
+ * The production HTTP edge (httpServer.ts): the ONE server module
+ * allowed to touch node:http — it glues the static client bundle, the
+ * /health probe and the ws upgrade path together. Same family as the
+ * transport adapter: networking-only, no gameplay, no engine.
+ * (GUARD EXTENDED for the production-server milestone: the HTTP edge
+ * joined the networking family; the split itself is unchanged —
+ * gameplay-bearing modules still import no networking at all.)
+ */
+const httpAdapterFiles = files.filter((f) => path.basename(f) === "httpServer.ts");
+/** Gameplay-bearing modules: everything except the networking family. */
 const nonTransportFiles = files.filter(
-  (f) => path.basename(f) !== "webSocketTransport.ts"
+  (f) =>
+    path.basename(f) !== "webSocketTransport.ts" &&
+    path.basename(f) !== "httpServer.ts"
 );
 /** The engine package directory (for the unawareness guard). */
 const gameDir = path.join(path.dirname(serverDir), "game");
@@ -183,7 +195,28 @@ describe("server package boundary", () => {
     }
   );
 
-  it.each(transportFiles.map((f) => path.relative(serverDir, f)))(
+  it.each(httpAdapterFiles.map((f) => path.relative(serverDir, f)))(
+    "http adapter %s uses only node:http/fs/path and plain ws (no TLS/frameworks)",
+    (relFile) => {
+      const source = readFileSync(path.join(serverDir, relFile), "utf8");
+      for (const spec of importSpecifiers(source)) {
+        const allowed =
+          spec === "ws" ||
+          spec === "node:http" ||
+          spec === "node:fs" ||
+          spec === "node:path" ||
+          spec.startsWith("./"); // server-internal APIs (gameServer, log, webSocketTransport)
+        expect(
+          allowed,
+          `${relFile} must not import "${spec}" — the HTTP edge uses ` +
+            `node:http/node:fs/node:path and plain ws only (TLS belongs to ` +
+            `an upstream reverse proxy)`
+        ).toBe(true);
+      }
+    }
+  );
+
+  it.each([...transportFiles, ...httpAdapterFiles].map((f) => path.relative(serverDir, f)))(
     "transport module %s talks only to server APIs (never the engine)",
     (relFile) => {
       const source = readFileSync(path.join(serverDir, relFile), "utf8");

@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke": "npm run build && esbuild scripts/smoke-server.ts --bundle --platform=node --format=esm --external:ws --outfile=node_modules/.cache/smoke-server.mjs && node node_modules/.cache/smoke-server.mjs"
+    "smoke": "npm run build && esbuild scripts/smoke-server.ts --bundle --platform=node --format=esm --external:ws --outfile=node_modules/.cache/smoke-server.mjs && node node_modules/.cache/smoke-server.mjs",
+    "start": "esbuild scripts/start-server.ts --bundle --platform=node --format=esm --external:ws --outfile=node_modules/.cache/start-server.mjs && node node_modules/.cache/start-server.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",

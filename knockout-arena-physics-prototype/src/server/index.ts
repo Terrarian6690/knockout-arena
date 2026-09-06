@@ -71,3 +71,10 @@ export {
   type WebSocketTransport,
   type WebSocketTransportOptions,
 } from "./webSocketTransport";
+export {
+  createHttpGameServer,
+  type HttpGameServer,
+  type HttpGameServerOptions,
+} from "./httpServer";
+export { loadServerConfig, ConfigError, DEFAULT_SERVER_CONFIG, type ServerConfig } from "./config";
+export { createServerLogger, type ServerLogger, type LogLevel, type LogFields } from "./log";

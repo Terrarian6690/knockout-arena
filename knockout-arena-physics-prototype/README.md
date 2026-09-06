@@ -724,15 +724,16 @@ npm run dev       # local dev (boots into the multiplayer lobby; "practice solo"
 npm test          # full suite: engine + server + transport + lobby + multiplayer UI (Vitest)
 npm run build     # typecheck + production build (single-file dist/index.html)
 npm run smoke     # build + serve the app AND a real protocol-v1 game server on one port (manual testing)
+npm start         # the PRODUCTION server (build first): app + /health + protocol v1 + graceful shutdown
 ```
 
 The app boots into the lobby and connects to its own origin by default;
 `?server=ws://host:port` points it at a standalone game server instead.
-The multiplayer server is a library for now: `createWebSocketTransport()`
-(from `src/server`) starts the protocol-v1 server on a port of your choice —
-there is no long-running server entry script yet, by design. With no server
-reachable, the lobby honestly shows Disconnected (with a Reconnect action)
-and solo practice stays available.
+`npm start` runs the production server entrypoint (see "Production
+deployment" below); `createWebSocketTransport()` (from `src/server`)
+remains the library form for embedding. With no server reachable, the
+lobby honestly shows Disconnected (with a Reconnect action) and solo
+practice stays available.
 
 ## Manual multiplayer smoke test
 
@@ -796,6 +797,92 @@ through the real server, engine and UI), `multiplayerGame.test.tsx`
 (the screen's behavior over scripted sockets) and
 `multiplayerReconnect.test.tsx` (the drop/recover/expire flows through
 the real stack and UI).
+
+## Production deployment
+
+`npm start` (scripts/start-server.ts → `createHttpGameServer()` in
+`src/server/httpServer.ts`) is the production entrypoint. ONE node:http
+server carries everything: the client bundle (`GET /`), the health probe
+(`GET /health` → `200 {"status":"ok"}`, stateless and room-free — fit for
+load-balancer checks), and the protocol-v1 WebSocket endpoint on the same
+origin. It binds `0.0.0.0` by default so containers and reverse proxies
+work out of the box; restrict with `HOST` where needed.
+
+### Local production test
+
+```bash
+npm ci
+npm run build            # typecheck + the single-file client bundle
+npm start                # serves http://<HOST>:<PORT>/ + /health + ws
+curl http://localhost:4173/health    # → {"status":"ok"}
+```
+
+Then open `http://localhost:4173` in two browser windows and play a match
+(the manual smoke test above). The server refuses to start without
+`dist/index.html` and exits non-zero with a clear log line — run the
+build first.
+
+### Environment variables
+
+| Variable               | Default    | Meaning                                              |
+| ---------------------- | ---------- | ---------------------------------------------------- |
+| `PORT`                 | `4173`     | TCP port (1–65535)                                   |
+| `HOST`                 | `0.0.0.0`  | Bind address (IP/hostname; not a URL)                |
+| `NODE_ENV`             | development | Informational only — no behavior change             |
+| `MAX_PAYLOAD_BYTES`    | `65536`    | Max inbound WebSocket frame (oversize → close 1009)  |
+| `MAX_CONNECTIONS`      | `256`      | Max simultaneous connections (refused cleanly beyond)|
+| `MAX_MALFORMED_MESSAGES` | `32`     | Malformed wire messages per connection before close  |
+| `SHUTDOWN_TIMEOUT_MS`  | `10000`    | Bound on graceful shutdown                           |
+
+Every value is validated at startup: an invalid setting logs a
+field-specific `configuration error` and exits non-zero instead of
+silently behaving incorrectly. No secrets exist in this configuration;
+the client needs none of it (same-origin by default).
+
+### Graceful shutdown
+
+`SIGTERM`/`SIGINT` trigger ONE idempotent shutdown: stop accepting
+connections and upgrades → close every WebSocket cleanly (seats released,
+no reservations) → stop the HTTP server (lingering keep-alive sockets are
+ended after a short grace) → destroy every GameHost tick loop, room,
+session and reconnect credential → exit 0. Anything unresolved by
+`SHUTDOWN_TIMEOUT_MS` is forcibly ended (exit 1). A second signal exits
+immediately — cleanup never runs twice.
+
+### Reverse proxy / TLS
+
+The server speaks plain HTTP/WS on a private port. Production traffic
+should be terminated by a reverse proxy / load balancer providing
+**HTTPS** and **WSS** (WebSocket upgrade forwarding) — TLS is deliberately
+not implemented in-process. Without TLS, session tokens and reconnect
+credentials cross the network in cleartext (see the trust-boundary
+section).
+
+### Scaling limitation (important)
+
+The game server keeps ALL room and match state **in process memory**:
+
+- **A process restart destroys every active room, match and reconnect
+  credential.** After a restart, stale credentials fail cleanly with
+  `invalid-reconnect`, clients return to the lobby, and the server comes
+  back empty (this behavior is test-pinned, not accidental).
+- **Horizontal scaling is NOT a transparent drop-in.** Multiple instances
+  require sticky sessions at minimum (a WebSocket lives on one instance),
+  and rooms cannot span instances without shared state this project does
+  not have. Run one instance behind a proxy for now.
+- Real **rate limiting / DDoS protection** must come from upstream
+  infrastructure. The in-process limits (`MAX_CONNECTIONS`,
+  `MAX_MALFORMED_MESSAGES`, `MAX_PAYLOAD_BYTES`) are
+  accidental-exhaustion guards, not a DDoS solution.
+
+### Server logging
+
+Lifecycle and limit events are emitted as JSON lines (stdout; errors to
+stderr) by the redacting logger in `src/server/log.ts`: startup/listening,
+shutdown, refused connections, malformed floods, server errors. Reconnect
+credentials, session tokens and client payloads are never logged — the
+logger defensively redacts sensitive field names (test-pinned), and there
+is no per-frame logging.
 
 ## Tests
 

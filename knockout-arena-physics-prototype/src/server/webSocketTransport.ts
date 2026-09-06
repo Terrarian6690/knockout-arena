@@ -1,5 +1,6 @@
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { createGameServer, type GameServer } from "./gameServer";
+import type { ServerLogger } from "./log";
 import type { Session } from "./session";
 import {
   describeError,
@@ -69,6 +70,32 @@ export interface TransportOptions {
    */
   snapshotBufferLimitBytes?: number;
   /**
+   * Production hardening: the maximum number of SIMULTANEOUS connections.
+   * A connection arriving beyond the cap is refused with a clean
+   * `connection-limit` error and closed — it never touches game state.
+   * Default 256. (Real rate limiting / DDoS protection belongs upstream;
+   * this is an accidental-exhaustion guard.)
+   */
+  maxConnections?: number;
+  /**
+   * Production hardening: how many MALFORMED wire messages (unparseable
+   * JSON, wrong protocol version, strict-envelope violations, internal
+   * errors) one connection may send before the server closes it. Legit
+   * clients send none; engine-level rejections (valid protocol, invalid
+   * gameplay) never count. Default 32.
+   */
+  maxMalformedMessages?: number;
+  /**
+   * Production hardening: the maximum accepted inbound WebSocket frame
+   * size in bytes. A larger frame is rejected by the ws layer with close
+   * code 1009 before any parsing happens. Protocol v1 messages are tiny
+   * (well under 1 KiB); the default 64 KiB is generous. Only used where
+   * this transport owns the WebSocketServer.
+   */
+  maxPayloadBytes?: number;
+  /** Lifecycle/limit logger (see log.ts). Never receives payloads or tokens. */
+  logger?: ServerLogger;
+  /**
    * How long a dropped connection's seat stays reserved for reconnect.
    * Only used when this transport creates its own game server; default
    * 30 000 ms (see createGameServer).
@@ -84,6 +111,15 @@ export interface TransportOptions {
 }
 
 const DEFAULT_SNAPSHOT_BUFFER_LIMIT = 256 * 1024;
+const DEFAULT_MAX_CONNECTIONS = 256;
+const DEFAULT_MAX_MALFORMED_MESSAGES = 32;
+
+/**
+ * Stand-in session for a connection refused at the cap: the handle
+ * contract wants a session, but this connection never reached the
+ * registry (no session was issued and none may be used).
+ */
+const NEVER_ISSUED_SESSION: Session = { token: "", connectedAt: 0 };
 
 /** One live connection: its session, room membership and bookkeeping. */
 interface ConnectionState {
@@ -111,6 +147,8 @@ interface ConnectionState {
    * reserve the seat nor disconnect the (now re-bound) session.
    */
   superseded: boolean;
+  /** Malformed wire messages seen on this connection (flood guard). */
+  malformedCount: number;
 }
 
 export interface ConnectionHandle {
@@ -139,6 +177,10 @@ export function createTransportCore(
 ): TransportCore {
   const snapshotBufferLimit =
     options.snapshotBufferLimitBytes ?? DEFAULT_SNAPSHOT_BUFFER_LIMIT;
+  const maxConnections = options.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
+  const maxMalformedMessages =
+    options.maxMalformedMessages ?? DEFAULT_MAX_MALFORMED_MESSAGES;
+  const logger = options.logger;
   const connections = new Set<ConnectionState>();
 
   function send(state: ConnectionState, data: string): void {
@@ -183,10 +225,36 @@ export function createTransportCore(
     });
   }
 
+  /**
+   * Account one malformed wire message. Past the per-connection budget
+   * the connection is closed for good — a garbage flood must never be
+   * able to monopolize the process (each offending message is still
+   * answered with an error first; only the flood closes anything).
+   */
+  function malformed(state: ConnectionState, code: string): void {
+    sendError(state, code);
+    state.malformedCount += 1;
+    if (state.malformedCount > maxMalformedMessages) {
+      logger?.warn("connection_malformed_flood_closed", {
+        malformed: state.malformedCount,
+        limit: maxMalformedMessages,
+        connections: connections.size,
+      });
+      // Force-close: no reservation (a garbage flood is not a legit drop).
+      state.forceClose = true;
+      try {
+        state.socket.close();
+      } catch {
+        // already dead
+      }
+      cleanup(state, "force");
+    }
+  }
+
   function handleWireMessage(state: ConnectionState, raw: string): void {
     const parsed = parseClientMessage(raw);
     if (!parsed.ok) {
-      sendError(state, parsed.code);
+      malformed(state, parsed.code);
       return;
     }
     const message = parsed.message;
@@ -410,6 +478,20 @@ export function createTransportCore(
 
   return {
     attach(socket: TransportSocket): ConnectionHandle {
+      if (connections.size >= maxConnections) {
+        // Refuse cleanly: one error, one close, no game state touched.
+        logger?.warn("connection_refused_limit", {
+          connections: connections.size,
+          limit: maxConnections,
+        });
+        try {
+          socket.send(errorMessage("connection-limit", "server busy — try again later"));
+          socket.close();
+        } catch {
+          // already dead — nothing to refuse
+        }
+        return { session: NEVER_ISSUED_SESSION, socket, close: () => {} };
+      }
       const state: ConnectionState = {
         session: gameServer.connect(),
         socket,
@@ -419,6 +501,7 @@ export function createTransportCore(
         closed: false,
         forceClose: false,
         superseded: false,
+        malformedCount: 0,
       };
       socket.onMessage((data) => {
         try {
@@ -426,7 +509,7 @@ export function createTransportCore(
         } catch {
           // Defense-in-depth: nothing arriving on a socket may take down
           // the connection or the process — reject and keep serving.
-          sendError(state, "internal-error");
+          malformed(state, "internal-error");
         }
       });
       socket.onClose(() => cleanup(state, "drop"));
@@ -503,7 +586,10 @@ export async function createWebSocketTransport(
     snapshotBufferLimitBytes: options.snapshotBufferLimitBytes,
   });
 
-  const wss = new WebSocketServer({ port: options.port ?? 0 });
+  const wss = new WebSocketServer({
+    port: options.port ?? 0,
+    maxPayload: options.maxPayloadBytes ?? 64 * 1024,
+  });
   wss.on("connection", (ws) => {
     core.attach(adaptWsSocket(ws));
   });
