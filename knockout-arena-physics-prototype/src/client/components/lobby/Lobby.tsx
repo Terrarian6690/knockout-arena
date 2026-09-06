@@ -142,7 +142,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased">
-      <header className="flex items-center justify-between px-4 py-3 sm:px-6">
+      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-lg font-black text-white shadow-lg shadow-orange-900/40">
             KA
@@ -151,7 +151,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
             <h1 className="text-lg font-bold tracking-tight text-white">
               Knockout Arena
             </h1>
-            <p className="text-[11px] text-white/40">Multiplayer lobby</p>
+            <p className="text-[11px] text-white/50">Multiplayer lobby</p>
           </div>
         </div>
         <ConnectionStatusBadge status={state.status} />
@@ -254,7 +254,7 @@ function HomeView({
         <h2 className="text-center text-xl font-black tracking-tight text-white">
           Enter the arena
         </h2>
-        <p className="mt-1 text-center text-sm text-white/40">
+        <p className="mt-1 text-center text-sm text-white/50">
           Create a room and share its code, or join your friends.
         </p>
 
@@ -273,7 +273,7 @@ function HomeView({
           Create Room
         </button>
 
-        <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-widest text-white/25">
+        <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-widest text-white/50">
           <span className="h-px flex-1 bg-white/10" />
           or
           <span className="h-px flex-1 bg-white/10" />
@@ -281,7 +281,7 @@ function HomeView({
 
         <label
           htmlFor="room-code-input"
-          className="text-[11px] uppercase tracking-widest text-white/40"
+          className="text-[11px] uppercase tracking-widest text-white/50"
         >
           Room code
         </label>
@@ -298,7 +298,7 @@ function HomeView({
             disabled={!connected}
             autoComplete="off"
             spellCheck={false}
-            className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/5 px-4 py-3 font-mono text-sm uppercase text-white outline-none transition-colors placeholder:text-white/25 focus:border-amber-400/50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/5 px-4 py-3 font-mono text-sm uppercase text-white outline-none transition-colors placeholder:text-white/50 focus:border-amber-400/50 disabled:cursor-not-allowed disabled:opacity-40"
           />
           <button
             type="button"
@@ -317,6 +317,7 @@ function HomeView({
         {joinError !== null && (
           <p
             data-testid="join-error"
+            role="alert"
             className="mt-2 text-xs text-red-300"
           >
             {joinError}
@@ -334,7 +335,7 @@ function HomeView({
         <button
           type="button"
           onClick={onPracticeSolo}
-          className="rounded-sm text-xs font-semibold text-white/40 underline-offset-4 transition-colors hover:text-white/70 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          className="rounded-sm text-xs font-semibold text-white/50 underline-offset-4 transition-colors hover:text-white/70 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
         >
           Practice solo (local engine)
         </button>
@@ -389,6 +390,6 @@ function ConnectionHint({
 
 function HintText({ children }: { children: ReactNode }) {
   return (
-    <p className="mt-4 text-center text-xs text-white/35">{children}</p>
+    <p className="mt-4 text-center text-xs text-white/50">{children}</p>
   );
 }

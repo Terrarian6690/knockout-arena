@@ -59,6 +59,8 @@ export function RoundCountdown({
     <span
       data-testid="round-countdown"
       data-urgent={urgent ? "true" : "false"}
+      role="timer"
+      aria-label={`Decision time: ${seconds}s`}
       className={cn(
         "flex items-center gap-2 rounded-full border px-3 py-1 font-mono tabular-nums",
         urgent
@@ -66,7 +68,9 @@ export function RoundCountdown({
           : "border-amber-400/30 bg-amber-500/10 text-amber-200"
       )}
     >
-      <span className="text-[10px] font-semibold uppercase tracking-wider opacity-70">
+      {/* Hidden below sm so the badge fits narrow phone headers; the
+          accessible name above keeps the meaning for screen readers. */}
+      <span className="hidden text-[10px] font-semibold uppercase tracking-wider opacity-70 sm:inline">
         Decision time
       </span>
       <span

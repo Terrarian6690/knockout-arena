@@ -74,7 +74,7 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
           <span
             className={cn(
               "shrink-0 text-xs",
-              seat.connected ? "text-white/40" : "text-red-300/70"
+              seat.connected ? "text-white/50" : "text-red-300/70"
             )}
           >
             {seat.connected ? "Connected" : "Disconnected"}
@@ -93,7 +93,7 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
             aria-label="empty seat"
             className="h-2 w-2 shrink-0 rounded-full border border-white/25"
           />
-          <span className="ml-2 text-sm text-white/30">
+          <span className="ml-2 text-sm text-white/50">
             Waiting for player…
           </span>
         </li>

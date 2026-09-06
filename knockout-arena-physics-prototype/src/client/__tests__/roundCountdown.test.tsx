@@ -30,6 +30,16 @@ describe("RoundCountdown (presentation of the authoritative deadline)", () => {
     expect(seconds()).toHaveTextContent("10"); // a full window starts at 10
   });
 
+  it("carries timer semantics with an accessible name (a11y)", () => {
+    render(<RoundCountdown phase="aiming" deadline={Date.now() + 10_000} />);
+    const badge = countdown();
+    // role=timer: assistive tech identifies it as a countdown; the label
+    // keeps the meaning even where the visible text is hidden (narrow
+    // phone headers).
+    expect(badge).toHaveAttribute("role", "timer");
+    expect(badge).toHaveAccessibleName("Decision time: 10s");
+  });
+
   it("renders partial seconds rounded up (6.8 s left → 7)", () => {
     render(<RoundCountdown phase="aiming" deadline={Date.now() + 6_800} />);
     expect(seconds()).toHaveTextContent("7");

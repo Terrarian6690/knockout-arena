@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AudioControl } from "../components/game/AudioControl";
-import { audio } from "../audio";
+import { audio, DEFAULT_VOLUME } from "../audio";
 
 /**
  * The in-match sound control (Task 22 "UI"): renders, toggles mute,
@@ -82,6 +82,26 @@ describe("audio control", () => {
     fireEvent.change(slider(), { target: { value: "80" } });
     expect(audio.getVolume()).toBeCloseTo(0.8, 5);
     expect(toggle()).toHaveTextContent("🔊");
+  });
+
+  it("unmuting at zero volume restores the default volume (no dead toggle)", () => {
+    // The trap this pins: volume dragged to 0 while unmuted leaves the
+    // control saying "Unmute sound" — but a plain toggle then sets muted
+    // while STILL being silent, and the control never becomes audible no
+    // matter how often it is clicked. Unmuting must restore volume.
+    render(<AudioControl />);
+    fireEvent.change(slider(), { target: { value: "0" } });
+    expect(audio.getVolume()).toBe(0);
+    expect(toggle()).toHaveAttribute("aria-label", "Unmute sound"); // silent, not muted
+
+    fireEvent.click(toggle()); // mute — still silent
+    expect(audio.getMuted()).toBe(true);
+
+    fireEvent.click(toggle()); // unmute — must become audible again
+    expect(audio.getMuted()).toBe(false);
+    expect(audio.getVolume()).toBe(DEFAULT_VOLUME);
+    expect(slider()).toHaveValue("70");
+    expect(toggle()).toHaveAttribute("aria-label", "Mute sound");
   });
 
   it("persists the settings for the next mount", () => {

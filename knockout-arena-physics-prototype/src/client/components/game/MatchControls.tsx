@@ -42,7 +42,7 @@ export function MatchControls({
     >
       {/* The power meter: horizontal wedge, weak (green) → strong (red). */}
       <div className="flex flex-col items-center gap-1.5">
-        <div className="text-[11px] uppercase tracking-widest text-white/40">
+        <div className="text-[11px] uppercase tracking-widest text-white/50">
           Power
         </div>
         <PowerMeter
@@ -54,7 +54,7 @@ export function MatchControls({
 
       {/* Current power readout */}
       <div className="text-center">
-        <div className="text-[11px] uppercase tracking-widest text-white/40">
+        <div className="text-[11px] uppercase tracking-widest text-white/50">
           Level
         </div>
         <div
@@ -63,14 +63,14 @@ export function MatchControls({
         >
           {power}
         </div>
-        <div className="text-[11px] text-white/40">/ {CONFIG.power.max}</div>
+        <div className="text-[11px] text-white/50">/ {CONFIG.power.max}</div>
       </div>
 
       <div className="flex flex-col items-center gap-1">
         {/* The commitment: CURRENT aim + CURRENT power → CONFIRM. The
             button never launches by itself — the round resolves on the
             server (everyone confirmed, or its deadline). */}
-        <div className="text-[11px] uppercase tracking-widest text-white/40">
+        <div className="text-[11px] uppercase tracking-widest text-white/50">
           Lock aim + power
         </div>
         <button
@@ -86,7 +86,11 @@ export function MatchControls({
             "disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
           )}
         >
-          {canAct ? "Confirm launch" : lockedIn ? "Confirmed — waiting…" : "…"}
+          {canAct
+            ? "Confirm launch"
+            : lockedIn
+              ? "Confirmed — waiting…"
+              : "Waiting for round…"}
         </button>
       </div>
     </div>

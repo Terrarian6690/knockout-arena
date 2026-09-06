@@ -108,6 +108,50 @@ describe("lobby room code UX", () => {
     }
   });
 
+  it("Copy Code falls back to execCommand when the Clipboard API REJECTS the write", async () => {
+    // The regression this pins: an embedded iframe without clipboard-write
+    // permission — navigator.clipboard exists, but the write is refused.
+    // The legacy execCommand path must still run (it works inside the
+    // real click), instead of silently giving up.
+    const writeText = vi.fn().mockRejectedValue(new DOMException("blocked", "NotAllowedError"));
+    const restoreClipboard = stubClipboard(writeText);
+    const originalSelect = HTMLTextAreaElement.prototype.select;
+    HTMLTextAreaElement.prototype.select = function (this: HTMLTextAreaElement) {};
+    const execCommand = vi.fn((): boolean => true);
+    document.execCommand = execCommand as unknown as typeof document.execCommand;
+    try {
+      await seatedHost();
+
+      fireEvent.click(screen.getByTestId("copy-code"));
+      await act(async () => {});
+      expect(writeText).toHaveBeenCalledTimes(1);
+      expect(execCommand).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("copy-feedback")).toHaveTextContent("Copied!");
+    } finally {
+      restoreClipboard();
+      HTMLTextAreaElement.prototype.select = originalSelect;
+      delete (document as { execCommand?: unknown }).execCommand;
+    }
+  });
+
+  it("Copy Code never claims Copied! when every copy path fails", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    const restoreClipboard = stubClipboard(writeText);
+    const execCommand = vi.fn((): boolean => false);
+    document.execCommand = execCommand as unknown as typeof document.execCommand;
+    try {
+      await seatedHost();
+
+      fireEvent.click(screen.getByTestId("copy-code"));
+      await act(async () => {});
+      expect(execCommand).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("copy-feedback")).toHaveTextContent("");
+    } finally {
+      restoreClipboard();
+      delete (document as { execCommand?: unknown }).execCommand;
+    }
+  });
+
   it("Copy Code falls back to execCommand when the Clipboard API is absent", async () => {
     const restoreClipboard = stubClipboard(undefined); // plain-http preview
     const staged: string[] = [];
@@ -207,8 +251,10 @@ describe("lobby room code UX", () => {
       });
       fireEvent.click(screen.getByRole("button", { name: "Join Room" }));
 
-      // Local, instant, specific feedback — no server round-trip.
+      // Local, instant, specific feedback — no server round-trip. The
+      // error announces as an alert (Task 20 a11y).
       const error = screen.getByTestId("join-error");
+      expect(error).toHaveAttribute("role", "alert");
       expect(error).toHaveTextContent(/4 characters/);
       expect(screen.queryByTestId("room-panel")).toBeNull();
     }

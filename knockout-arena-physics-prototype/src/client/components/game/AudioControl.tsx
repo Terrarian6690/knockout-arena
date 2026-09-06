@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { audio } from "../../audio";
+import { audio, DEFAULT_VOLUME } from "../../audio";
 
 /**
  * The in-match sound control: a compact mute toggle + volume slider in
@@ -19,6 +19,13 @@ export function AudioControl() {
     const next = !muted;
     audio.setMuted(next);
     setMuted(next);
+    // Unmuting at zero volume would be a dead toggle — the control would
+    // keep saying "Unmute sound" while staying silent. Restore the default
+    // volume so the unmute click actually unmutes.
+    if (!next && audio.getVolume() <= 0) {
+      audio.setVolume(DEFAULT_VOLUME);
+      setVolume(DEFAULT_VOLUME);
+    }
   };
 
   const changeVolume = (value: number) => {

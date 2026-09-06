@@ -156,7 +156,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased">
-      <header className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-lg font-black text-white shadow-lg shadow-orange-900/40">
             KA
@@ -165,7 +165,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
             <h1 className="text-lg font-bold tracking-tight text-white">
               Knockout Arena
             </h1>
-            <p className="text-[11px] text-white/40">Multiplayer match</p>
+            <p className="text-[11px] text-white/50">Multiplayer match</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -271,6 +271,7 @@ function RoundBadge({ snapshot }: { readonly snapshot: GameStateSnapshot }) {
   return (
     <span
       data-testid="turn-badge"
+      role="status"
       className={cn(
         "hidden rounded-full border px-3 py-1 text-xs font-semibold sm:inline-block",
         className

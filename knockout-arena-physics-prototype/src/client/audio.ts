@@ -32,7 +32,7 @@ import type { VfxEvent } from "./effects";
 export const MAX_ACTIVE_SOUNDS = 16;
 
 /** Default: enabled at a moderate volume. */
-const DEFAULT_VOLUME = 0.7;
+export const DEFAULT_VOLUME = 0.7;
 const STORAGE_KEY = "knockout-audio";
 
 // ── Structural Web Audio types (the real API satisfies these; tests mock

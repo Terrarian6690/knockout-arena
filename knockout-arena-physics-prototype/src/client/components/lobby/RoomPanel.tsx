@@ -134,12 +134,21 @@ export function RoomPanel({
   };
 
   const handleCopyCode = async () => {
+    // Prefer the async Clipboard API. TWO fallback triggers: the API being
+    // absent (plain-http previews) AND the write being rejected (embedded
+    // iframe without clipboard permission) — both drop to the legacy
+    // execCommand path, which works inside a real user click.
+    let copied = false;
     try {
-      // Prefer the async Clipboard API; fall back to the legacy
-      // execCommand path for non-secure contexts (plain http previews).
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(roomCode);
-      } else {
+        copied = true;
+      }
+    } catch {
+      // Permission denied / not allowed — try the legacy path below.
+    }
+    if (!copied) {
+      try {
         const helper = document.createElement("textarea");
         helper.value = roomCode;
         helper.setAttribute("readonly", "");
@@ -147,14 +156,14 @@ export function RoomPanel({
         helper.style.opacity = "0";
         document.body.appendChild(helper);
         helper.select();
-        document.execCommand("copy");
+        copied = document.execCommand("copy");
         document.body.removeChild(helper);
+      } catch {
+        // Legacy path unavailable too — the code stays on screen, big and
+        // selectable; showing a false "Copied!" would lie.
       }
-      flashCopied();
-    } catch {
-      // Clipboard unavailable/permission denied — the code stays on
-      // screen, big and selectable; showing a false "Copied!" would lie.
     }
+    if (copied) flashCopied();
   };
 
   return (
@@ -163,7 +172,7 @@ export function RoomPanel({
       className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.02] p-6 sm:p-8"
     >
       <div className="flex items-center justify-between">
-        <span className="text-[11px] uppercase tracking-widest text-white/40">
+        <span className="text-[11px] uppercase tracking-widest text-white/50">
           Room
         </span>
         <span
@@ -178,7 +187,7 @@ export function RoomPanel({
       </div>
 
       <div className="mt-3 text-center">
-        <div className="text-[11px] uppercase tracking-widest text-white/40">
+        <div className="text-[11px] uppercase tracking-widest text-white/50">
           Room code
         </div>
         <div
@@ -209,14 +218,14 @@ export function RoomPanel({
           </span>
         </div>
         {roomState === "waiting" && (
-          <p className="mt-1 text-xs text-white/40">
+          <p className="mt-1 text-xs text-white/50">
             Share this code so others can join
           </p>
         )}
       </div>
 
       <div className="mt-5 flex items-center justify-center gap-2 text-xs">
-        <span className="text-white/40">You are</span>
+        <span className="text-white/50">You are</span>
         <span
           data-testid="local-player-id"
           className="text-sm font-bold text-white"
@@ -234,7 +243,7 @@ export function RoomPanel({
         <div className="mt-3">
           <label
             htmlFor="display-name-input"
-            className="text-[11px] uppercase tracking-widest text-white/40"
+            className="text-[11px] uppercase tracking-widest text-white/50"
           >
             Your name
           </label>
@@ -261,7 +270,7 @@ export function RoomPanel({
               aria-invalid={nameError !== null}
               className={cn(
                 "min-w-0 flex-1 rounded-xl border bg-white/5 px-4 py-2 text-sm text-white outline-none transition-colors",
-                "placeholder:text-white/25 focus:border-amber-400/50",
+                "placeholder:text-white/50 focus:border-amber-400/50",
                 "disabled:cursor-not-allowed disabled:opacity-40",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
                 nameError !== null ? "border-red-400/50" : "border-white/15"
@@ -287,7 +296,7 @@ export function RoomPanel({
               {nameError}
             </p>
           )}
-          <p className="mt-1 text-[11px] text-white/30">
+          <p className="mt-1 text-[11px] text-white/50">
             1–16 characters; leave empty to stay {seatLabel(playerId)}.
           </p>
         </div>
@@ -295,13 +304,13 @@ export function RoomPanel({
 
       <div className="mt-6">
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-[11px] uppercase tracking-widest text-white/40">
+          <span className="text-[11px] uppercase tracking-widest text-white/50">
             Players
           </span>
           <span
             data-testid="player-count"
             aria-label={`${roster.length} of ${MAX_SEATS} players`}
-            className="text-[11px] tabular-nums text-white/30"
+            className="text-[11px] tabular-nums text-white/50"
           >
             {roster.length} / {MAX_SEATS}
           </span>
@@ -353,7 +362,7 @@ export function RoomPanel({
             {!enoughPlayers && (
               <p
                 data-testid="waiting-for-players"
-                className="text-center text-xs text-white/35"
+                className="text-center text-xs text-white/50"
               >
                 Waiting for another player…
               </p>
@@ -364,7 +373,7 @@ export function RoomPanel({
         {!isHost && roomState === "waiting" && (
           <p
             data-testid="waiting-for-host"
-            className="py-1 text-center text-xs text-white/35"
+            className="py-1 text-center text-xs text-white/50"
           >
             Waiting for the host to start the match…
           </p>

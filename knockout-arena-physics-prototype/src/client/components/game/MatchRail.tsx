@@ -50,7 +50,7 @@ export function MatchRail({ snapshot, hostPlayerId }: MatchRailProps) {
             >
               {pawn.name}
             </span>
-            <span className="font-mono text-white/35">{pawn.id}</span>
+            <span className="font-mono text-white/50">{pawn.id}</span>
             {pawn.isLocal && <YouChip />}
             {pawn.id === hostPlayerId && <HostChip />}
             {pawn.eliminated ? (

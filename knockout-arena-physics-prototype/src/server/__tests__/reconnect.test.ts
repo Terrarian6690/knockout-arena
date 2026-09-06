@@ -141,7 +141,14 @@ describe("reconnect credentials", () => {
     // Opaque: not derived from identity anyone else can see.
     expect(tokens[0]).not.toBe(tokens[1]);
     for (const token of tokens) {
-      expect(token).not.toContain("p0");
+      // The opacity contract is the FORMAT: a pure 256-bit base64url blob
+      // (randomBytes(32) → 43 chars, [A-Za-z0-9_-]) with nothing else
+      // embedded. (A substring check against a 2-char id like "p0" is
+      // statistically meaningless — a random 43-char token contains any
+      // given 2-char substring ~1% of the time and failed this suite
+      // sporadically; the ids are never fed to the generator at all.)
+      expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(token).not.toBe("p0");
       expect(token).not.toContain(sessions[0].token);
     }
     // Not a playerId, not a roomId — a credential is its own thing and is

@@ -1030,11 +1030,14 @@ every other suite stays headless/node; dev-only deps:
 - `lobbyRoomCode.test.tsx` — the room-code UX: the waiting room shows the
   prominent ROOM CODE and never the internal room id (no UUID-shaped
   string anywhere in the DOM), Copy Code copies it and flashes a
-  short-lived "Copied!" (both the async Clipboard API and the legacy
-  execCommand fallback for plain-http previews), the join input
+  short-lived "Copied!" (the async Clipboard API when it works, the
+  legacy execCommand fallback both when the API is absent AND when it
+  REJECTS — e.g. an embedded preview without clipboard-write permission —
+  and no false "Copied!" when every path fails), the join input
   uppercases while typing and normalizes on submit (`k7 p4` → `K7P4` on
   the wire; Enter included), and malformed codes are an instant local
-  error with nothing sent to the server.
+  error that ANNOUNCES as an alert (`role="alert"`) with nothing sent to
+  the server.
 - `lobbyPlayers.test.tsx` — the player list & start-match UX: friendly
   `Player N` labels with You/Host chips and Connected/Disconnected as
   text (plus an accessible label on the status dot), "Waiting for
@@ -1179,7 +1182,9 @@ every other suite stays headless/node; dev-only deps:
   events firing normally in the next match.
 - `audioControl.test.tsx` — the in-game sound control: accessible
   mute button + volume slider (roles/names), toggling without losing the
-  volume, slider updates, unmute-on-slider, the zero-volume state, and
+  volume, slider updates, unmute-on-slider, the zero-volume state,
+  unmuting at zero volume restoring the DEFAULT volume (no dead toggle:
+  silent-but-unmuted → mute → unmute must end audible), and
   localStorage persistence across mounts.
 - `arenaAudio.test.tsx` — the arena wiring with the audio module
   mocked: the aiming → moving push sending round-start + launch events,
@@ -1215,8 +1220,11 @@ every other suite stays headless/node; dev-only deps:
   deadline (10 at a full window, rounded up on partial seconds), the
   display ticking down, clamping at zero and holding it, the urgent
   marking of the last seconds, NOTHING rendered outside aiming (even with
-  a deadline present) or without/with malformed metadata, and a new
-  round's deadline replacing the display without stale leakage.
+  a deadline present) or without/with malformed metadata, a new
+  round's deadline replacing the display without stale leakage, and
+  timer semantics for assistive tech (`role="timer"` with an accessible
+  name that keeps the meaning even where the visible label is hidden on
+  narrow screens).
 - `multiplayerReconnect.test.tsx` — seat recovery through the real stack
   AND the real UI: a mid-match drop keeps the game screen (banner, last
   snapshot, no lobby takeover) and the automatic retry recovers the same
@@ -1231,6 +1239,12 @@ every other suite stays headless/node; dev-only deps:
   (never a local cache, never reset), the opponent's aim stays private in
   both directions, and the round/deadline are untouched (same aiming
   phase, same armed deadline, controls re-enabled).
+- `matchControls.test.tsx` — the confirm control's label contract: an
+  active player sees "Confirm launch" (enabled), a confirmed player
+  "Confirmed — waiting…" (disabled), and every passive state (round
+  resolving, eliminated-but-watching, disconnected) the meaningful
+  "Waiting for round…" — never a bare ellipsis, and the accessible name
+  always the visible words.
 - `client-boundary.test.ts` (engine part) now resolves import targets
   instead of matching strings, so the client's `components/game/` folder
   is correctly recognized as client code while deep engine imports

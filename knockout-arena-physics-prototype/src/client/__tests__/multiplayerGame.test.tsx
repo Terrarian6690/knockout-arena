@@ -100,10 +100,11 @@ describe("multiplayer game: rendering", () => {
     );
     expect(screen.getByTestId("rail-p1").textContent).toContain("You");
     expect(screen.getByTestId("rail-p0").textContent).not.toContain("You");
-    // Round badge: the local player still has to choose their move.
-    expect(screen.getByTestId("turn-badge")).toHaveTextContent(
-      "Choose your move — aim!"
-    );
+    // Round badge: the local player still has to choose their move — and
+    // the state change announces as a live region (a11y).
+    const badge = screen.getByTestId("turn-badge");
+    expect(badge).toHaveTextContent("Choose your move — aim!");
+    expect(badge).toHaveAttribute("role", "status");
   });
 
   it("renders an eliminated pawn as out (server-reported)", async () => {
