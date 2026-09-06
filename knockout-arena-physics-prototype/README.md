@@ -841,6 +841,35 @@ build first. On a hosting platform the same three commands are the build
 and start phases; set `PORT` (and optionally the limits below) in the
 platform's environment configuration.
 
+### Staging deployment
+
+For a staging environment, create ONE long-running instance on any host
+that runs Node processes, honors `PORT`, keeps WebSocket connections
+alive and terminates TLS (Render/Railway/Fly-style "Web Service", not a
+static or serverless host):
+
+- **Repo/root**: point the service at this repository with the
+  **root directory `knockout-arena-physics-prototype`** (the app lives in
+  a subdirectory — the platform needs to know).
+- **Build command**: `npm ci && npm run build`
+- **Start command**: `npm start` (runs `dist/server.mjs`; needs only
+  Node ≥ 20 and the `ws` production dependency)
+- **Health check path**: `/health` (stateless, room-free)
+- **Instance count**: exactly one — rooms and matches live in the
+  process's memory, and a restart deliberately wipes them (verified
+  behavior: old rooms return `unknown-room`, stale reconnect
+  credentials return `invalid-reconnect`, fresh rooms work immediately).
+
+After deploying, verify over the public HTTPS URL: `GET /health` →
+`{"status":"ok"}`, the page loads (the client derives its `wss://`
+endpoint from the page origin automatically — check the browser console
+for WebSocket errors), then run the two-browser smoke: create room in
+one browser, join with the code in a second (private) window, play a
+match to elimination, and drop/recover one browser mid-match (the seat
+is recovered, no duplicate player). A controlled redeploy should come
+back healthy with empty rooms — that is the expected, documented
+behavior, not data loss.
+
 ### Environment variables
 
 | Variable               | Default    | Meaning                                              |
