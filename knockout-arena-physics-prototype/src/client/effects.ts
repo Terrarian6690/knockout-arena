@@ -1,4 +1,4 @@
-import { floorRadius, playerColor, type Arena, type GameStateSnapshot, type PawnSnapshot } from "../game";
+import { arenaFromSnapshot, floorRadius, playerColor, type Arena, type GameStateSnapshot, type PawnSnapshot } from "../game";
 
 /**
  * Render-only visual effects (Task 18) — the game-feel layer.
@@ -221,7 +221,11 @@ export class Vfx {
       // them — clear first, then spawn whatever the NEW phase earns.
       this.clearTransient();
       if (prev.phase === "aiming" && next.phase === "moving") {
-        this.roundStart(now);
+        // The ring is sized from the snapshot that triggered it, so it
+        // follows the AUTHORITATIVE arena as it shrinks (the fallback
+        // arena captured at construction is only used when a snapshot
+        // carries no arena field at all).
+        this.roundStart(now, next);
         events.push({ type: "round-start" });
         for (const pawn of next.pawns) {
           // Truthy check, mirroring the renderer: wire pawns may omit the
@@ -545,9 +549,22 @@ export class Vfx {
     }
   }
 
-  /** Round start: one subtle ring expanding from the arena center. */
-  private roundStart(now: number): void {
-    const arena = this.arena;
+  /**
+   * Round start: one subtle ring expanding from the arena center to the
+   * CURRENT floor edge.
+   *
+   * The radius comes from the snapshot that triggered the round, not from
+   * the arena captured when this Vfx was constructed: the arena shrinks
+   * during a match, and a ring drawn at the initial 330-radius floor
+   * would sweep straight across the (now much smaller) real edge and out
+   * over the dead zone. `arenaFromSnapshot` falls back to the configured
+   * initial radius for snapshots with no arena field, and the
+   * construction-time arena remains the last resort for callers that
+   * pass no snapshot at all.
+   */
+  private roundStart(now: number, snapshot?: GameStateSnapshot): void {
+    const arena =
+      snapshot !== undefined ? arenaFromSnapshot(snapshot) : this.arena;
     if (arena === null) return;
     this.spawnRing(
       arena.centerX,
