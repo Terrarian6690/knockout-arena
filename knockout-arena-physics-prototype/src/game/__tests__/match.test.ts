@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { CONFIG, launchSpeedFor } from "../config";
-import { createArena, floorRadius } from "../arena";
+import {
+  createArena,
+  floorRadius,
+  spawnPositionForSlot,
+  spawnRingRadius,
+} from "../arena";
 import { createGame, type GameHandle } from "../game";
 import { projectSnapshot } from "../project";
 import {
@@ -32,11 +37,14 @@ import type { PlayerSpec } from "../game";
  *   - after everything settles, a fresh aiming round begins.
  *
  * Physical facts used below (see physics.test.ts for the derivations):
- *   - max travel at power 5 ≈ 225 world units, so crafted states place the
- *     victim close to the mover (a direct head-on p5 hit transfers ≈ 0.79 of
- *     the mover's contact speed — more than the 2.3 rim pass-over threshold);
- *   - the rim pass-over decision is re-derived for EVERY alive pawn each
- *     tick, so a shoved opponent flies over the rim exactly like a mover does.
+ *   - max travel at power 5 ≈ 675 world units, so a shoved opponent easily
+ *     crosses the open floor edge (a direct head-on hit transfers ≈ 0.79
+ *     of the mover's contact speed — and with no wall there is no speed
+ *     threshold to beat, any outward motion past the edge eliminates);
+ *   - near the edge even a modest power-2 blow knocks out (see
+ *     knockoutSetup), while the mover's follow-through dies out in time;
+ *   - elimination is pure geometry for EVERY alive pawn each tick, so a
+ *     shoved opponent leaves the floor exactly like a mover does.
  */
 
 const DT = CONFIG.simulation.fixedTimestepMs;
@@ -45,6 +53,14 @@ const FLOOR = floorRadius(ARENA);
 const PAWN_R = CONFIG.pawn.radius;
 const CX = ARENA.centerX;
 const CY = ARENA.centerY;
+/** Engine spawn distance from the center (the fixed spawn ring). */
+const SPAWN_DIST = spawnRingRadius(ARENA);
+
+/** The authoritative position of a fixed spawn slot, as {x, y}. */
+function slotPosition(slot: number): { x: number; y: number } {
+  const [x, y] = spawnPositionForSlot(ARENA, slot);
+  return { x, y };
+}
 
 // ────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -134,19 +150,21 @@ function deadlineResolve(g: GameHandle) {
 
 /**
  * The physical knockout setup: the mover sits 45 units behind the victim,
- * both on the same radial line, the victim just inside the rim pass-over
- * zone. A p5 head-on launch transfers enough speed to shove the victim over
- * the rim while the mover stays on the floor.
+ * both on the same radial line, the victim just inside the floor edge.
+ * There is no wall, so near the edge even a modest p2 head-on launch
+ * transfers enough speed to shove the victim off the floor, while the
+ * mover's own follow-through dies out before the edge and it survives.
  */
 function knockoutSetup(
   moverId: string,
   victimId: string,
   extraPawns: PawnState[] = []
 ): GameState {
-  // Radial direction "down" (toward the bottom rim); victim at distance 240
-  // from the center, mover 45 units behind it.
-  const victim = pawnAt(victimId, CX, CY + 240);
-  const mover = pawnAt(moverId, CX, CY + 195);
+  // Radial direction "down" (toward the bottom edge); victim at distance
+  // 290 from the center (near the edge, like an engine spawn), mover 45
+  // units behind it.
+  const victim = pawnAt(victimId, CX, CY + 290);
+  const mover = pawnAt(moverId, CX, CY + 245);
   return matchState([mover, victim, ...extraPawns]);
 }
 
@@ -173,39 +191,47 @@ describe("N-player match creation", () => {
     const s = g.getState();
     expect(s.pawns.map((p) => p.id)).toEqual(["p0"]);
     expect(s.pawns[0].name).toBe("Player 1");
-    expect(s.pawns[0].position).toEqual({ x: CX, y: CY - 240 });
+    expect(s.pawns[0].position).toEqual(slotPosition(0));
     expect(s.phase).toBe("aiming");
     expect(s.round.settleTicks).toBe(0);
     g.destroy();
   });
 
-  it.each([2, 3, 4, 5])("spawns %i players deterministically on a circle", (n) => {
-    const g = createGame({ players: specs(n) });
-    const s = g.getState();
-    expect(s.pawns).toHaveLength(n);
-    // Seat i sits at angle -π/2 + i·2π/n, just inside the floor; the first
-    // seat is the classic top spawn.
-    for (let i = 0; i < n; i++) {
-      const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n;
-      const r = FLOOR - PAWN_R - 8;
-      const p = s.pawns[i];
-      expect(p.id).toBe(`p${i}`);
-      expect(p.position.x).toBeCloseTo(CX + Math.cos(angle) * r, 6);
-      expect(p.position.y).toBeCloseTo(CY + Math.sin(angle) * r, 6);
-      expect(p.colorIndex).toBe(i);
-      expect(p.eliminated).toBe(false);
-      expect(p.power).toBe(CONFIG.power.default);
-      expect(p.confirmed).toBe(false); // nobody has chosen yet
-      expect(p.aim.active).toBe(false);
+  it.each([2, 3, 4, 5, 6])(
+    "spawns %i players on the arena's FIXED slot ring",
+    (n) => {
+      const g = createGame({ players: specs(n) });
+      const s = g.getState();
+      expect(s.pawns).toHaveLength(n);
+      // Seat i always occupies slot i of the fixed ring, whatever the
+      // turnout — the unused slots are simply left empty.
+      for (let i = 0; i < n; i++) {
+        const p = s.pawns[i];
+        const [x, y] = spawnPositionForSlot(ARENA, i);
+        expect(p.id).toBe(`p${i}`);
+        expect(p.position.x).toBeCloseTo(x, 6);
+        expect(p.position.y).toBeCloseTo(y, 6);
+        expect(p.colorIndex).toBe(i);
+        expect(p.eliminated).toBe(false);
+        expect(p.power).toBe(CONFIG.power.default);
+        expect(p.confirmed).toBe(false); // nobody has chosen yet
+        expect(p.aim.active).toBe(false);
+      }
+      g.destroy();
     }
-    g.destroy();
-  });
+  );
 
-  it("keeps opposite spawns maximally apart (2 players top/bottom)", () => {
+  it("keeps the first two spawns maximally apart (2 players, opposed)", () => {
     const g = createGame({ players: specs(2) });
     const [a, b] = g.getState().pawns;
-    expect(a.position).toEqual({ x: CX, y: CY - 240 });
-    expect(b.position).toEqual({ x: CX, y: CY + 240 });
+    // Slots 0 and 1 are diametrically opposed, so a two-player match is
+    // still a face-off across the full arena — left versus right.
+    expect(a.position.x).toBeCloseTo(CX - SPAWN_DIST, 6);
+    expect(a.position.y).toBeCloseTo(CY, 6);
+    expect(b.position.x).toBeCloseTo(CX + SPAWN_DIST, 6);
+    expect(b.position.y).toBeCloseTo(CY, 6);
+    expect(Math.hypot(b.position.x - a.position.x, b.position.y - a.position.y))
+      .toBeCloseTo(2 * SPAWN_DIST, 6);
     g.destroy();
   });
 
@@ -275,8 +301,8 @@ describe("simultaneous rounds — choosing and resolving", () => {
     expect(g.getState().phase).toBe("aiming"); // settled → next round
     // BOTH pawns left their spawns (each moved toward the center).
     const s = g.getState();
-    expect(s.pawns[0].position.y).toBeGreaterThan(CY - 240 + 20);
-    expect(s.pawns[1].position.y).toBeLessThan(CY + 240 - 20);
+    expect(s.pawns[0].position.y).toBeGreaterThan(CY - SPAWN_DIST + 20);
+    expect(s.pawns[1].position.y).toBeLessThan(CY + SPAWN_DIST - 20);
     g.destroy();
   });
 
@@ -310,14 +336,18 @@ describe("simultaneous rounds — choosing and resolving", () => {
   it("[6] the deadline (resolveRound) moves only the confirmed players", () => {
     const g = createGame({ players: specs(4) });
     const starts = g.getState().pawns.map((p) => ({ ...p.position }));
-    chooseInward(g, "p0", 4); // ONLY p0 confirmed
+    // ONLY p0 confirmed — power 2 at 3× strength glides visibly yet
+    // stops well short of every other spawn (no contact, no shove).
+    chooseInward(g, "p0", 2);
     deadlineResolve(g); // the server's decision deadline fires
     expect(g.getState().phase).toBe("moving");
     pump(g);
     const s = g.getState();
     expect(s.phase).toBe("aiming");
-    // p0 moved; p1, p2, p3 stayed exactly at their positions.
-    expect(s.pawns[0].position.y).toBeGreaterThan(starts[0].y + 20);
+    // p0 moved (inward, toward the center); p1..p3 stayed exactly put.
+    expect(distFromCenter(s.pawns[0].position)).toBeLessThan(
+      distFromCenter(starts[0]) - 20
+    );
     expect(s.pawns[1].position).toEqual(starts[1]);
     expect(s.pawns[2].position).toEqual(starts[2]);
     expect(s.pawns[3].position).toEqual(starts[3]);
@@ -327,7 +357,9 @@ describe("simultaneous rounds — choosing and resolving", () => {
   it("[7] an unconfirmed player keeps the exact same position through the round", () => {
     const g = createGame({ players: specs(2) });
     const p1Start = { ...g.getState().pawns[1].position };
-    chooseInward(g, "p0", 5);
+    // Power 1 at 3× strength: p0 glides visibly yet stops far short of
+    // p1's opposite spawn (no contact, no shove — p1 must stay exact).
+    chooseInward(g, "p0", 1);
     deadlineResolve(g);
     pump(g);
     expect(g.getState().pawns[1].position).toEqual(p1Start);
@@ -338,7 +370,9 @@ describe("simultaneous rounds — choosing and resolving", () => {
     chooseInward(g, "p0", 2);
     expect(g.getState().phase).toBe("moving");
     pump(g);
-    expect(g.getState().pawns[1].position.y).toBeLessThan(p1Start.y - 20);
+    expect(distFromCenter(g.getState().pawns[1].position)).toBeLessThan(
+      distFromCenter(p1Start) - 20
+    );
     g.destroy();
   });
 
@@ -357,9 +391,10 @@ describe("simultaneous rounds — choosing and resolving", () => {
     expect(v0).toBeCloseTo(launchSpeedFor(3), 6);
     // …and p1's power-2 speed, from the SAME transition.
     expect(v1).toBeCloseTo(launchSpeedFor(2), 6);
-    // Neither pawn has moved yet (no step has run) — they start TOGETHER.
-    expect(s.pawns[0].position.y).toBe(CY - 240);
-    expect(s.pawns[1].position.y).toBe(CY + 240);
+    // Neither pawn has moved yet (no step has run) — they start TOGETHER,
+    // each still exactly on its own fixed spawn slot.
+    expect(s.pawns[0].position).toEqual(slotPosition(0));
+    expect(s.pawns[1].position).toEqual(slotPosition(1));
     g.destroy();
   });
 
@@ -480,7 +515,7 @@ describe("simultaneous rounds — choosing and resolving", () => {
     const g = createGame();
     const bystander = pawnAt("p2", CX, CY - 240, { colorIndex: 2 });
     g.loadState(knockoutSetup("p0", "p1", [bystander]));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5); // p0 confirmed; p1 victim silent
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2); // p0 confirmed; p1 victim silent
     // p1 AND p2 (both alive, unconfirmed) block the early end…
     expect(g.getState().phase).toBe("aiming");
     chooseInward(g, "p1", 1); // victim confirms…
@@ -661,7 +696,7 @@ describe("knocking an opponent over the rim", () => {
   it("[16] eliminates the victim mid-flight while the match is still moving", () => {
     const g = createGame();
     g.loadState(knockoutSetup("p0", "p1"));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5); // only p0 confirmed
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2); // only p0 confirmed
     deadlineResolve(g); // the server resolves the round
 
     let sawVictimOutWhileMoving = false;
@@ -686,7 +721,7 @@ describe("knocking an opponent over the rim", () => {
   it("[16] ends a two-player match with the mover as winner", () => {
     const g = createGame();
     g.loadState(knockoutSetup("p0", "p1"));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
     deadlineResolve(g);
     pump(g);
     const s = g.getState();
@@ -699,7 +734,7 @@ describe("knocking an opponent over the rim", () => {
     const g = createGame();
     const bystander = pawnAt("p2", CX, CY - 240, { colorIndex: 2 });
     g.loadState(knockoutSetup("p0", "p1", [bystander]));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
     deadlineResolve(g);
     pump(g);
     const s = g.getState();
@@ -716,7 +751,7 @@ describe("knocking an opponent over the rim", () => {
     const g = createGame();
     const bystander = pawnAt("p2", CX, CY - 240, { colorIndex: 2 });
     g.loadState(knockoutSetup("p0", "p1", [bystander]));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
     deadlineResolve(g);
     pump(g); // p1 eliminated, new round for p0 + p2
     expect(g.applyCommand({ type: "aim", playerId: "p1", x: CX, y: CY })).toEqual({
@@ -764,7 +799,7 @@ describe("knocking an opponent over the rim", () => {
   it("freezes the ghost in place (no background drift)", () => {
     const g = createGame();
     g.loadState(knockoutSetup("p0", "p1"));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
     deadlineResolve(g);
     pump(g); // finished: p1 out, p0 winner
     const frozen = { ...g.getState().pawns[1].position };
@@ -809,7 +844,7 @@ describe("consecutive eliminations across rounds", () => {
     const g = createGame();
     const bystander = pawnAt("p2", CX, CY - 240, { colorIndex: 2 });
     g.loadState(knockoutSetup("p0", "p1", [bystander]));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
     deadlineResolve(g);
     pump(g);
     expect(g.getState().phase).toBe("aiming");
@@ -822,15 +857,15 @@ describe("consecutive eliminations across rounds", () => {
       pawns: [
         // p0 drifted near the bottom after its own launch; put it back on the
         // crafted radial line as the victim.
-        { ...state.pawns[0], position: { x: CX, y: CY + 240 }, velocity: { x: 0, y: 0 } },
+        { ...state.pawns[0], position: { x: CX, y: CY + 290 }, velocity: { x: 0, y: 0 } },
         state.pawns[1], // eliminated ghost, parked outside
-        { ...state.pawns[2], position: { x: CX, y: CY + 195 }, velocity: { x: 0, y: 0 } },
+        { ...state.pawns[2], position: { x: CX, y: CY + 245 }, velocity: { x: 0, y: 0 } },
       ],
       round: { settleTicks: 0 },
       phase: "aiming",
       winnerId: null,
     });
-    chooseOutward(g, "p2", { x: 0, y: 1 }, 5);
+    chooseOutward(g, "p2", { x: 0, y: 1 }, 2);
     deadlineResolve(g);
     pump(g);
 
@@ -845,8 +880,8 @@ describe("consecutive eliminations across rounds", () => {
 describe("no survivor", () => {
   it("[16] finishes with a null winner when everybody leaves the arena", () => {
     const g = createGame();
-    // Two pawns already past the rim pass-over zone, flying outward fast:
-    // both cross the elimination boundary on the same ticks.
+    // Two pawns near opposite edges, flying outward fast: both cross the
+    // elimination boundary on the same ticks.
     g.loadState({
       phase: "moving",
       winnerId: null,
@@ -899,7 +934,7 @@ describe("the finished phase", () => {
   function finishedMatch(): GameHandle {
     const g = createGame();
     g.loadState(knockoutSetup("p0", "p1"));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
     deadlineResolve(g);
     pump(g);
     expect(g.getState().phase).toBe("finished");
@@ -995,10 +1030,12 @@ describe("loadState normalization (state-driven match rules)", () => {
     // A fully-confirmed aiming state is transient by construction — the
     // engine resolves it exactly like live play would have.
     const g = createGame();
+    // Power 1 at 3× strength: both confirmed pawns glide and settle inside
+    // the arena (stronger launches would fly the nearby rim instead).
     g.loadState(
       matchState([
-        pawnAt("p0", CX, CY - 100, { confirmed: true }),
-        pawnAt("p1", CX, CY + 100, { confirmed: true, power: 2 }),
+        pawnAt("p0", CX, CY - 100, { confirmed: true, power: 1 }),
+        pawnAt("p1", CX, CY + 100, { confirmed: true, power: 1 }),
       ])
     );
     expect(g.getState().phase).toBe("moving");
@@ -1119,7 +1156,7 @@ describe("N-player serialization and determinism", () => {
   it("[18] round-trips a finished state with per-pawn flags and the winner", () => {
     const g = createGame();
     g.loadState(knockoutSetup("p0", "p1"));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
     deadlineResolve(g);
     pump(g);
     const original = g.getState();
@@ -1137,7 +1174,7 @@ describe("N-player serialization and determinism", () => {
       const g = createGame();
       const bystander = pawnAt("p2", CX, CY - 240, { colorIndex: 2 });
       g.loadState(knockoutSetup("p0", "p1", [bystander]));
-      chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+      chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
       deadlineResolve(g);
       pump(g);
       return g;
@@ -1165,7 +1202,7 @@ describe("N-player serialization and determinism", () => {
     const engines = [createGame(), createGame()];
     const states = engines.map((g) => {
       g.loadState(knockoutSetup("p0", "p1"));
-      chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+      chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
       deadlineResolve(g);
       pump(g);
       return g.getState();
@@ -1180,7 +1217,7 @@ describe("N-player serialization and determinism", () => {
     const script = (g: GameHandle) => {
       const bystander = pawnAt("p2", CX, CY - 240, { colorIndex: 2 });
       g.loadState(knockoutSetup("p0", "p1", [bystander]));
-      chooseOutward(g, "p0", { x: 0, y: 1 }, 5); // p1 knocked out (deadline round)
+      chooseOutward(g, "p0", { x: 0, y: 1 }, 2); // p1 knocked out (deadline round)
       deadlineResolve(g);
       pump(g);
       chooseInward(g, "p2", 2); // full round: both survivors choose
@@ -1240,7 +1277,7 @@ describe("projection is caller-localized; the engine has no local player", () =>
   it("the winner does not depend on who is looking", () => {
     const g = createGame();
     g.loadState(knockoutSetup("p0", "p1"));
-    chooseOutward(g, "p0", { x: 0, y: 1 }, 5);
+    chooseOutward(g, "p0", { x: 0, y: 1 }, 2);
     deadlineResolve(g);
     pump(g);
     const state = g.getState();
@@ -1280,7 +1317,7 @@ describe("a server can run the whole match without any local identity", () => {
     const g = createGame();
     g.loadState(knockoutSetup("p0", "p1"));
     g.applyCommand({ type: "aim", playerId: "p0", x: CX, y: CY + 400 });
-    g.applyCommand({ type: "setPower", playerId: "p0", power: 5 });
+    g.applyCommand({ type: "setPower", playerId: "p0", power: 2 });
     g.applyCommand({ type: "confirmLaunch", playerId: "p0" });
     g.applyCommand({ type: "resolveRound" });
     while (g.getState().phase === "moving") g.update(DT);

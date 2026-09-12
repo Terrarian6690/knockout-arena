@@ -1,7 +1,14 @@
 import Matter from "matter-js";
 import { CONFIG } from "./config";
 import { createPhysicsWorld, type PhysicsWorld } from "./physics";
-import { spawnPositionAtAngle, isPawnOutOfBounds, floorRadius } from "./arena";
+import {
+  spawnPositionForSlot,
+  isPawnOutOfBounds,
+  initialArenaRadius,
+  clampArenaRadius,
+  shrinkDueAfterRound,
+  shrunkArenaRadius,
+} from "./arena";
 import { createPlayer, type Player } from "./player";
 import { createAimState, aimAt, launchVelocity } from "./aiming";
 import { createRoundState, checkSettled, type RoundState } from "./roundLogic";
@@ -41,6 +48,40 @@ import { projectSnapshot } from "./project";
  *     aiming round begins for all remaining alive players;
  *   - the match ends by the elimination rule alone (≤1 alive), exactly
  *     as before.
+ *
+ * SHRINKING ARENA — authoritative, deterministic, between rounds only:
+ *
+ *   - the playable radius is match state (GameState.arena.radius), not a
+ *     constant: it starts at CONFIG.arena.radius and drops by
+ *     CONFIG.arena.shrink.amount every CONFIG.arena.shrink.everyRounds
+ *     COMPLETED rounds, never below CONFIG.arena.shrink.minRadius;
+ *   - the shrink is applied at exactly ONE point — resolveRoundEnd, after
+ *     all movement has settled and before the next aiming round opens —
+ *     so it can never alter a round that is already resolving, and the
+ *     schedule is pure arithmetic on a counter (no clock, no randomness:
+ *     every client/server replay of the same states shrinks identically);
+ *   - shrinking moves the LOGICAL elimination boundary only. No wall or
+ *     barrier is ever created (the world still holds pawn bodies only),
+ *     so pawns keep leaving the arena freely;
+ *   - a pawn left outside the NEW boundary is eliminated by the engine
+ *     the moment the shrink lands — the same geometric rule, applied
+ *     immediately rather than waiting for the next tick.
+ *
+ * The countdown/warning players see is DERIVED from this state
+ * (arena.ts#arenaShrinkView) — clients never count rounds themselves.
+ *
+ * MATCH TIME LIMIT — a hard 4-minute cap (CONFIG.match.durationMs):
+ *
+ *   - the engine has NO clock. The server owns the deadline (gameHost)
+ *     and submits the match-level `timeUp` command when it fires, which
+ *     is the only way the limit reaches the simulation;
+ *   - `timeUp` ends the match through the ordinary finishMatch path into
+ *     the existing "finished" phase — never a new phase;
+ *   - the winner is the last pawn standing, or, with several still
+ *     alive, the survivor closest to the arena center (ties → roster
+ *     order). See finishByTimeLimit;
+ *   - it is rejected once the match is finished, so a match that ended
+ *     naturally before the limit can never be finished a second time.
  *
  * Intended ownership model for the multiplayer server:
  *
@@ -141,14 +182,23 @@ export function createGame(options?: GameOptions): GameHandle {
   }
 
   const physics: PhysicsWorld = createPhysicsWorld();
+  /**
+   * The arena the whole engine measures against. Its `radius` is MUTABLE
+   * match state (the shrinking arena): every geometry consumer —
+   * elimination, settling, spawning — reads this one object, so a shrink
+   * is applied in exactly one place and can never leave two radii
+   * disagreeing. `roundsSinceShrink` is the schedule's only counter.
+   */
   const arena = physics.arena;
+  let roundsSinceShrink = 0;
 
-  // Deterministic circular spawns: seat i sits at angle -π/2 + i·2π/N
-  // (player 1 at the top edge — identical to the classic single-player
-  // spawn — and the rest distributed evenly around the rim).
+  // Deterministic spawns on the arena's FIXED slot ring (arena.ts):
+  // seat i always occupies slot i, whatever the turnout, so a match with
+  // fewer than CONFIG.match.maxPlayers players leaves the unused slots
+  // as empty gaps instead of re-spacing everyone. The slot order keeps
+  // small matches spread out (seats 0 and 1 are diametrically opposed).
   const players: Player[] = specs.map((spec, i) => {
-    const spawnAngle = -Math.PI / 2 + (i * 2 * Math.PI) / specs.length;
-    const [spawnX, spawnY] = spawnPositionAtAngle(arena, spawnAngle);
+    const [spawnX, spawnY] = spawnPositionForSlot(arena, i);
     return createPlayer({
       id: spec.id,
       name: spec.name,
@@ -218,6 +268,60 @@ export function createGame(options?: GameOptions): GameHandle {
   }
 
   /**
+   * THE MATCH TIME LIMIT expired (the server's `timeUp` command).
+   *
+   * A hard stop: the match ends immediately, in whatever phase it was —
+   * mid-aiming, mid-flight, or between rounds. It always ends through
+   * the ordinary finishMatch path into the existing "finished" phase, so
+   * winner handling, settling and serialization are exactly what every
+   * other ending produces. No new phase, no special case downstream.
+   *
+   * THE VERDICT (deterministic, from authoritative state only):
+   *   - nobody alive        → no winner (null), like any other wipeout;
+   *   - exactly one alive   → that player wins, the ordinary rule;
+   *   - several alive       → TIE-BREAK: the survivor CLOSEST TO THE
+   *     ARENA CENTER wins. It reads only authoritative positions, it
+   *     needs no new state, and it is the natural fit for a shrinking
+   *     arena (holding the center is exactly what the match rewards).
+   *     Exact distance ties fall back to ROSTER ORDER (seat order, p0
+   *     first) — the same stable order everything else in the engine
+   *     uses — so the outcome never depends on iteration accidents,
+   *     floating-point noise or who reconnected when.
+   *
+   * Pure arithmetic on the current state: replaying the same state on
+   * any machine yields the same winner.
+   */
+  function finishByTimeLimit() {
+    const alive = players.filter((p) => !p.eliminated);
+    if (alive.length === 0) {
+      finishMatch(null);
+      return;
+    }
+    let best = alive[0];
+    let bestDistSq = distanceToCenterSq(best);
+    for (const p of alive.slice(1)) {
+      const d = distanceToCenterSq(p);
+      // Strict <: an exact tie keeps the earlier pawn, i.e. roster order.
+      if (d < bestDistSq) {
+        best = p;
+        bestDistSq = d;
+      }
+    }
+    finishMatch(best.id);
+  }
+
+  /** Squared distance from a pawn's CURRENT position to the arena center. */
+  function distanceToCenterSq(player: Player): number {
+    const body = bodies.get(player.id);
+    const pos = body
+      ? physics.position(body)
+      : { x: player.spawnX, y: player.spawnY };
+    const dx = pos.x - arena.centerX;
+    const dy = pos.y - arena.centerY;
+    return dx * dx + dy * dy;
+  }
+
+  /**
    * Begin the CURRENT round's movement phase. Every alive player whose
    * choice is confirmed gets their launch impulse applied in this ONE
    * synchronous transition — no physics step happens in between, so all
@@ -255,13 +359,65 @@ export function createGame(options?: GameOptions): GameHandle {
   }
 
   /**
-   * Resolve the end of a round (all movement settled). Either the match
-   * finishes — fewer than two pawns remain in a multi-pawn roster — or a
-   * NEW simultaneous aiming round begins: confirmations reset (aim
-   * indicators too; power selections are kept as each player's standing
-   * choice), and every remaining alive player chooses again.
+   * Advance the shrink schedule by one COMPLETED round and apply the
+   * shrink when it is due. Called from exactly one place
+   * (resolveRoundEnd), which is what makes "between rounds, never mid
+   * round" structural rather than a convention: all movement has
+   * settled, and the next aiming round has not opened yet.
+   *
+   * Shrinking is purely a change of the LOGICAL boundary — no body, no
+   * barrier, nothing physical is created. Pawns the smaller arena leaves
+   * outside are eliminated right here by the ordinary geometric rule, so
+   * the state a player sees is always self-consistent: everyone still
+   * alive is inside the current arena.
+   *
+   * Deterministic: a counter plus config arithmetic. No wall clock, no
+   * randomness, identical on every machine and after any state transfer.
+   */
+  function advanceShrinkSchedule() {
+    roundsSinceShrink += 1;
+    if (!shrinkDueAfterRound(roundsSinceShrink)) return;
+    roundsSinceShrink = 0;
+
+    const next = shrunkArenaRadius(arena.radius);
+    if (next === arena.radius) return; // at the minimum: nothing shrinks
+
+    arena.radius = next;
+
+    // The new boundary applies IMMEDIATELY: whoever the smaller floor
+    // left behind is out, by the very same geometric rule the tick loop
+    // uses. This does not re-run or alter the finished round's movement —
+    // it judges the positions that round already produced.
+    for (const p of players) {
+      if (p.eliminated) continue;
+      const body = bodies.get(p.id);
+      if (!body) continue;
+      const pos = physics.position(body);
+      if (isPawnOutOfBounds(arena, pos.x, pos.y, p.radius)) {
+        eliminatePawn(p, body);
+      }
+    }
+    // NOTHING else is touched. Survivors keep the exact positions the
+    // round left them in — the shrink judges the finished round's
+    // outcome, it never rewrites it (no re-simulation, no nudging pawns
+    // inward). A survivor may therefore legitimately straddle the new
+    // edge: still touching the floor is still alive, by the same rule as
+    // everywhere else.
+  }
+
+  /**
+   * Resolve the end of a round (all movement settled). The shrink
+   * schedule advances FIRST — the round is over, so its shrink (and any
+   * elimination the smaller arena causes) must be part of the verdict
+   * this round produces. Then either the match finishes — fewer than two
+   * pawns remain in a multi-pawn roster — or a NEW simultaneous aiming
+   * round begins: confirmations reset (aim indicators too; power
+   * selections are kept as each player's standing choice), and every
+   * remaining alive player chooses again.
    */
   function resolveRoundEnd() {
+    advanceShrinkSchedule();
+
     const alive = players.filter((p) => !p.eliminated);
     if (players.length >= 2 && alive.length === 1) {
       finishMatch(alive[0].id);
@@ -310,6 +466,13 @@ export function createGame(options?: GameOptions): GameHandle {
       round: {
         settleTicks: round.settleTicks,
       },
+      // The shrinking arena: the current radius plus the schedule's
+      // counter. Everything a client needs to draw the right arena and
+      // show the right warning is derived from these two numbers.
+      arena: {
+        radius: arena.radius,
+        roundsSinceShrink,
+      },
       pawns: players.map((p): PawnState => {
         const body = bodies.get(p.id);
         const k = body
@@ -357,9 +520,8 @@ export function createGame(options?: GameOptions): GameHandle {
    * Replace the entire state. Bodies are reused where pawn ids match and
    * created/removed otherwise, so the engine is fully state-driven — a
    * future server can boot a match from a deserialized N-player state.
-   * Eliminated pawns are restored as ghosts; the rim pass-over collision
-   * flag needs no serialization (it is re-derived from position + velocity
-   * before every tick, see tickSimulation).
+   * Eliminated pawns are restored as ghosts; alive pawns collide with
+   * other pawns (there is no wall state to restore).
    *
    * The state is then NORMALIZED against the match rules — defensively, and
    * without changing how a locally simulated match would continue:
@@ -399,12 +561,9 @@ export function createGame(options?: GameOptions): GameHandle {
         angle: p.angle,
         angularVelocity: p.angularVelocity,
       });
-      // Eliminated pawns come back as ghosts; alive pawns get a clean
-      // collision slate (tickSimulation re-derives the pass-over decision).
+      // Eliminated pawns come back as ghosts; alive pawns collide with
+      // other pawns (there is no wall state to restore).
       physics.setGhost(body, p.eliminated);
-      if (!p.eliminated) {
-        physics.setCollidesWithWalls(body, true);
-      }
       players.push({
         id: p.id,
         name: p.name,
@@ -426,6 +585,13 @@ export function createGame(options?: GameOptions): GameHandle {
 
     winner = s.winnerId;
     round.settleTicks = s.round.settleTicks;
+    // The shrinking arena travels with the state, so a reconnecting
+    // client, a restored match or a peer process continues at exactly the
+    // authoritative size and schedule position. ABSENT (a state from
+    // before the mechanic) reads as a fresh full-size arena; the radius
+    // is clamped to the legal range as a trust boundary.
+    arena.radius = clampArenaRadius(s.arena?.radius ?? initialArenaRadius());
+    roundsSinceShrink = Math.max(0, Math.trunc(s.arena?.roundsSinceShrink ?? 0));
     setPhase(s.phase);
     accumulator = 0;
 
@@ -517,6 +683,11 @@ export function createGame(options?: GameOptions): GameHandle {
   }
 
   function onReset() {
+    // A fresh match starts in a FULL-SIZE arena with the shrink schedule
+    // back at zero — restored BEFORE the pawns, so they return to spawn
+    // points computed for the full floor rather than the shrunken one.
+    arena.radius = initialArenaRadius();
+    roundsSinceShrink = 0;
     for (const p of players) {
       const body = bodies.get(p.id);
       if (body) {
@@ -524,7 +695,6 @@ export function createGame(options?: GameOptions): GameHandle {
         Matter.Body.setPosition(body, { x: p.spawnX, y: p.spawnY });
         physics.stop(body);
         physics.setGhost(body, false);
-        physics.setCollidesWithWalls(body, true);
       }
       p.eliminated = false;
       p.power = CONFIG.power.default;
@@ -593,6 +763,22 @@ export function createGame(options?: GameOptions): GameHandle {
         emit();
         return { ok: true };
       }
+      case "timeUp": {
+        // Match-level: the server's match time limit. Players never reach
+        // this through the multiplayer wire (the room manager rejects it
+        // as unauthorized); solo/local callers may use it for testing.
+        //
+        // IDEMPOTENT BY PHASE: an already-finished match is never
+        // finished twice — a natural winner decided before the limit
+        // stands, and a late/duplicate timeUp is rejected rather than
+        // re-running the verdict or re-emitting a finish.
+        if (round.phase === "finished") {
+          return { ok: false, reason: "wrong-phase" };
+        }
+        finishByTimeLimit();
+        emit();
+        return { ok: true };
+      }
       case "reset":
         onReset(); // accepted in every phase; emits
         return { ok: true };
@@ -611,36 +797,22 @@ export function createGame(options?: GameOptions): GameHandle {
   /**
    * One fixed simulation tick.
    *
-   * 1. Rim pass-over decision — BEFORE stepping, for EVERY pawn still in
-   *    the match (a pure function of position and velocity, so it is fully
-   *    deterministic): the rim is a low lip. A pawn whose outward radial
-   *    speed is at least `knockoutSpeed` as it reaches the rim flies over
-   *    it (wall collision disabled for that pawn); slower or glancing
-   *    contacts bounce off normally. The decision zone is widened by two
-   *    max-speed steps so it always happens at least one tick before
-   *    contact, and once a pawn's center is past the rim the walls stay off
-   *    until reset. This applies to shoved opponents too — knocking another
-   *    pawn over the rim is the core mechanic.
-   * 2. Step the physics by the fixed delta — ALL moving pawns (this round's
-   *    confirmed movers and anyone they shove) advance together.
-   * 3. Elimination pass — pure arena geometry, checked for EVERY alive
+   * 1. Step the physics by the fixed delta — ALL moving pawns (this round's
+   *    confirmed movers and anyone they shove) advance together. There is
+   *    no rim decision to make: the arena has no physical wall, so pawns
+   *    glide straight off the floor at any speed. Knocking another pawn
+   *    off the floor is the core mechanic.
+   * 2. Elimination pass — pure arena geometry, checked for EVERY alive
    *    pawn. Several pawns can leave the floor on the same tick. When no
    *    pawn survives, the match ends immediately with no winner.
-   * 4. Settle: the round resolves when every remaining pawn has come to
+   * 3. Settle: the round resolves when every remaining pawn has come to
    *    rest (or the timeout fires) — shoved opponents must stop gliding
    *    too before the next round begins. Every pawn is then brought to its
    *    canonical resting state (see physics.settleOnFloor): stopped AND
-   *    projected back onto the floor if it overlapped the rim, so a
+   *    projected back onto the floor if it ended past the floor edge, so a
    *    settled state serializes and reconstructs deterministically.
    */
   function tickSimulation() {
-    for (const p of players) {
-      if (p.eliminated) continue;
-      const body = bodies.get(p.id);
-      if (!body) continue;
-      updateRimPassOver(p, body);
-    }
-
     physics.step(FIXED_DT);
     round.settleTicks += 1;
 
@@ -672,22 +844,6 @@ export function createGame(options?: GameOptions): GameHandle {
       }
       resolveRoundEnd();
     }
-  }
-
-  /** Re-derive the rim pass-over collision decision for one pawn. */
-  function updateRimPassOver(player: Player, body: Matter.Body) {
-    const rimContact = floorRadius(arena) - player.radius;
-    const unlockZone = rimContact - CONFIG.launch.maxSpeed * 2 - 1;
-    const pos = physics.position(body);
-    const vel = physics.velocity(body);
-    const dx = pos.x - arena.centerX;
-    const dy = pos.y - arena.centerY;
-    const dist = Math.hypot(dx, dy) || 1;
-    const outwardSpeed = (vel.x * dx + vel.y * dy) / dist;
-    const fliesOverRim =
-      dist > unlockZone && outwardSpeed >= CONFIG.launch.knockoutSpeed;
-    const alreadyPastRim = dist > rimContact;
-    physics.setCollidesWithWalls(body, !fliesOverRim && !alreadyPastRim);
   }
 
   /**

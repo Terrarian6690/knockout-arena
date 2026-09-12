@@ -5,9 +5,13 @@ import type { Vec2 } from "./types";
 
 const { Engine, Bodies, Composite, Body, Events } = Matter;
 
-/** Collision category bits: pawns and the arena rim. */
+/**
+ * Collision category bits. There is exactly one: pawns collide with each
+ * other and nothing else — the arena has NO physical wall (no ring bodies
+ * exist in the world at all), so outward launches always leave the floor
+ * and elimination is decided purely by geometry (see arena.ts).
+ */
 const CAT_PAWN = 0x0001;
-const CAT_WALL = 0x0002;
 
 /**
  * Plain-data kinematics of a physics body. This is the ONLY shape from the
@@ -25,8 +29,8 @@ export interface BodyKinematics {
  * Physics module — the only place that knows about Matter.js.
  *
  * Responsibilities:
- *  - own the Matter engine + world
- *  - create pawn bodies and the arena boundary walls
+ *  - own the Matter engine + world (pawn bodies ONLY — no boundary walls)
+ *  - create pawn bodies that collide with each other
  *  - step the simulation and expose a clean query interface
  *
  * The rest of the code (game.ts, turnLogic.ts) talks to this module through a
@@ -36,12 +40,10 @@ export interface BodyKinematics {
 export interface PhysicsWorld {
   engine: Matter.Engine;
   arena: Arena;
-  /** Create a circular pawn body. */
+  /** Create a circular pawn body (collides with other pawns only). */
   createPawnBody(id: string, x: number, y: number, radius: number): Matter.Body;
   /** Remove a pawn body from the world. */
   removePawnBody(body: Matter.Body): void;
-  /** Rebuild boundary walls (called once on init or after resize). */
-  buildBoundary(): void;
   /** Advance the physics by one FIXED timestep (supplied by the game loop). */
   step(dtMs: number): void;
   /** Apply a velocity impulse (direct Δv) to a body. */
@@ -50,7 +52,7 @@ export interface PhysicsWorld {
   position(body: Matter.Body): { x: number; y: number };
   /** Read a body's velocity. */
   velocity(body: Matter.Body): { x: number; y: number };
-  /** The body's configured label (e.g. "pawn:p0", "arenaWall"). */
+  /** The body's configured label (e.g. "pawn:p0"). */
   label(body: Matter.Body): string;
   /** Stop a body in place. */
   stop(body: Matter.Body): void;
@@ -67,12 +69,6 @@ export interface PhysicsWorld {
    */
   setBodyState(body: Matter.Body, state: BodyKinematics): void;
   /**
-   * Toggle whether a body collides with the arena rim. Used for the rim
-   * pass-over rule: a fast head-on contact clears the lip and stops
-   * colliding with it so the pawn can leave the floor.
-   */
-  setCollidesWithWalls(body: Matter.Body, enabled: boolean): void;
-  /**
    * Toggle whether a body participates in ANY collision. Used to make an
    * eliminated pawn a non-collidable "ghost": it stays in the world (frozen,
    * still rendered where it left the arena) but neither blocks nor is pushed
@@ -81,9 +77,9 @@ export interface PhysicsWorld {
   setGhost(body: Matter.Body, ghosted: boolean): void;
   /**
    * Bring a pawn to its canonical resting state at the end of a turn: stop
-   * it (velocity + solver buffers zeroed) and, if its center ended up
-   * overlapping the rim, project it back onto the floor. A settled pawn
-   * therefore never keeps a penetrating contact alive — which is what makes
+   * it (velocity + solver buffers zeroed) and, if its center ended up past
+   * the floor edge, project it back onto the floor. A settled pawn therefore
+   * never rests straddling the logical boundary — which is what makes
    * "settled" a deterministic, serializable state boundary (Matter's
    * warm-started contact corrections would otherwise keep nudging the body
    * microscopically on every later step, invisibly in velocity but
@@ -107,56 +103,10 @@ export function createPhysicsWorld(): PhysicsWorld {
 
   const world = engine.world;
 
-  // Keep a reference to boundary pieces so we can rebuild them.
-  let boundaryBodies: Matter.Body[] = [];
-
-  function buildBoundary() {
-    // Remove any previous boundary pieces.
-    for (const b of boundaryBodies) {
-      Composite.remove(world, b);
-    }
-    boundaryBodies = [];
-
-    const r = floorRadius(arena);
-    const wall = arena.wallThickness;
-    const cx = arena.centerX;
-    const cy = arena.centerY;
-
-    // Build an inner circle of static segments approximating the boundary.
-    // The number of segments balances smoothness against cost.
-    const segments = 64;
-    const ringRadius = r + wall / 2 - 1;
-
-    for (let i = 0; i < segments; i++) {
-      const a0 = (i / segments) * Math.PI * 2;
-      const a1 = ((i + 1) / segments) * Math.PI * 2;
-      const p0 = {
-        x: cx + Math.cos(a0) * ringRadius,
-        y: cy + Math.sin(a0) * ringRadius,
-      };
-      const p1 = {
-        x: cx + Math.cos(a1) * ringRadius,
-        y: cy + Math.sin(a1) * ringRadius,
-      };
-      const segment = Bodies.rectangle(
-        (p0.x + p1.x) / 2,
-        (p0.y + p1.y) / 2,
-        Math.hypot(p1.x - p0.x, p1.y - p0.y) + wall * 0.6,
-        wall,
-        {
-          isStatic: true,
-          angle: Math.atan2(p1.y - p0.y, p1.x - p0.x),
-          friction: 0.01,
-          restitution: CONFIG.pawn.restitution,
-          label: "arenaWall",
-          collisionFilter: { category: CAT_WALL, mask: CAT_PAWN },
-        }
-      );
-      boundaryBodies.push(segment);
-    }
-
-    Composite.add(world, boundaryBodies);
-  }
+  // NOTE: no boundary bodies are ever built. The arena has no physical
+  // wall — pawns glide straight off the floor and elimination is decided
+  // purely by geometry (see arena.ts). Nothing invisible takes the wall's
+  // place: the world's only colliders are the pawns themselves.
 
   function createPawnBody(
     id: string,
@@ -171,9 +121,8 @@ export function createPhysicsWorld(): PhysicsWorld {
       frictionAir: CONFIG.pawn.frictionAir,
       frictionStatic: CONFIG.pawn.frictionStatic,
       restitution: CONFIG.pawn.restitution,
-      // Pawns collide with other pawns and with the rim; the rim can be
-      // toggled off per-pawn for the pass-over rule (see setCollidesWithWalls).
-      collisionFilter: { category: CAT_PAWN, mask: CAT_PAWN | CAT_WALL },
+      // Pawns collide with other pawns only — there is no rim to hit.
+      collisionFilter: { category: CAT_PAWN, mask: CAT_PAWN },
     });
     Composite.add(world, body);
     return body;
@@ -263,15 +212,8 @@ export function createPhysicsWorld(): PhysicsWorld {
     Body.setAngularVelocity(body, state.angularVelocity);
   }
 
-  function setCollidesWithWalls(body: Matter.Body, enabled: boolean) {
-    if (body.collisionFilter.mask === 0) return; // ghosts stay inert
-    body.collisionFilter.mask = enabled
-      ? CAT_PAWN | CAT_WALL
-      : CAT_PAWN;
-  }
-
   function setGhost(body: Matter.Body, ghosted: boolean) {
-    body.collisionFilter.mask = ghosted ? 0 : CAT_PAWN | CAT_WALL;
+    body.collisionFilter.mask = ghosted ? 0 : CAT_PAWN;
     if (ghosted) {
       // A ghost must be truly frozen: drop any cached collision corrections
       // (see clearSolverBuffers) so nothing nudges it after elimination.
@@ -280,9 +222,8 @@ export function createPhysicsWorld(): PhysicsWorld {
   }
 
   function settleOnFloor(body: Matter.Body, pawnRadius: number) {
-    // The wall ring is inset by 1 unit inside the floor edge (see
-    // buildBoundary), so a pawn's surface touches it when its center is at
-    // floorRadius - pawnRadius - 1 from the arena center.
+    // A settled pawn rests fully on the floor with a 1-unit deterministic
+    // margin inside the logical edge — never straddling the boundary.
     const contactDist = floorRadius(arena) - pawnRadius - 1;
     const dx = body.position.x - arena.centerX;
     const dy = body.position.y - arena.centerY;
@@ -319,15 +260,11 @@ export function createPhysicsWorld(): PhysicsWorld {
     Engine.clear(engine);
   }
 
-  // Build the initial boundary.
-  buildBoundary();
-
   return {
     engine,
     arena,
     createPawnBody,
     removePawnBody,
-    buildBoundary,
     step,
     applyImpulse,
     position,
@@ -336,7 +273,6 @@ export function createPhysicsWorld(): PhysicsWorld {
     stop,
     bodyState,
     setBodyState,
-    setCollidesWithWalls,
     setGhost,
     settleOnFloor,
     onCollision,

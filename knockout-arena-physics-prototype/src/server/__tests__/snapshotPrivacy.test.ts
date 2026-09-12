@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { CONFIG, type GameStateSnapshot } from "../../game";
+import {
+  CONFIG,
+  createArena,
+  spawnPositionForSlot,
+  type GameStateSnapshot,
+} from "../../game";
 import { createGameServer, type GameServer, type Session } from "../index";
 
 /**
@@ -24,6 +29,34 @@ import { createGameServer, type GameServer, type Session } from "../index";
  *
  * Everything here is synchronous command/response — no real waiting.
  */
+
+/**
+ * Aim targets and their resulting unit directions, DERIVED from each
+ * seat's fixed spawn slot: every seat aims at the arena center, so each
+ * gets a distinct direction (they sit on opposite sides). Deriving keeps
+ * these privacy assertions tied to the one spawn-position source.
+ */
+const AIM_AT_CENTER = { x: CONFIG.arena.centerX, y: CONFIG.arena.centerY };
+const INWARD_UNIT = Array.from(
+  { length: CONFIG.match.maxPlayers },
+  (_, slot) => {
+    const [sx, sy] = spawnPositionForSlot(createArena(), slot);
+    const dx = CONFIG.arena.centerX - sx;
+    const dy = CONFIG.arena.centerY - sy;
+    const len = Math.hypot(dx, dy);
+    return { x: dx / len, y: dy / len };
+  }
+);
+
+/** Assert a projected direction matches a seat's inward unit vector. */
+function expectDirection(
+  actual: { x: number; y: number } | null | undefined,
+  expected: { x: number; y: number }
+): void {
+  expect(actual).not.toBeNull();
+  expect(actual!.x).toBeCloseTo(expected.x, 9);
+  expect(actual!.y).toBeCloseTo(expected.y, 9);
+}
 
 const liveServers: GameServer[] = [];
 function newServer(): GameServer {
@@ -87,10 +120,10 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
 
     // Both players aim in opposite directions (p0 top → down, p1 bottom → up).
     expect(
-      server.submitCommand(sessions[0], { type: "aim", x: 450, y: 550 }).ok
+      server.submitCommand(sessions[0], { type: "aim", ...AIM_AT_CENTER }).ok
     ).toBe(true);
     expect(
-      server.submitCommand(sessions[1], { type: "aim", x: 450, y: 150 }).ok
+      server.submitCommand(sessions[1], { type: "aim", ...AIM_AT_CENTER }).ok
     ).toBe(true);
 
     // p0 has locked in: readiness is public, direction is not.
@@ -110,8 +143,9 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
     expect(view1.phase).toBe("aiming");
 
     // Each viewer sees their OWN current direction…
-    expect(view0.aimDirection).toEqual({ x: 0, y: 1 }); // p0 aimed down
-    expect(view1.aimDirection).toEqual({ x: 0, y: -1 }); // p1 aimed up
+    // Each viewer sees their OWN inward aim — distinct per seat.
+    expectDirection(view0.aimDirection, INWARD_UNIT[0]);
+    expectDirection(view1.aimDirection, INWARD_UNIT[1]);
     expect(view0.power).toBe(2); // own (just-confirmed) power
 
     // …and the other player's pawn exposes ONLY public facts — there is
@@ -150,7 +184,7 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
 
     // Only p0 commits a choice (down, power 3); p1 stays silent.
     expect(
-      server.submitCommand(sessions[0], { type: "aim", x: 450, y: 550 }).ok
+      server.submitCommand(sessions[0], { type: "aim", ...AIM_AT_CENTER }).ok
     ).toBe(true);
     expect(
       server.submitCommand(sessions[0], {
@@ -170,7 +204,7 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
       expect(view.phase).toBe("moving");
       // The committed launch — exact direction and power — is public now.
       expect(view.pawns.find((p) => p.id === "p0")!.launch).toEqual({
-        direction: { x: 0, y: 1 },
+        direction: INWARD_UNIT[0],
         power: 3,
       });
       // The silent player launched nothing; no fake direction exists.
@@ -185,7 +219,7 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
 
     // p0 commits, then their connection dies (the seat is reserved).
     expect(
-      server.submitCommand(sessions[0], { type: "aim", x: 450, y: 550 }).ok
+      server.submitCommand(sessions[0], { type: "aim", ...AIM_AT_CENTER }).ok
     ).toBe(true);
     expect(
       server.submitCommand(sessions[0], { type: "confirmLaunch" }).ok
@@ -204,7 +238,7 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
     const view = last(asP1);
     expect(view.phase).toBe("moving");
     expect(view.pawns.find((p) => p.id === "p0")!.launch).toEqual({
-      direction: { x: 0, y: 1 },
+      direction: INWARD_UNIT[0],
       power: CONFIG.power.default,
     });
   });
@@ -216,10 +250,10 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
 
     // Both aim; p0 drops and reconnects mid-round.
     expect(
-      server.submitCommand(sessions[0], { type: "aim", x: 450, y: 550 }).ok
+      server.submitCommand(sessions[0], { type: "aim", ...AIM_AT_CENTER }).ok
     ).toBe(true);
     expect(
-      server.submitCommand(sessions[1], { type: "aim", x: 450, y: 150 }).ok
+      server.submitCommand(sessions[1], { type: "aim", ...AIM_AT_CENTER }).ok
     ).toBe(true);
     expect(server.reserve(sessions[0])).toEqual({ ok: true });
     const recovered = server.reconnect(tokens[0]);
@@ -233,7 +267,7 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
     const view = last(asRecovered);
     expect(view.phase).toBe("aiming");
     expect(view.localPawnId).toBe("p0"); // the same seat's own projection
-    expect(view.aimDirection).toEqual({ x: 0, y: 1 }); // own aim, restored
+    expectDirection(view.aimDirection, INWARD_UNIT[0]); // own aim, restored
     expect(view.pawns.find((p) => p.id === "p1")!.launch).toBeNull();
     // And the aiming round itself was untouched: the deadline metadata is
     // still stamped (same armed window — reconnect reset nothing).

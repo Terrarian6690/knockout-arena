@@ -5,6 +5,7 @@ import {
 } from "../../network/displayName";
 import type { RoomState, RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
+import { copyTextToClipboard, getInviteUrl } from "./invite";
 import { MAX_SEATS, MIN_PLAYERS, SeatList, seatLabel } from "./SeatList";
 
 /**
@@ -23,6 +24,25 @@ import { MAX_SEATS, MIN_PLAYERS, SeatList, seatLabel } from "./SeatList";
 
 /** How long "Copied!" stays visible after a successful copy (ms). */
 const COPY_FEEDBACK_MS = 1_600;
+
+/**
+ * The Web Share API surface (not in every browser's typings): `share`
+ * opens the OS share sheet and rejects with an AbortError when the user
+ * dismisses it.
+ */
+type WebShareNavigator = Navigator & {
+  share?: (data: { title?: string; text?: string; url?: string }) => Promise<void>;
+};
+
+/** Whether a failed share() is just the user dismissing the sheet. */
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name: unknown }).name === "AbortError"
+  );
+}
 
 /** The app's keyboard-focus ring (same as the game screen's controls). */
 const FOCUS_RING =
@@ -93,9 +113,18 @@ export function RoomPanel({
   // that reverts the "Copied!" feedback. Cleared on unmount.
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<number | null>(null);
+  // Local, purely visual: the Invite button's one-shot feedback (success
+  // or failure), with the same short-lived timer. Cleared on unmount.
+  const [inviteFeedback, setInviteFeedback] = useState<{
+    message: string;
+    ok: boolean;
+  } | null>(null);
+  const inviteTimer = useRef<number | null>(null);
   useEffect(() => {
     return () => {
       if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+      if (inviteTimer.current !== null)
+        window.clearTimeout(inviteTimer.current);
     };
   }, []);
 
@@ -105,6 +134,16 @@ export function RoomPanel({
     copyTimer.current = window.setTimeout(() => {
       setCopied(false);
       copyTimer.current = null;
+    }, COPY_FEEDBACK_MS);
+  };
+
+  const flashInviteFeedback = (message: string, ok: boolean) => {
+    setInviteFeedback({ message, ok });
+    if (inviteTimer.current !== null)
+      window.clearTimeout(inviteTimer.current);
+    inviteTimer.current = window.setTimeout(() => {
+      setInviteFeedback(null);
+      inviteTimer.current = null;
     }, COPY_FEEDBACK_MS);
   };
 
@@ -134,42 +173,47 @@ export function RoomPanel({
   };
 
   const handleCopyCode = async () => {
-    // Prefer the async Clipboard API. TWO fallback triggers: the API being
-    // absent (plain-http previews) AND the write being rejected (embedded
-    // iframe without clipboard permission) — both drop to the legacy
-    // execCommand path, which works inside a real user click.
-    let copied = false;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(roomCode);
-        copied = true;
-      }
-    } catch {
-      // Permission denied / not allowed — try the legacy path below.
+    // The code stays on screen, big and selectable; only a real success
+    // flashes "Copied!" — a false claim would lie.
+    if (await copyTextToClipboard(roomCode)) flashCopied();
+  };
+
+  const handleInvite = async () => {
+    const url = getInviteUrl(roomCode);
+    if (url === null) {
+      flashInviteFeedback("Couldn't share invite", false);
+      return;
     }
-    if (!copied) {
+    // The Web Share API (mobile browsers, share-sheet desktops) when the
+    // browser offers it; otherwise the invite link goes on the clipboard.
+    const nav = navigator as WebShareNavigator;
+    if (typeof nav.share === "function") {
       try {
-        const helper = document.createElement("textarea");
-        helper.value = roomCode;
-        helper.setAttribute("readonly", "");
-        helper.style.position = "fixed";
-        helper.style.opacity = "0";
-        document.body.appendChild(helper);
-        helper.select();
-        copied = document.execCommand("copy");
-        document.body.removeChild(helper);
-      } catch {
-        // Legacy path unavailable too — the code stays on screen, big and
-        // selectable; showing a false "Copied!" would lie.
+        await nav.share({
+          title: "Knockout Arena",
+          text: `Join my Knockout Arena room! Code: ${roomCode}`,
+          url,
+        });
+        flashInviteFeedback("Shared!", true);
+      } catch (error) {
+        // A dismissed share sheet is not an error — stay silent. Anything
+        // else is honest failure feedback; the code is still on screen.
+        if (isAbortError(error)) return;
+        flashInviteFeedback("Couldn't share invite", false);
       }
+      return;
     }
-    if (copied) flashCopied();
+    if (await copyTextToClipboard(url)) {
+      flashInviteFeedback("Link copied!", true);
+    } else {
+      flashInviteFeedback("Couldn't share invite", false);
+    }
   };
 
   return (
     <div
       data-testid="room-panel"
-      className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.02] p-6 sm:p-8"
+      className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5"
     >
       <div className="flex items-center justify-between">
         <span className="text-[11px] uppercase tracking-widest text-white/50">
@@ -186,17 +230,17 @@ export function RoomPanel({
         </span>
       </div>
 
-      <div className="mt-3 text-center">
+      <div className="mt-2 text-center">
         <div className="text-[11px] uppercase tracking-widest text-white/50">
           Room code
         </div>
         <div
           data-testid="room-code"
-          className="mt-1 font-mono text-4xl font-black tracking-[0.2em] text-amber-400"
+          className="mt-1 font-mono text-3xl font-black tracking-[0.2em] text-amber-400"
         >
           {roomCode}
         </div>
-        <div className="mt-2 flex items-center justify-center gap-3">
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
           <button
             type="button"
             onClick={handleCopyCode}
@@ -209,12 +253,36 @@ export function RoomPanel({
           >
             Copy Code
           </button>
+          <button
+            type="button"
+            onClick={handleInvite}
+            data-testid="invite-button"
+            className={cn(
+              "rounded-xl border border-white/15 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/80 transition-colors",
+              "hover:bg-white/10 active:scale-95",
+              FOCUS_RING
+            )}
+          >
+            Invite
+          </button>
           <span
             data-testid="copy-feedback"
             role="status"
             className="text-xs font-semibold text-emerald-300"
           >
             {copied ? "Copied!" : ""}
+          </span>
+          <span
+            data-testid="invite-feedback"
+            role="status"
+            className={cn(
+              "text-xs font-semibold",
+              inviteFeedback?.ok === false
+                ? "text-red-300"
+                : "text-emerald-300"
+            )}
+          >
+            {inviteFeedback?.message ?? ""}
           </span>
         </div>
         {roomState === "waiting" && (
@@ -302,7 +370,7 @@ export function RoomPanel({
         </div>
       )}
 
-      <div className="mt-6">
+      <div className="mt-4">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[11px] uppercase tracking-widest text-white/50">
             Players
@@ -325,7 +393,7 @@ export function RoomPanel({
       {roomState === "finished" && (
         <div
           data-testid="match-result"
-          className="mt-6 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-4 text-center"
+          className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-center"
         >
           <div className="text-3xl">🏆</div>
           <p className="mt-1 text-lg font-black text-emerald-300">

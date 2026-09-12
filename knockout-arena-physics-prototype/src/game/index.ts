@@ -35,6 +35,7 @@ export { validateCommand, withPlayerId } from "./commands";
 // ── Authoritative state (serialization boundary) ──────────────────────────
 export type {
   GameState,
+  ArenaState,
   PawnState,
   PawnAimState,
   LaunchSelection,
@@ -46,14 +47,38 @@ export {
 } from "./state";
 
 // ── Client/view projection ────────────────────────────────────────────────
-export type { GamePhase, GameStateSnapshot, PawnSnapshot, Vec2 } from "./types";
+export type {
+  ArenaSnapshot,
+  GamePhase,
+  GameStateSnapshot,
+  PawnSnapshot,
+  Vec2,
+} from "./types";
 export { projectSnapshot } from "./project";
 
 // ── World model + tuning ──────────────────────────────────────────────────
 // The arena geometry and every tuning constant (including the color palette)
 // are owned by the engine so that any renderer — this client, a spectating
 // client, a server-side preview — draws the same world.
-export { createArena, floorRadius, type Arena } from "./arena";
+export {
+  createArena,
+  floorRadius,
+  // The shrinking arena: the snapshot → geometry accessor clients draw
+  // with, plus the schedule's derived helpers. All of it reads the
+  // AUTHORITATIVE radius — no consumer re-implements the schedule.
+  arenaFromSnapshot,
+  arenaShrinkView,
+  initialArenaRadius,
+  minArenaRadius,
+  isMinArenaRadius,
+  // The FIXED spawn slots (CONFIG.match.maxPlayers of them, evenly
+  // spaced): the single source of spawn positions, shared by the engine
+  // and anything that needs to reason about where seats start.
+  spawnRingRadius,
+  spawnSlotAngle,
+  spawnPositionForSlot,
+  type Arena,
+} from "./arena";
 export { CONFIG } from "./config";
 export { playerColor, playerStroke } from "./player";
 export { indicatorLength, aimAt } from "./aiming";

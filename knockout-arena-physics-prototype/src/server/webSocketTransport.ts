@@ -108,6 +108,12 @@ export interface TransportOptions {
    * game server; default 10 000 ms.
    */
   roundDecisionTimeoutMs?: number;
+  /**
+   * The hard match time limit for every match (see createGameHost):
+   * after this many milliseconds the server ends the match. Only used
+   * when this transport creates its own game server; default 4 minutes.
+   */
+  matchDurationMs?: number;
 }
 
 const DEFAULT_SNAPSHOT_BUFFER_LIMIT = 256 * 1024;
@@ -581,6 +587,7 @@ export async function createWebSocketTransport(
     createGameServer({
       reconnectReservationMs: options.reconnectReservationMs,
       roundDecisionTimeoutMs: options.roundDecisionTimeoutMs,
+      matchDurationMs: options.matchDurationMs,
     });
   const core = createTransportCore(gameServer, {
     snapshotBufferLimitBytes: options.snapshotBufferLimitBytes,

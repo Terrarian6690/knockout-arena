@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CONFIG,
+  createArena,
   createGame,
   deserializeGameState,
+  spawnPositionForSlot,
   projectSnapshot,
   serializeGameState,
   validateGameState,
@@ -45,19 +47,47 @@ import type { GameState } from "../state";
 const CX = CONFIG.arena.centerX;
 const DT = CONFIG.simulation.fixedTimestepMs;
 
-/** Aim targets that yield exact axis-aligned unit directions per seat. */
-const AIM_TARGETS = [
-  { x: 450, y: 550 }, // p0 → straight down  (0, 1)
-  { x: 250, y: 350 }, // p1 → straight left  (-1, 0)
-  { x: 450, y: 150 }, // p2 → straight up    (0, -1)
-  { x: 650, y: 350 }, // p3 → straight right (1, 0)
-];
-const AIM_DIRECTIONS = [
-  { x: 0, y: 1 },
-  { x: -1, y: 0 },
-  { x: 0, y: -1 },
-  { x: 1, y: 0 },
-];
+/**
+ * Aim targets and the exact unit direction each produces, DERIVED from
+ * the seat's fixed spawn slot (arena.ts) so the reveal assertions follow
+ * the one spawn-position source of truth.
+ *
+ * Every seat aims straight at the arena center: the resulting direction
+ * is the unit vector from that seat's spawn toward the middle, which is
+ * distinct for every slot (they sit on different sides of the arena) —
+ * exactly what these privacy tests need.
+ */
+const ARENA = createArena();
+const AIM_TARGETS = Array.from({ length: CONFIG.match.maxPlayers }, () => ({
+  x: CONFIG.arena.centerX,
+  y: CONFIG.arena.centerY,
+}));
+const AIM_DIRECTIONS = Array.from(
+  { length: CONFIG.match.maxPlayers },
+  (_, slot) => {
+    const [sx, sy] = spawnPositionForSlot(ARENA, slot);
+    const dx = CONFIG.arena.centerX - sx;
+    const dy = CONFIG.arena.centerY - sy;
+    const len = Math.hypot(dx, dy);
+    return { x: dx / len, y: dy / len };
+  }
+);
+
+/** Assert a projected aim/launch direction equals a slot's inward unit. */
+function expectDirection(
+  actual: { x: number; y: number } | null | undefined,
+  expected: { x: number; y: number }
+): void {
+  expect(actual).not.toBeNull();
+  expect(actual!.x).toBeCloseTo(expected.x, 9);
+  expect(actual!.y).toBeCloseTo(expected.y, 9);
+}
+
+/**
+ * The direction the engine launches with when a player never aimed (the
+ * pawn's initial aim state) — used by the "silent player" reveal case.
+ */
+const DEFAULT_LAUNCH_DIRECTION = { x: 0, y: -1 };
 
 const liveGames: GameHandle[] = [];
 function game(n: number): GameHandle {
@@ -107,8 +137,8 @@ describe("committed launches — aiming privacy", () => {
     // p0 aims down, p1 aims up — each toward the arena center's far side.
     run(
       g,
-      { type: "aim", playerId: "p0", x: 450, y: 550 },
-      { type: "aim", playerId: "p1", x: 450, y: 150 }
+      { type: "aim", playerId: "p0", ...AIM_TARGETS[0] },
+      { type: "aim", playerId: "p1", ...AIM_TARGETS[1] }
     );
     // p0 has already locked in — readiness is public knowledge…
     run(g, { type: "confirmLaunch", playerId: "p0" });
@@ -117,8 +147,8 @@ describe("committed launches — aiming privacy", () => {
     const asP1 = viewOf(g, "p1");
 
     // Each view shows its OWN current direction…
-    expect(asP0.aimDirection).toEqual({ x: 0, y: 1 });
-    expect(asP1.aimDirection).toEqual({ x: 0, y: -1 });
+    expectDirection(asP0.aimDirection, AIM_DIRECTIONS[0]);
+    expectDirection(asP1.aimDirection, AIM_DIRECTIONS[1]);
     // …and NOT the other player's.
     expect(asP0.aimDirection).not.toEqual(asP1.aimDirection);
     expect(asP0.power).toBe(CONFIG.power.default); // own standing power
@@ -157,8 +187,8 @@ describe("committed launches — aiming privacy", () => {
     const g = game(2);
     run(
       g,
-      { type: "aim", playerId: "p0", x: 450, y: 550 },
-      { type: "aim", playerId: "p1", x: 450, y: 150 }
+      { type: "aim", playerId: "p0", ...AIM_TARGETS[0] },
+      { type: "aim", playerId: "p1", ...AIM_TARGETS[1] }
     );
     const spectate = projectSnapshot(g.getState(), null);
     expect(spectate.aimDirection).toBeNull();
@@ -175,9 +205,9 @@ describe("committed launches — resolution reveal", () => {
     const g = game(2);
     run(
       g,
-      { type: "aim", playerId: "p0", x: 450, y: 550 },
+      { type: "aim", playerId: "p0", ...AIM_TARGETS[0] },
       { type: "setPower", playerId: "p0", power: 2 },
-      { type: "aim", playerId: "p1", x: 450, y: 150 },
+      { type: "aim", playerId: "p1", ...AIM_TARGETS[1] },
       { type: "setPower", playerId: "p1", power: 4 },
       { type: "confirmLaunch", playerId: "p0" }
     );
@@ -191,11 +221,11 @@ describe("committed launches — resolution reveal", () => {
     for (const viewer of ["p0", "p1"]) {
       const view = viewOf(g, viewer);
       expect(view.pawns.find((p) => p.id === "p0")!.launch).toEqual({
-        direction: { x: 0, y: 1 },
+        direction: AIM_DIRECTIONS[0],
         power: 2,
       });
       expect(view.pawns.find((p) => p.id === "p1")!.launch).toEqual({
-        direction: { x: 0, y: -1 },
+        direction: AIM_DIRECTIONS[1],
         power: 4,
       });
     }
@@ -218,7 +248,7 @@ describe("committed launches — resolution reveal", () => {
     const g = game(2);
     run(
       g,
-      { type: "aim", playerId: "p0", x: 450, y: 550 },
+      { type: "aim", playerId: "p0", ...AIM_TARGETS[0] },
       { type: "setPower", playerId: "p0", power: 3 },
       { type: "confirmLaunch", playerId: "p0" }
     );
@@ -228,7 +258,7 @@ describe("committed launches — resolution reveal", () => {
 
     const asP1 = viewOf(g, "p1"); // the player who never chose
     expect(asP1.pawns.find((p) => p.id === "p0")!.launch).toEqual({
-      direction: { x: 0, y: 1 },
+      direction: AIM_DIRECTIONS[0],
       power: 3,
     });
     // Unconfirmed → no launch datum → no arrow. Never a guessed one.
@@ -244,7 +274,7 @@ describe("committed launches — resolution reveal", () => {
     expect(g.getState().phase).toBe("moving");
     const view = viewOf(g, "p1");
     expect(view.pawns.find((p) => p.id === "p0")!.launch).toEqual({
-      direction: { x: 0, y: -1 }, // the engine's default launch direction
+      direction: DEFAULT_LAUNCH_DIRECTION, // the engine's default
       power: CONFIG.power.default,
     });
   });
@@ -288,13 +318,13 @@ describe("committed launches — resolution reveal", () => {
     const g = game(2);
     run(
       g,
-      { type: "aim", playerId: "p0", x: 450, y: 550 },
+      { type: "aim", playerId: "p0", ...AIM_TARGETS[0] },
       { type: "setPower", playerId: "p0", power: 2 },
       { type: "confirmLaunch", playerId: "p0" }
     );
     // Locked: no further aim/power/confirm from p0 this round.
     for (const command of [
-      { type: "aim", playerId: "p0", x: 450, y: 150 },
+      { type: "aim", playerId: "p0", ...AIM_TARGETS[2] },
       { type: "setPower", playerId: "p0", power: 5 },
       { type: "confirmLaunch", playerId: "p0" },
     ] as GameCommand[]) {
@@ -307,18 +337,18 @@ describe("committed launches — resolution reveal", () => {
     // DIFFERENT power, independently of p0's earlier confirmation.
     run(
       g,
-      { type: "aim", playerId: "p1", x: 450, y: 150 },
+      { type: "aim", playerId: "p1", ...AIM_TARGETS[1] },
       { type: "setPower", playerId: "p1", power: 5 },
       { type: "confirmLaunch", playerId: "p1" } // completes the set → moving
     );
     expect(g.getState().phase).toBe("moving");
     const view = viewOf(g, "p1");
     expect(view.pawns.find((p) => p.id === "p0")!.launch).toEqual({
-      direction: { x: 0, y: 1 }, // p0's locked aim — not the rejected update
+      direction: AIM_DIRECTIONS[0], // p0's locked aim — not the rejected update
       power: 2, // p0's locked power
     });
     expect(view.pawns.find((p) => p.id === "p1")!.launch).toEqual({
-      direction: { x: 0, y: -1 },
+      direction: AIM_DIRECTIONS[1],
       power: 5,
     });
   });
@@ -331,7 +361,7 @@ describe("committed launches — serialization and lifecycle", () => {
     const g = game(2);
     run(
       g,
-      { type: "aim", playerId: "p0", x: 450, y: 550 },
+      { type: "aim", playerId: "p0", ...AIM_TARGETS[0] },
       { type: "setPower", playerId: "p0", power: 4 },
       { type: "confirmLaunch", playerId: "p0" },
       { type: "resolveRound" }
@@ -339,13 +369,13 @@ describe("committed launches — serialization and lifecycle", () => {
     const moving = g.getState();
     const restored = deserializeGameState(serializeGameState(moving));
     expect(restored.pawns.find((p) => p.id === "p0")!.lastLaunch).toEqual({
-      direction: { x: 0, y: 1 },
+      direction: AIM_DIRECTIONS[0],
       power: 4,
     });
     expect(restored.pawns.find((p) => p.id === "p1")!.lastLaunch).toBeNull();
     // And the restored state projects the same reveal to every viewer.
     expect(projectSnapshot(restored, "p1").pawns[0].launch).toEqual({
-      direction: { x: 0, y: 1 },
+      direction: AIM_DIRECTIONS[0],
       power: 4,
     });
   });
@@ -354,9 +384,9 @@ describe("committed launches — serialization and lifecycle", () => {
     const g = game(2);
     run(
       g,
-      { type: "aim", playerId: "p0", x: 450, y: 550 },
+      { type: "aim", playerId: "p0", ...AIM_TARGETS[0] },
       { type: "setPower", playerId: "p0", power: 2 },
-      { type: "aim", playerId: "p1", x: 450, y: 150 },
+      { type: "aim", playerId: "p1", ...AIM_TARGETS[1] },
       { type: "setPower", playerId: "p1", power: 2 },
       { type: "confirmLaunch", playerId: "p0" },
       { type: "confirmLaunch", playerId: "p1" }
@@ -379,7 +409,7 @@ describe("committed launches — serialization and lifecycle", () => {
     const g = game(2);
     run(
       g,
-      { type: "aim", playerId: "p0", x: 450, y: 550 },
+      { type: "aim", playerId: "p0", ...AIM_TARGETS[0] },
       { type: "confirmLaunch", playerId: "p0" },
       { type: "resolveRound" }
     );

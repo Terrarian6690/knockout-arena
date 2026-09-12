@@ -22,7 +22,7 @@
  * match_finished.
  */
 
-import type { RoomInfo, RoomSeatInfo } from "./roomManager";
+import { MAX_PLAYERS, type RoomInfo, type RoomSeatInfo } from "./roomManager";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -276,7 +276,7 @@ export const ERROR_DESCRIPTIONS: Record<string, string> = {
   "unknown-session": "no such session",
   "already-in-room": "already in a room — leave it first",
   "unknown-room": "no such room",
-  "room-full": "the room is full (4 players)",
+  "room-full": `the room is full (${MAX_PLAYERS} players)`,
   "room-playing": "the match has already started",
   "not-in-room": "not in a room",
   "no-match": "no match is running in this room",

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from "react";
-import { createArena, type GameStateSnapshot } from "../../../game";
+import { arenaFromSnapshot, type GameStateSnapshot } from "../../../game";
 import { computeTransform, render } from "../../renderer";
 import {
   INTERPOLATION_DELAY_MS,
@@ -21,6 +21,18 @@ import { cn } from "../../utils/cn";
  * translated from screen to world coordinates and handed to `onAim` —
  * an INPUT calculation, nothing more: no trajectory, no simulation, no
  * state mutation on this side of the wire.
+ *
+ * Click-to-lock aiming: while unlocked the arrow follows the mouse
+ * normally, but a PRIMARY-button click on the arena selects the current
+ * direction and LOCKS it — later mouse movement no longer re-aims, so
+ * the trip towards the Confirm button cannot disturb the choice.
+ * Clicking the arena again selects and locks a new direction. The lock
+ * is input gating only (the server keeps full authority over the stored
+ * aim — every selection is still sent as a normal aim intent) and it
+ * lives only while the player may act: confirming, resolving, finishing
+ * or disconnecting clears it, so every fresh aiming round starts
+ * unlocked. Other mouse buttons (right-click aim) select a direction
+ * without locking, exactly as before.
  *
  * Draw smoothing (render-only): authoritative snapshots arrive as discrete
  * pushes, so remote pawns would visibly step at the network cadence. Each
@@ -57,7 +69,13 @@ interface ArenaViewProps {
 
 export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const arenaRef = useRef(createArena());
+  // The arena GEOMETRY IS AUTHORITATIVE STATE, not a constant: it shrinks
+  // during a match, so it is derived from the latest snapshot on every
+  // draw instead of being frozen in a ref. The ref below holds only the
+  // most recent one, for the pointer-mapping fallback and the VFX
+  // instance (which needs a center at construction time).
+  const arenaRef = useRef(arenaFromSnapshot(snapshot));
+  arenaRef.current = arenaFromSnapshot(snapshot);
   const canvasSize = useCanvasSize(canvasRef, snapshot !== null);
 
   // --- Render-only interpolation state (refs — the draw loop must never
@@ -154,7 +172,10 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
             offsetY: transform.offsetY + shake.y,
           }
         : transform;
-    render(ctx, visual, arenaRef.current, shaken, effects);
+    // Draw the arena the AUTHORITATIVE snapshot describes — the visual
+    // ring follows the server's radius, so a shrink is visible the
+    // moment its snapshot arrives (and never before).
+    render(ctx, visual, arenaFromSnapshot(visual), shaken, effects);
   }, []);
 
   // Every authoritative push: stamp it into the buffer, diff it against
@@ -191,6 +212,18 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
     return () => cancelAnimationFrame(handle);
   }, [draw]);
 
+  // The click-to-lock aim gate (see handlePointer): a ref, because the
+  // lock changes no rendering by itself — it only decides whether mouse
+  // movement reaches onAim. It lives only while the player may act: the
+  // moment input is refused (confirmed, round resolving, match over,
+  // disconnected) the lock clears — the same discipline MultiplayerGame
+  // applies to its optimistic preview — so every fresh aiming round
+  // (which always starts from a refused-input state) begins unlocked.
+  const aimLockedRef = useRef(false);
+  useEffect(() => {
+    if (!interactive) aimLockedRef.current = false;
+  }, [interactive]);
+
   function worldPoint(event: PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -213,6 +246,16 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
     // the moment browsers allow audio to start. Never blocks input.
     if (event.type === "pointerdown") audio.unlock();
     if (!interactive) return;
+    if (event.type === "pointerdown") {
+      // Every arena click selects the direction under the cursor — and a
+      // PRIMARY-button click additionally LOCKS it: later mouse movement
+      // no longer re-aims until a fresh aiming round. Other buttons keep
+      // the old follow behavior (select without locking).
+      onAim(worldPoint(event));
+      if (event.button === 0) aimLockedRef.current = true;
+      return;
+    }
+    if (aimLockedRef.current) return; // locked: the arrow stays put
     onAim(worldPoint(event));
   }
 

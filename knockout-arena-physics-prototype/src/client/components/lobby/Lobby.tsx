@@ -5,6 +5,7 @@ import type { ConnectionStatus } from "../../network/types";
 import { cn } from "../../utils/cn";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { ErrorBanner } from "./ErrorBanner";
+import { getPrefillJoinCode } from "./invite";
 import { RoomPanel } from "./RoomPanel";
 import { MultiplayerGame } from "../game/MultiplayerGame";
 
@@ -42,7 +43,10 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
   const client = useNetworkClient();
   const state = useNetworkState();
 
-  const [joinCode, setJoinCode] = useState("");
+  // Opening an invite link (?room=CODE) prefills the Join input — nothing
+  // more: the player still presses Join Room themselves (never auto-join),
+  // and an absent/invalid param degrades to an empty input.
+  const [joinCode, setJoinCode] = useState<string>(() => getPrefillJoinCode());
   /** Local, purely visual: the join input's shape validation error. */
   const [joinError, setJoinError] = useState<string | null>(null);
   const [leftRoom, setLeftRoom] = useState(false);
@@ -157,7 +161,15 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
         <ConnectionStatusBadge status={state.status} />
       </header>
 
-      <main className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-4 py-6">
+      {/* The room view top-aligns (the home screen stays centered): with
+          the taller room card a centered layout could push the room code
+          above the fold, forcing a scroll right after creating/joining. */}
+      <main
+        className={cn(
+          "flex min-h-0 flex-1 justify-center overflow-y-auto px-4",
+          inRoom ? "items-start py-4" : "items-center py-6"
+        )}
+      >
         {inRoom ? (
           <div className="w-full max-w-md">
             {state.lastError !== null && !dismissedError && (

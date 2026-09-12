@@ -57,7 +57,7 @@ export interface PawnSnapshot {
  *   moving   - the round's confirmed launches are resolving TOGETHER;
  *              physics runs until every survivor settles. Eliminations of
  *              ANY pawn can happen while moving (a mover can knock
- *              opponents over the rim — and movers can collide).
+ *              opponents off the floor — and movers can collide).
  *   finished - terminal: at most one pawn remains active. `winnerId`
  *              identifies the survivor, or null when nobody survived
  *              (e.g. a single-player loss). Only `reset` is accepted.
@@ -76,6 +76,35 @@ export type GamePhase = "aiming" | "moving" | "finished";
  * (localPawnId: null); local perspective is added by the client calling
  * projectSnapshot(state, localPawnId) - the engine never knows who is "me".
  */
+/**
+ * The shrinking arena as clients see it — pure projection of the
+ * authoritative arena state (never a client-side computation).
+ *
+ * `radius` is what the renderer draws and what the elimination boundary
+ * measures against; the rest is the warning/countdown material, DERIVED
+ * server-side from the same state so every client shows the same thing.
+ */
+export interface ArenaSnapshot {
+  /** The CURRENT authoritative outer radius. */
+  radius: number;
+  /**
+   * How many more rounds must COMPLETE before the arena shrinks, or null
+   * once the minimum radius is reached (no shrink will ever come).
+   */
+  roundsUntilShrink: number | null;
+  /** The radius the next shrink will apply; null at the minimum. */
+  nextRadius: number | null;
+  /**
+   * Whether players should be WARNED that a shrink is imminent (it lands
+   * when the current round completes). False once the arena has reached
+   * its minimum, so the warning disappears for good after the last
+   * shrink — and false again immediately after each shrink lands.
+   */
+  shrinkWarning: boolean;
+  /** Whether the arena has reached its minimum size. */
+  atMinRadius: boolean;
+}
+
 export interface GameStateSnapshot {
   phase: GamePhase;
   pawns: PawnSnapshot[];
@@ -86,6 +115,18 @@ export interface GameStateSnapshot {
   localPawnId: string | null;
   /** Winner pawn id once the match is finished (null = no survivor). */
   winnerId: string | null;
+  /**
+   * The shrinking arena's authoritative geometry + warning state. Every
+   * client derives its rendering and its countdown from THIS — never
+   * from a local constant or a locally counted round.
+   *
+   * ADDITIVE / BACKWARD-SAFE (like roundDeadline): projectSnapshot always
+   * fills it, but the field is optional so a snapshot from an older
+   * server — or any hand-built one — stays valid and simply reads as the
+   * full-size arena. Consumers must go through arenaFromSnapshot() rather
+   * than reading `.radius` directly, so that fallback lives in ONE place.
+   */
+  arena?: ArenaSnapshot;
   /**
    * The VIEWER'S OWN selected power level (1..5) — rounds are
    * simultaneous, so each player's controls describe their own pawn. The
@@ -113,4 +154,22 @@ export interface GameStateSnapshot {
    * decide anything gameplay-related — the server alone resolves rounds.
    */
   roundDeadline?: number | null;
+  /**
+   * The MATCH TIME LIMIT as an ABSOLUTE server wall-clock timestamp (ms):
+   * the moment this match is hard-stopped. Presentation metadata, stamped
+   * by the game server from the host's authoritative match timer exactly
+   * like roundDeadline — the engine never sets it (it has no clock).
+   *
+   * An absolute deadline rather than a remaining-seconds number on
+   * purpose: a client can re-derive `max(0, matchDeadline - now)` at any
+   * moment, so late or dropped snapshots cannot make the display drift,
+   * and a RECONNECTING client shows the correct remaining time from the
+   * first snapshot it receives.
+   *
+   * null/absent = no live match timer (the lobby, a finished match, or
+   * an older server). Presentation ONLY: a client may render the
+   * countdown but must never let it end a match — the server alone does
+   * that, through the authoritative `timeUp` path.
+   */
+  matchDeadline?: number | null;
 }

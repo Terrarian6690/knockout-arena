@@ -12,14 +12,91 @@ export const CONFIG = {
     height: 700,
   },
 
-  /** Circular arena definition. */
+  /**
+   * Circular arena definition — the SINGLE source of truth for the
+   * playfield geometry. Spawns, the logical elimination boundary, pawn
+   * resting projection and all rendering derive from these numbers.
+   */
   arena: {
     centerX: 450,
     centerY: 350,
-    /** Outer radius of the arena floor + rim. */
-    radius: 280,
-    /** Thickness of the raised rim the pawns bump against. */
+    /**
+     * INITIAL outer radius of the arena (edge of the visual boundary
+     * ring) at the start of every match. There is NO physical wall:
+     * launched pawns glide straight past the floor edge, and crossing it
+     * eliminates them by pure geometry.
+     *
+     * The radius is no longer constant for a whole match: the arena
+     * SHRINKS on the authoritative schedule below. Never read this value
+     * as "the current radius" — that lives in the authoritative game
+     * state (GameState.arena.radius) and reaches clients through the
+     * snapshot. This is only where a match STARTS (and what a reset
+     * restores).
+     */
+    radius: 330,
+    /**
+     * Width of the VISUAL boundary ring marking the floor edge. Not a
+     * collider — the playable floor ends at radius - wallThickness and
+     * the elimination rule measures from there (see arena.ts).
+     */
     wallThickness: 16,
+    /**
+     * How far INSIDE the floor edge pawns spawn: the spawn ring sits at
+     * floor − pawnRadius − spawnMargin (see arena.ts, the single source
+     * of spawn positions).
+     *
+     * Sized against the shrink step on purpose. With the old margin of 8
+     * the ring landed at 290, which is EXACTLY the elimination boundary
+     * after the first shrink (floor 274 + pawnRadius 16 = 290) — pawns
+     * survived only because `>` is strict and axis-aligned spawns come
+     * out to exactly 290.0. Any spawn at an off-axis angle rounded to
+     * 290.00000000000006 and was wiped out the moment the arena first
+     * shrank. 16 keeps a real 8-unit clearance at every angle.
+     */
+    spawnMargin: 16,
+    /**
+     * The shrinking-arena schedule — the SINGLE source of truth for the
+     * mechanic (engine, server and UI all derive from these numbers; no
+     * client-side constant duplicates them).
+     *
+     * The arena shrinks BETWEEN rounds only: when a round completes (all
+     * movement settled) the authoritative engine advances the schedule,
+     * and every `everyRounds` completed rounds the radius drops by
+     * `amount` — down to `minRadius` and never below it. Once the
+     * minimum is reached the interval keeps elapsing harmlessly: no
+     * further shrink happens.
+     *
+     * 330 → 290 → 250 → 210 → 180: four shrinks, after 3, 6, 9 and 12
+     * completed rounds (the last one clamped by the minimum), with the
+     * floor following at radius − wallThickness: 314 → 274 → 234 → 194
+     * → 164. Every later interval elapses without effect.
+     *
+     * The step is deliberately LARGER than the margin a settled pawn
+     * keeps from the edge (wallThickness + pawnRadius + 1 = 33): a pawn
+     * that ends a round hugging the rim is genuinely caught by the next
+     * boundary and eliminated, so the mechanic really does close the
+     * space. It is small enough, though, that the FIRST shrink does not
+     * instantly wipe out everyone who is still standing on the spawn
+     * ring (282, see arena.spawnMargin) — the pressure builds over
+     * rounds instead of ending the match in one stroke.
+     */
+    shrink: {
+      /** Completed rounds between two shrinks. */
+      everyRounds: 3,
+      /** How much the radius drops per shrink event (world units). */
+      amount: 40,
+      /**
+       * The MINIMUM playable radius. The arena never shrinks below it
+       * (floor 164 — still room for four pawns and a real fight).
+       */
+      minRadius: 180,
+      /**
+       * How many completed rounds before a shrink the warning is shown.
+       * 1 = the warning appears for the round whose completion triggers
+       * the shrink, and disappears the moment the shrink lands.
+       */
+      warnBeforeRounds: 1,
+    },
   },
 
   /**
@@ -41,17 +118,51 @@ export const CONFIG = {
 
   /** Launch / knockback tuning. */
   launch: {
-    /** Launch speed in units/tick at maximum power. */
-    maxSpeed: 3.6,
+    /**
+     * Launch speed in units/tick at maximum power (exactly 3× the
+     * original 3.6 — every level scales through the same curve, so the
+     * relative differences between powers 1–5 are unchanged).
+     */
+    maxSpeed: 10.8,
     /** Exponent making higher power levels ramp up non-linearly. */
     curve: 1.5,
+    // NOTE: there is deliberately no rim-clearing speed threshold anymore.
+    // The arena has no physical wall, so EVERY outward launch — however
+    // gentle — leaves the floor unimpeded; elimination is decided purely
+    // by the geometric boundary check (see arena.ts).
+  },
+
+  /**
+   * Match-level rules — the SINGLE source of truth for how long a match
+   * may last (engine, server and UI all derive from this; no client
+   * constant duplicates it).
+   */
+  match: {
     /**
-     * Outward radial speed at rim contact required to fly OVER the rim (the
-     * rim is a low lip): fast head-on launches clear it and leave the floor,
-     * slow or glancing contacts bounce back. This only decides pass-through;
-     * the elimination itself is a pure geometric check (see arena.ts).
+     * Hard maximum match duration: 4 minutes of real time, measured from
+     * the moment the match actually STARTS (never from lobby/waiting
+     * time). When it elapses the server ends the match through the
+     * ordinary authoritative path and the existing "finished" phase —
+     * no new phase exists for it.
+     *
+     * Enforced with wall-clock time on the SERVER only (see
+     * gameHost.ts), exactly like the round decision deadline: it decides
+     * WHEN the engine's `timeUp` command is submitted, and never feeds
+     * into the simulation, which keeps advancing by fixed ticks.
      */
-    knockoutSpeed: 2.3,
+    durationMs: 4 * 60 * 1000,
+
+    /**
+     * Hard multiplayer CAPACITY: the maximum number of players in one
+     * match, and therefore the number of fixed spawn slots around the
+     * arena (seats p0..p5).
+     *
+     * This is the SINGLE source of truth for capacity. The server's room
+     * manager (MAX_PLAYERS) and the lobby's seat grid (MAX_SEATS) both
+     * derive from it, and the spawn ring is built from it — so capacity
+     * can never be raised in one place and left stale in another.
+     */
+    maxPlayers: 6,
   },
 
   /** Aiming. */

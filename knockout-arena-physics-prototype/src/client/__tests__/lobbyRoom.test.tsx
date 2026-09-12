@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { MAX_SEATS } from "../components/lobby/SeatList";
 import {
   connectPlayer,
   createScriptedClient,
@@ -64,16 +65,16 @@ async function joinRoom(
 describe("lobby room screen", () => {
   it("renders the roster: seated players and empty seats, from server data", async () => {
     const { harness, host, roomId } = await seatedHost();
-    expect(screen.getByText("1 / 4")).toBeInTheDocument();
+    expect(screen.getByText(`1 / ${MAX_SEATS}`)).toBeInTheDocument();
     expect(screen.getByTestId("seat-p0")).toBeInTheDocument();
-    expect(screen.getAllByTestId("empty-seat")).toHaveLength(3);
+    expect(screen.getAllByTestId("empty-seat")).toHaveLength(MAX_SEATS - 1);
 
     // A second player joins; the host's roster updates from the broadcast.
     await joinRoom(harness, roomId, { render: false });
-    expect(await screen.findByText("2 / 4")).toBeInTheDocument();
+    expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
     expect(screen.getByTestId("seat-p0")).toBeInTheDocument();
     expect(screen.getByTestId("seat-p1")).toBeInTheDocument();
-    expect(screen.getAllByTestId("empty-seat")).toHaveLength(2);
+    expect(screen.getAllByTestId("empty-seat")).toHaveLength(MAX_SEATS - 2);
     expect(host.client.getState().roster).toHaveLength(2); // store = server truth
   });
 
@@ -150,10 +151,10 @@ describe("lobby room screen", () => {
 
     await playerAct(() => guest.client.leaveRoom());
 
-    // Host view: back to one seated player, three empty seats.
-    expect(await screen.findByText("1 / 4")).toBeInTheDocument();
+    // Host view: back to one seated player, the rest empty again.
+    expect(await screen.findByText(`1 / ${MAX_SEATS}`)).toBeInTheDocument();
     expect(screen.queryByTestId("seat-p1")).toBeNull();
-    expect(screen.getAllByTestId("empty-seat")).toHaveLength(3);
+    expect(screen.getAllByTestId("empty-seat")).toHaveLength(MAX_SEATS - 1);
   });
 
   it("starting: the host's click shows Starting… until the server answers", async () => {
@@ -219,19 +220,22 @@ describe("lobby room screen", () => {
     expect(host.client.getState().roomState).toBe("playing"); // server truth
   });
 
-  it("shows the full four-player room, then rejects a fifth joiner with the server error", async () => {
+  it("shows the full six-player room, then rejects the next joiner with the server error", async () => {
     const { harness, view, roomId } = await seatedHost();
-    await joinRoom(harness, roomId, { render: false });
-    await joinRoom(harness, roomId, { render: false });
-    await joinRoom(harness, roomId, { render: false });
+    // Fill every remaining seat (the host already holds p0).
+    for (let i = 1; i < MAX_SEATS; i++) {
+      await joinRoom(harness, roomId, { render: false });
+    }
 
-    expect(await screen.findByText("4 / 4")).toBeInTheDocument();
-    for (const seat of ["p0", "p1", "p2", "p3"]) {
-      expect(screen.getByTestId(`seat-${seat}`)).toBeInTheDocument();
+    expect(
+      await screen.findByText(`${MAX_SEATS} / ${MAX_SEATS}`)
+    ).toBeInTheDocument();
+    for (let i = 0; i < MAX_SEATS; i++) {
+      expect(screen.getByTestId(`seat-p${i}`)).toBeInTheDocument();
     }
     expect(screen.queryAllByTestId("empty-seat")).toHaveLength(0);
 
-    // A fifth player (rendered) tries to join: the server's verdict shows.
+    // One more player (rendered) tries to join: the server's verdict shows.
     view.unmount();
     const fifth = harness.addPlayer();
     renderLobby(fifth.client);

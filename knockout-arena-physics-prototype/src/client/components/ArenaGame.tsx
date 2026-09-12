@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { computeTransform, render } from "../renderer";
-import { createArena, type PlayerIntent, type GameStateSnapshot } from "../../game";
+import { arenaFromSnapshot, type PlayerIntent, type GameStateSnapshot } from "../../game";
 
 /**
  * Canvas view for the arena. Receives the authoritative game state from App
@@ -24,7 +24,10 @@ export function ArenaGame({
   canvasRef,
   canvasSize,
 }: ArenaGameProps) {
-  const arenaRef = useRef(createArena());
+  // Derived from the authoritative snapshot every render: the arena
+  // shrinks during a match, so its geometry is state — never a constant.
+  const arenaRef = useRef(arenaFromSnapshot(snapshot));
+  arenaRef.current = arenaFromSnapshot(snapshot);
 
   // Render whenever the snapshot or canvas size changes.
   useEffect(() => {
@@ -48,7 +51,7 @@ export function ArenaGame({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const transform = computeTransform(w, h);
-    render(ctx, snapshot, arenaRef.current, transform);
+    render(ctx, snapshot, arenaFromSnapshot(snapshot), transform);
   }, [snapshot, canvasSize, canvasRef]);
 
   function worldPoint(e: React.PointerEvent<HTMLCanvasElement>) {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createGameServer, type GameServer } from "../index";
-import { createRoomManager, type RoomManager } from "../roomManager";
+import { createRoomManager, MAX_PLAYERS, type RoomManager } from "../roomManager";
 import {
   generateUniqueRoomCode,
   isValidRoomCode,
@@ -293,14 +293,14 @@ describe("joining by room code", () => {
     const created = mustSeat(server.createRoom(host));
     const code = created.room.code;
 
-    // Fill the room to 4/4 by code.
-    for (let i = 1; i < 4; i++) {
+    // Fill the room to capacity by code.
+    for (let i = 1; i < MAX_PLAYERS; i++) {
       const guest = server.connect();
       expect(mustSeat(server.joinRoom(guest, code)).playerId).toBe(`p${i}`);
     }
-    // A fifth joiner (by code) hits the ordinary capacity rule.
-    const fifth = server.connect();
-    expect(server.joinRoom(fifth, code)).toEqual({ ok: false, reason: "room-full" });
+    // One joiner beyond capacity (by code) hits the ordinary rule.
+    const extra = server.connect();
+    expect(server.joinRoom(extra, code)).toEqual({ ok: false, reason: "room-full" });
 
     // Once playing, joining by the code is refused like any other join.
     expect(server.startMatch(created.room.id).ok).toBe(true);

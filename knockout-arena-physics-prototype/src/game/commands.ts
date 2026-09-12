@@ -52,6 +52,17 @@ export type GameCommand =
    */
   | { type: "resolveRound" }
   /**
+   * The MATCH TIME LIMIT expired: end the match now. Match-level and
+   * player-less (exactly like resolveRound), submitted by the server when
+   * its authoritative match deadline fires.
+   *
+   * Still an intent, not an outcome: it says "the clock ran out", never
+   * who won. The engine alone decides the verdict — the last pawn
+   * standing, or the time-limit tie-break when several are still alive
+   * (see game.ts). Players can never submit it.
+   */
+  | { type: "timeUp" }
+  /**
    * Reset the match to its initial state. Deliberately player-less for now:
    * it is a match-level/debug action. In the multiplayer phase this becomes
    * a privileged room operation (host-only / rematch vote).
@@ -163,6 +174,10 @@ function validateCommandInner(candidate: unknown): CommandResult {
     case "resolveRound":
       // Match-level, player-less — structurally valid; ownership is the
       // server's business (players never get to submit it over the wire).
+      return { ok: true };
+    case "timeUp":
+      // Match-level, player-less (the match time limit). Same ownership
+      // rule as resolveRound: the room manager rejects it from players.
       return { ok: true };
     case "reset":
       return { ok: true };

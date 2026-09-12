@@ -199,24 +199,34 @@ describe("room creation and joining", () => {
     ]);
   });
 
-  it("assigns p0/p1/p2/p3 exclusively by join order", () => {
+  it("assigns p0..p5 exclusively by join order", () => {
     const server = newServer();
     const { roomId, playerIds } = makeRoom(server, MAX_PLAYERS);
-    expect(playerIds).toEqual(["p0", "p1", "p2", "p3"]);
+    expect(playerIds).toEqual(["p0", "p1", "p2", "p3", "p4", "p5"]);
     const room = server.getRoom(roomId)!;
-    expect(room.seats.map((s) => s.playerId)).toEqual(["p0", "p1", "p2", "p3"]);
+    expect(room.seats.map((s) => s.playerId)).toEqual([
+      "p0",
+      "p1",
+      "p2",
+      "p3",
+      "p4",
+      "p5",
+    ]);
     expect(room.seats.every((s) => s.connected)).toBe(true);
     expect(MIN_PLAYERS).toBe(2);
-    expect(MAX_PLAYERS).toBe(4);
+    expect(MAX_PLAYERS).toBe(6);
   });
 
-  it("rejects a fifth player (room-full)", () => {
+  it("rejects a seventh player (room-full)", () => {
     const server = newServer();
-    const { roomId } = makeRoom(server, 4);
-    const fifth = server.connect();
-    expect(server.joinRoom(fifth, roomId)).toEqual({ ok: false, reason: "room-full" });
-    expect(server.getRoom(roomId)!.seats).toHaveLength(4); // unchanged
-    expect(server.getSeat(fifth)).toBeNull();
+    const { roomId } = makeRoom(server, MAX_PLAYERS);
+    const seventh = server.connect();
+    expect(server.joinRoom(seventh, roomId)).toEqual({
+      ok: false,
+      reason: "room-full",
+    });
+    expect(server.getRoom(roomId)!.seats).toHaveLength(MAX_PLAYERS); // unchanged
+    expect(server.getSeat(seventh)).toBeNull();
   });
 
   it("resolves the identity chain: session → room → playerId", () => {

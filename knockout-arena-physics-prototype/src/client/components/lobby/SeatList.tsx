@@ -1,3 +1,4 @@
+import { CONFIG } from "../../../game";
 import type { RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
 
@@ -11,12 +12,15 @@ import { cn } from "../../utils/cn";
  *
  * MAX_SEATS mirrors the server's room capacity and MIN_PLAYERS its start
  * rule (both UX mirrors only — the roster stays authoritative and the
- * server validates for real). The wire protocol does not carry the
- * maximum, so we render exactly the seats the server reports and only
- * PAD the visual grid with empty placeholders — if the server ever
- * reported more, they would all be rendered.
+ * server validates for real). MAX_SEATS is DERIVED from the engine's
+ * CONFIG.match.maxPlayers — the same constant the room manager's
+ * MAX_PLAYERS comes from — so the lobby grid cannot drift out of step
+ * with real capacity. The wire protocol does not carry the maximum, so
+ * we render exactly the seats the server reports and only PAD the
+ * visual grid with empty placeholders — if the server ever reported
+ * more, they would all be rendered.
  */
-export const MAX_SEATS = 4;
+export const MAX_SEATS = CONFIG.match.maxPlayers;
 
 /**
  * The minimum number of players the SERVER requires to start a match
@@ -53,7 +57,7 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
         <li
           key={seat.playerId}
           data-testid={`seat-${seat.playerId}`}
-          className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3"
+          className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2"
         >
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span
@@ -86,7 +90,7 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
         <li
           key={`empty-seat-${index}`}
           data-testid="empty-seat"
-          className="flex items-center rounded-xl border border-dashed border-white/15 px-4 py-3"
+          className="flex items-center rounded-xl border border-dashed border-white/15 px-4 py-2"
         >
           <span
             role="img"

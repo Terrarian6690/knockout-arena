@@ -3,6 +3,7 @@ import { CONFIG, type GameStateSnapshot } from "../../game";
 import {
   createGameServer,
   createTransportCore,
+  MAX_PLAYERS,
   type ConnectionHandle,
   type GameServer,
   type TransportCore,
@@ -380,13 +381,13 @@ describe("room operations", () => {
     expect(joiner2.ofType("room_state")).toHaveLength(1); // only its own join
   });
 
-  it("a full room rejects the fifth player", () => {
+  it("a full room rejects the player beyond capacity", () => {
     const { core } = newCore();
-    const { roomId } = makeRoom(core, 4);
-    const fifth = connect(core).socket;
-    fifth.receiveMsg(join(roomId));
-    expect(fifth.lastOf("error")).toMatchObject({ code: "room-full" });
-    expect(fifth.lastOf("welcome")).toBeUndefined();
+    const { roomId } = makeRoom(core, MAX_PLAYERS);
+    const extra = connect(core).socket;
+    extra.receiveMsg(join(roomId));
+    expect(extra.lastOf("error")).toMatchObject({ code: "room-full" });
+    expect(extra.lastOf("welcome")).toBeUndefined();
   });
 
   it("join_room while already in a room is rejected", () => {

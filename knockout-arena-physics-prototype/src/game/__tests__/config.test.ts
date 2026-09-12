@@ -31,12 +31,25 @@ describe("CONFIG", () => {
 
 describe("launchSpeedFor", () => {
   it("returns the tuned speed for every power level", () => {
-    // 3.6 * (p/5)^1.5
-    expect(launchSpeedFor(1)).toBeCloseTo(0.3219, 3);
-    expect(launchSpeedFor(2)).toBeCloseTo(0.9107, 3);
-    expect(launchSpeedFor(3)).toBeCloseTo(1.6731, 3);
-    expect(launchSpeedFor(4)).toBeCloseTo(2.5758, 3);
-    expect(launchSpeedFor(5)).toBeCloseTo(3.6, 6);
+    // 10.8 * (p/5)^1.5 — exactly 3× the original 3.6-based curve, so the
+    // relative differences between powers 1–5 are unchanged.
+    expect(launchSpeedFor(1)).toBeCloseTo(0.9660, 3);
+    expect(launchSpeedFor(2)).toBeCloseTo(2.7322, 3);
+    expect(launchSpeedFor(3)).toBeCloseTo(5.0194, 3);
+    expect(launchSpeedFor(4)).toBeCloseTo(7.7279, 3);
+    expect(launchSpeedFor(5)).toBeCloseTo(10.8, 6);
+  });
+
+  it("scales every level by exactly 3× over the original tune", () => {
+    // The original speeds (3.6 * (p/5)^1.5) times three — the curve
+    // exponent is untouched, only the magnitude tripled.
+    const original = [
+      0.3219937887599698, 0.9107359661284934, 1.673128805561604,
+      2.575950310079758, 3.6,
+    ];
+    for (let p = CONFIG.power.min; p <= CONFIG.power.max; p++) {
+      expect(launchSpeedFor(p)).toBeCloseTo(3 * original[p - 1], 9);
+    }
   });
 
   it("clamps power below the minimum", () => {
@@ -55,10 +68,13 @@ describe("launchSpeedFor", () => {
     }
   });
 
-  it("keeps the gameplay invariant: max power clears the rim speed, mid power does not", () => {
-    expect(launchSpeedFor(CONFIG.power.max)).toBeGreaterThan(
-      CONFIG.launch.knockoutSpeed
-    );
-    expect(launchSpeedFor(3)).toBeLessThan(CONFIG.launch.knockoutSpeed);
+  it("keeps the gameplay invariant: no clearing threshold — every power level launches freely", () => {
+    // The arena has no physical wall, so there is no minimum speed a
+    // launch must beat: every level (even the gentle power-1 nudge)
+    // leaves the floor unimpeded when aimed outward. Pinned physically
+    // in physics.test.ts ("no outer wall") and game.test.ts.
+    for (let p = CONFIG.power.min; p <= CONFIG.power.max; p++) {
+      expect(launchSpeedFor(p)).toBeGreaterThan(0);
+    }
   });
 });

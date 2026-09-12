@@ -152,6 +152,13 @@ function drawWinnerHalo(ctx: CanvasRenderingContext2D, x: number, y: number, r: 
 }
 
 
+/**
+ * Draw the arena at the radius it was HANDED — which is the authoritative
+ * one (callers derive it from the snapshot via arenaFromSnapshot). The
+ * whole drawing is relative to `arena.radius`, so the shrinking arena
+ * needs no special drawing path: a smaller radius simply paints a smaller
+ * floor, ring and glow, centered exactly as before.
+ */
 function drawArena(ctx: CanvasRenderingContext2D, arena: Arena) {
   const cx = arena.centerX;
   const cy = arena.centerY;
@@ -176,13 +183,14 @@ function drawArena(ctx: CanvasRenderingContext2D, arena: Arena) {
     ctx.stroke();
   }
 
-  // Boundary wall ring.
+  // Boundary ring (VISUAL ONLY — there is no physical wall; the ring
+  // marks the floor edge whose crossing eliminates by geometry).
   ctx.beginPath();
   ctx.arc(cx, cy, outer, 0, Math.PI * 2);
   ctx.fillStyle = CONFIG.colors.arenaWall;
   ctx.fill();
 
-  // Wall inner glow.
+  // Boundary inner glow.
   ctx.beginPath();
   ctx.arc(cx, cy, inner, 0, Math.PI * 2);
   ctx.strokeStyle = CONFIG.colors.arenaWallGlow;

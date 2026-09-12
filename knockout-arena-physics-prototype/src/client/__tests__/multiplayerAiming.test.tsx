@@ -20,7 +20,9 @@ import { createScriptedClient, wire } from "./lobbyTestHarness";
  *  4   the context menu is suppressed ON THE ARENA only — never globally
  *  5   (arrow length ∝ power is pinned in rendererAim.test.ts; here: the
  *      power choice reaches the drawn snapshot immediately)
- *  6   the direction stays changeable until the player confirms
+ *  6   a primary arena click locks the direction (later moves stop
+ *      re-aiming); clicking the arena again selects a new direction —
+ *      the choice stays open until the player confirms
  *  7/8  confirming locks the controls; the confirm itself sends only the
  *      confirmLaunch command (never a movement)
  *  19  the power control offers exactly the integers 1–5
@@ -284,20 +286,27 @@ describe("multiplayer aiming — the live preview (2)", () => {
 });
 
 describe("multiplayer aiming — changing the choice (6, 7, 8)", () => {
-  it("the direction stays freely changeable until the player confirms", async () => {
+  it("a primary click locks the direction; clicking again selects a new one", async () => {
     const { sockets } = await renderGame();
     measureCanvas(900, 700, 50, 60);
     await feed(sockets, {});
 
-    // Select a direction…
+    // Select a direction with a primary click…
     fireEvent.pointerDown(canvasEl(), { button: 0, clientX: 50 + 750, clientY: 60 + 350 });
     // …the echo of that selection arrives…
     await feed(sockets, { aimDirection: { x: 1, y: 0 }, isAiming: true });
-    // …and moving again STILL changes the direction (nothing is locked
-    // by the first click — only Confirm locks).
+    // …and moving the mouse no longer re-aims: the click LOCKED the
+    // direction, so the trip towards the Confirm button cannot disturb it.
     fireEvent.pointerMove(canvasEl(), { clientX: 50 + 750, clientY: 60 + 100 });
+    expect(sentCommands(sockets)).toHaveLength(1); // nothing new
+    expect(lastDrawn().aimDirection).toEqual({ x: 1, y: 0 }); // the locked arrow stays
+
+    // Clicking the arena again selects AND locks a new direction — the
+    // player is still unconfirmed, so every control stays live.
+    fireEvent.pointerDown(canvasEl(), { button: 0, clientX: 50 + 150, clientY: 60 + 350 });
     expect(sentCommands(sockets)).toHaveLength(2);
-    expect(sentCommands(sockets)[1]).toEqual({ type: "aim", x: 750, y: 100 });
+    expect(sentCommands(sockets)[1]).toEqual({ type: "aim", x: 150, y: 350 });
+    expect(lastDrawn().aimDirection).toEqual({ x: -1, y: 0 });
     expect(screen.getByTestId("launch")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Power 4" })).toBeEnabled();
   });

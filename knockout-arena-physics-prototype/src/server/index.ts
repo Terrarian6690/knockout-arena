@@ -19,6 +19,7 @@ export {
   createGameHost,
   DEFAULT_MAX_CATCH_UP_TICKS,
   DEFAULT_ROUND_DECISION_TIMEOUT_MS,
+  DEFAULT_MATCH_DURATION_MS,
   type GameHost,
   type GameHostOptions,
   type SerializedStateListener,

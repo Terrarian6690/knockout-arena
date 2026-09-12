@@ -31,13 +31,16 @@ describe("createPhysicsWorld", () => {
     physics.destroy();
   });
 
-  it("builds the boundary ring of static arenaWall bodies on creation", () => {
+  it("builds NO boundary ring — the world holds pawns only, no walls", () => {
     const physics = createPhysicsWorld();
-    const walls = physics.engine.world.bodies.filter(
-      (b) => b.label === "arenaWall"
-    );
-    expect(walls.length).toBe(64);
-    expect(walls.every((b) => b.isStatic)).toBe(true);
+    // No static bodies at all (neither a visible ring nor an invisible
+    // replacement collider): the launch space is completely open.
+    expect(physics.engine.world.bodies).toHaveLength(0);
+    physics.createPawnBody("p0", 450, 350, PAWN_R);
+    const bodies = physics.engine.world.bodies;
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].label).toBe("pawn:p0");
+    expect(bodies[0].isStatic).toBe(false);
     physics.destroy();
   });
 });
@@ -135,34 +138,17 @@ describe("step", () => {
   });
 });
 
-describe("rim collisions", () => {
-  it("bounces a pawn off the rim when wall collision is enabled", () => {
+describe("no outer wall", () => {
+  it("an outward launch crosses the floor edge unimpeded (nothing bounces it back)", () => {
     const physics = createPhysicsWorld();
     const body = physics.createPawnBody("p0", SPAWN[0], SPAWN[1], PAWN_R);
-    physics.applyImpulse(body, 0, -3.0); // outward (up) at the top rim
-
-    let maxDist = 0;
-    let bounced = false;
-    for (let i = 0; i < 120; i++) {
-      physics.step(DT);
-      maxDist = Math.max(maxDist, dist(physics.position(body).x, physics.position(body).y));
-      if (physics.velocity(body).y > 0.1) bounced = true; // heading back in
-    }
-    // Never fully left the floor, and the rim reversed the motion.
-    expect(maxDist).toBeLessThan(floorRadius(physics.arena) + PAWN_R);
-    expect(bounced).toBe(true);
-    physics.destroy();
-  });
-
-  it("lets a pawn pass over the rim when wall collision is disabled", () => {
-    const physics = createPhysicsWorld();
-    const body = physics.createPawnBody("p0", SPAWN[0], SPAWN[1], PAWN_R);
-    physics.setCollidesWithWalls(body, false);
-    physics.applyImpulse(body, 0, -3.0);
+    physics.applyImpulse(body, 0, -3.0); // outward (up) from the top spawn
 
     let beyond = false;
     for (let i = 0; i < 120; i++) {
       physics.step(DT);
+      // The motion is never reversed: no bounce exists anymore.
+      expect(physics.velocity(body).y).toBeLessThanOrEqual(0.1);
       if (dist(physics.position(body).x, physics.position(body).y) > floorRadius(physics.arena) + PAWN_R) {
         beyond = true;
         break;
@@ -172,19 +158,40 @@ describe("rim collisions", () => {
     physics.destroy();
   });
 
-  it("restores rim collision after re-enabling", () => {
+  it("even a gentle launch at the edge leaves — no minimum clearing speed", () => {
     const physics = createPhysicsWorld();
-    const body = physics.createPawnBody("p0", SPAWN[0], SPAWN[1], PAWN_R);
-    physics.setCollidesWithWalls(body, false);
-    physics.setCollidesWithWalls(body, true);
-    physics.applyImpulse(body, 0, -3.0);
+    // Start exactly at the floor edge, drifting outward slowly: with no
+    // wall there is no threshold to beat, so even this nudge exits.
+    const edgeY = CONFIG.arena.centerY - floorRadius(physics.arena);
+    const body = physics.createPawnBody("p0", CONFIG.arena.centerX, edgeY, PAWN_R);
+    physics.applyImpulse(body, 0, -0.5);
 
-    let maxDist = 0;
+    let beyond = false;
     for (let i = 0; i < 120; i++) {
       physics.step(DT);
-      maxDist = Math.max(maxDist, dist(physics.position(body).x, physics.position(body).y));
+      expect(physics.velocity(body).y).toBeLessThanOrEqual(0.1);
+      if (dist(physics.position(body).x, physics.position(body).y) > floorRadius(physics.arena) + PAWN_R) {
+        beyond = true;
+        break;
+      }
     }
-    expect(maxDist).toBeLessThan(floorRadius(physics.arena) + PAWN_R);
+    expect(beyond).toBe(true);
+    physics.destroy();
+  });
+
+  it("pawns still collide with each other (pawn-vs-pawn contact works)", () => {
+    const physics = createPhysicsWorld();
+    const mover = physics.createPawnBody("mover", 450, 300, PAWN_R);
+    physics.createPawnBody("target", 450, 350, PAWN_R);
+    physics.applyImpulse(mover, 0, 2.5); // straight into the target
+
+    for (let i = 0; i < 60; i++) physics.step(DT);
+
+    // The target was shoved well out of its starting spot by the impact.
+    const target = physics.engine.world.bodies.find(
+      (b) => physics.label(b) === "pawn:target"
+    )!;
+    expect(physics.position(target).y).toBeGreaterThan(350 + 5);
     physics.destroy();
   });
 });
@@ -196,7 +203,7 @@ describe("ghosts and canonical rest (N-player support)", () => {
     physics.setGhost(body, true);
     expect(body.collisionFilter.mask).toBe(0);
     physics.setGhost(body, false);
-    expect(body.collisionFilter.mask).toBe(0x0001 | 0x0002); // pawn | wall
+    expect(body.collisionFilter.mask).toBe(0x0001); // pawns only — no wall bit
     physics.destroy();
   });
 
@@ -257,8 +264,8 @@ describe("ghosts and canonical rest (N-player support)", () => {
 
   it("a settled pawn resting on the floor stays exactly frozen while others fly", () => {
     const physics = createPhysicsWorld();
-    // Pawn resting exactly at the wall contact circle (no penetration → no
-    // contact pair → no solver nudging on later steps).
+    // Pawn resting just inside the floor edge (nothing to touch out there
+    // → no contact pair → no solver nudging on later steps).
     const y = CONFIG.arena.centerY + floorRadius(physics.arena) - PAWN_R - 1;
     const resting = physics.createPawnBody("rest", CONFIG.arena.centerX, y, PAWN_R);
     physics.settleOnFloor(resting, PAWN_R);
@@ -274,22 +281,23 @@ describe("ghosts and canonical rest (N-player support)", () => {
 });
 
 describe("onCollision", () => {
-  it("reports pawn-on-rim contacts with both bodies", () => {
+  it("reports pawn-vs-pawn contacts with both bodies (and never a wall)", () => {
     const physics = createPhysicsWorld();
-    const body = physics.createPawnBody("p0", SPAWN[0], SPAWN[1], PAWN_R);
+    const mover = physics.createPawnBody("mover", 450, 300, PAWN_R);
+    physics.createPawnBody("target", 450, 350, PAWN_R);
 
     const hits: Array<[string, string]> = [];
     physics.onCollision((a, b) => {
       hits.push([physics.label(a), physics.label(b)].sort() as [string, string]);
     });
 
-    physics.applyImpulse(body, 0, -3.0); // straight into the top rim
-    for (let i = 0; i < 30 && hits.length === 0; i++) physics.step(DT);
+    physics.applyImpulse(mover, 0, 2.5); // straight into the other pawn
+    for (let i = 0; i < 60 && hits.length === 0; i++) physics.step(DT);
 
     expect(hits.length).toBeGreaterThan(0);
     for (const [l1, l2] of hits) {
-      expect([l1, l2]).toContain("pawn:p0");
-      expect([l1, l2]).toContain("arenaWall");
+      expect([l1, l2]).toContain("pawn:mover");
+      expect([l1, l2]).toContain("pawn:target");
     }
     physics.destroy();
   });

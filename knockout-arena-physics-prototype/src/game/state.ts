@@ -27,9 +27,9 @@ import type { GamePhase, Vec2 } from "./types";
  *   - rendering/presentation data (see GameStateSnapshot in types.ts)
  *   - client-owned data (which pawn is "local" — the engine has no local
  *     player; callers supply identity to projectSnapshot)
- *   - physics-engine bookkeeping (collision pairs, rim pass-over flags) —
- *     the rim pass-over decision is re-derived from position + velocity on
- *     every tick, so it needs no serialization.
+ *   - physics-engine bookkeeping (collision pairs) — there is no wall
+ *     state at all: pawns collide with each other only, so nothing
+ *     collision-related needs serialization.
  *
  * A future server can therefore: simulate → getState() → serializeGameState()
  * → send; and a client (or another server) can: deserializeGameState() →
@@ -100,6 +100,35 @@ export interface PawnState {
   angularVelocity: number;
 }
 
+/**
+ * The authoritative arena state: the SHRINKING playfield.
+ *
+ * Only the two numbers the schedule actually needs are stored — the
+ * current radius and how many rounds have completed since the last
+ * shrink. Everything else (floor radius, the next radius, rounds left,
+ * whether to warn) is DERIVED from them through arena.ts, so there is
+ * exactly one source of truth and nothing to keep in sync.
+ *
+ * Center and ring thickness are not stored: they never change, so they
+ * stay in CONFIG.
+ */
+export interface ArenaState {
+  /**
+   * The CURRENT outer radius. Starts at CONFIG.arena.radius and drops by
+   * CONFIG.arena.shrink.amount on every shrink, never below
+   * CONFIG.arena.shrink.minRadius. Every geometry decision — elimination
+   * above all — measures against THIS value.
+   */
+  radius: number;
+  /**
+   * Completed rounds since the last shrink (0 right after one). The
+   * engine increments it when a round completes and resets it when the
+   * shrink fires, so the schedule survives serialization/reconnects
+   * exactly like the rest of the match.
+   */
+  roundsSinceShrink: number;
+}
+
 /** Serializable authoritative state of the whole match. */
 export interface GameState {
   phase: GamePhase;
@@ -114,6 +143,16 @@ export interface GameState {
     /** Fixed simulation ticks since the round's movements started. */
     settleTicks: number;
   };
+  /**
+   * The shrinking arena's authoritative state.
+   *
+   * ADDITIVE and backward-safe: the engine always writes it, but the
+   * field is OPTIONAL so states serialized before the mechanic existed
+   * stay loadable — they simply describe a fresh full-size arena (see
+   * validateGameState / loadState). A present value is fully validated,
+   * including the legal radius range.
+   */
+  arena?: ArenaState;
   /** All pawns in the match (eliminated pawns stay listed). */
   pawns: PawnState[];
 }
@@ -178,6 +217,8 @@ export function validateGameState(candidate: unknown): GameState {
     throw new Error("GameState: round.settleTicks must be a non-negative integer");
   }
 
+  validateArenaState(s.arena);
+
   // Round invariant: an eliminated pawn never carries a confirmation
   // (it cannot participate in any round).
   for (const p of s.pawns as PawnState[]) {
@@ -187,6 +228,39 @@ export function validateGameState(candidate: unknown): GameState {
   }
 
   return candidate as GameState;
+}
+
+/**
+ * The shrinking arena's authoritative state.
+ *
+ * BACKWARD-SAFE BY DESIGN: absent/null means "a match from before the
+ * shrink mechanic" and is accepted — loadState then normalizes it to a
+ * fresh full-size arena. A PRESENT value must be well formed and inside
+ * the legal range (a client-supplied radius could otherwise enlarge the
+ * arena or collapse it to a point).
+ */
+function validateArenaState(raw: unknown): void {
+  if (raw === undefined || raw === null) return;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("GameState: arena must be an object");
+  }
+  const a = raw as Record<string, unknown>;
+  if (!isFiniteNumber(a.radius)) {
+    throw new Error("GameState: arena.radius must be a finite number");
+  }
+  if (
+    a.radius > CONFIG.arena.radius ||
+    a.radius < CONFIG.arena.shrink.minRadius
+  ) {
+    throw new Error(
+      `GameState: arena.radius must be within [${CONFIG.arena.shrink.minRadius}, ${CONFIG.arena.radius}]`
+    );
+  }
+  if (!isInteger(a.roundsSinceShrink) || a.roundsSinceShrink < 0) {
+    throw new Error(
+      "GameState: arena.roundsSinceShrink must be a non-negative integer"
+    );
+  }
 }
 
 function validatePawn(raw: unknown): PawnState {

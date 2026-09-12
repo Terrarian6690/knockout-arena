@@ -86,6 +86,7 @@ export async function createHttpGameServer(
     options.gameServer ?? createGameServer({
       reconnectReservationMs: options.reconnectReservationMs,
       roundDecisionTimeoutMs: options.roundDecisionTimeoutMs,
+      matchDurationMs: options.matchDurationMs,
     });
 
   const staticFile = options.staticFile;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CONFIG, launchSpeedFor } from "../config";
-import { createArena, floorRadius } from "../arena";
+import { createArena, floorRadius, spawnPositionForSlot } from "../arena";
 import { createGame, type GameHandle } from "../game";
 import { projectSnapshot } from "../project";
 import type { GameState } from "../state";
@@ -18,10 +18,37 @@ import type { GameStateSnapshot } from "../types";
  */
 
 const DT = CONFIG.simulation.fixedTimestepMs; // 1000/60
-const FLOOR = floorRadius(createArena()); // playable floor radius (264)
+const FLOOR = floorRadius(createArena()); // playable floor radius (314)
 const PAWN_R = CONFIG.pawn.radius; // 16
-/** Spawn of the single default pawn: just inside the top rim. */
-const SPAWN = { x: CONFIG.arena.centerX, y: 110 };
+/**
+ * Spawn of the single default pawn: slot 0 of the arena's fixed spawn
+ * ring (arena.ts). Derived, never hard-coded, so the suite follows the
+ * one spawn-position source of truth — today slot 0 is the LEFT edge.
+ */
+const SPAWN = (() => {
+  const [x, y] = spawnPositionForSlot(createArena(), 0);
+  return { x, y };
+})();
+
+/** The point the spawn faces across the arena: straight inward. */
+const INWARD = { x: CONFIG.arena.centerX, y: CONFIG.arena.centerY };
+
+/**
+ * A target directly OUTWARD of the spawn (away from the center) —
+ * "toward the nearby rim", whatever direction that happens to be.
+ */
+const OUTWARD = {
+  x: CONFIG.arena.centerX + (SPAWN.x - CONFIG.arena.centerX) * 2,
+  y: CONFIG.arena.centerY + (SPAWN.y - CONFIG.arena.centerY) * 2,
+};
+
+/** The unit vector pointing from the spawn toward the arena center. */
+const INWARD_UNIT = (() => {
+  const dx = CONFIG.arena.centerX - SPAWN.x;
+  const dy = CONFIG.arena.centerY - SPAWN.y;
+  const len = Math.hypot(dx, dy);
+  return { x: dx / len, y: dy / len };
+})();
 
 /** First pawn of a snapshot (projection) or of raw authoritative state. */
 function pawnOf(s: GameStateSnapshot): GameStateSnapshot["pawns"][number];
@@ -44,16 +71,16 @@ function pump(g: GameHandle, maxFrames: number, dt: number = DT): number {
   return maxFrames;
 }
 
-/** Launch inward (downward from the top spawn) — safe, always settles. */
+/** Launch inward (toward the center from the spawn) — safe, always settles. */
 function launchInward(g: GameHandle, power: number) {
-  g.dispatch({ type: "aim", playerId: "p0", x: CONFIG.arena.centerX, y: CONFIG.arena.centerY });
+  g.dispatch({ type: "aim", playerId: "p0", x: INWARD.x, y: INWARD.y });
   g.dispatch({ type: "setPower", playerId: "p0", power });
   g.dispatch({ type: "confirmLaunch", playerId: "p0" });
 }
 
-/** Launch straight at the nearby top rim. */
+/** Launch straight at the nearby rim (outward from the spawn). */
 function launchAtRim(g: GameHandle, power: number) {
-  g.dispatch({ type: "aim", playerId: "p0", x: CONFIG.arena.centerX, y: 40 });
+  g.dispatch({ type: "aim", playerId: "p0", x: OUTWARD.x, y: OUTWARD.y });
   g.dispatch({ type: "setPower", playerId: "p0", power });
   g.dispatch({ type: "confirmLaunch", playerId: "p0" });
 }
@@ -110,18 +137,22 @@ describe("aiming", () => {
 
   it("sets a unit aim direction toward the target", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", playerId: "p0", x: CONFIG.arena.centerX, y: 400 });
+    g.dispatch({ type: "aim", playerId: "p0", x: INWARD.x, y: INWARD.y });
     const s = viewOf(g);
     expect(s.isAiming).toBe(true);
-    expect(s.aimDirection).toEqual({ x: 0, y: 1 }); // straight down from spawn
+    // Straight inward from the spawn, whichever slot that spawn is on.
+    expect(s.aimDirection!.x).toBeCloseTo(INWARD_UNIT.x, 9);
+    expect(s.aimDirection!.y).toBeCloseTo(INWARD_UNIT.y, 9);
     g.destroy();
   });
 
   it("updates the direction as the target moves", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 }); // down
-    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 40 }); // up
-    expect(viewOf(g).aimDirection).toEqual({ x: 0, y: -1 });
+    g.dispatch({ type: "aim", playerId: "p0", x: INWARD.x, y: INWARD.y }); // inward
+    g.dispatch({ type: "aim", playerId: "p0", x: OUTWARD.x, y: OUTWARD.y }); // back outward
+    const dir = viewOf(g).aimDirection!;
+    expect(dir.x).toBeCloseTo(-INWARD_UNIT.x, 9);
+    expect(dir.y).toBeCloseTo(-INWARD_UNIT.y, 9);
     g.destroy();
   });
 
@@ -137,9 +168,11 @@ describe("aiming", () => {
 
   it("keeps the previous aim when the target is degenerate", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 });
+    g.dispatch({ type: "aim", playerId: "p0", x: INWARD.x, y: INWARD.y });
     g.dispatch({ type: "aim", playerId: "p0", x: SPAWN.x, y: SPAWN.y }); // on the pawn itself
-    expect(viewOf(g).aimDirection).toEqual({ x: 0, y: 1 });
+    const dir = viewOf(g).aimDirection!;
+    expect(dir.x).toBeCloseTo(INWARD_UNIT.x, 9); // unchanged
+    expect(dir.y).toBeCloseTo(INWARD_UNIT.y, 9);
     g.destroy();
   });
 
@@ -194,14 +227,16 @@ describe("power selection", () => {
 describe("valid launch", () => {
   it("applies the aim direction scaled by the power's launch speed", () => {
     const g = createGame();
-    g.dispatch({ type: "aim", playerId: "p0", x: 450, y: 400 }); // straight down
+    g.dispatch({ type: "aim", playerId: "p0", x: INWARD.x, y: INWARD.y }); // straight inward
     g.dispatch({ type: "setPower", playerId: "p0", power: 4 });
     g.dispatch({ type: "confirmLaunch", playerId: "p0" });
 
     const v = pawnOf(g.snapshot()).velocity;
-    expect(Math.hypot(v.x, v.y)).toBeCloseTo(launchSpeedFor(4), 6);
-    expect(v.x).toBeCloseTo(0, 9);
-    expect(v.y).toBeGreaterThan(0);
+    const speed = launchSpeedFor(4);
+    expect(Math.hypot(v.x, v.y)).toBeCloseTo(speed, 6);
+    // Velocity is the aim direction scaled by the speed, component-wise.
+    expect(v.x).toBeCloseTo(INWARD_UNIT.x * speed, 6);
+    expect(v.y).toBeCloseTo(INWARD_UNIT.y * speed, 6);
     g.destroy();
   });
 
@@ -271,11 +306,15 @@ describe("one launch per round", () => {
 describe("movement, friction and settling", () => {
   it("moves the pawn in the aim direction", () => {
     const g = createGame();
-    launchInward(g, 3); // down
+    launchInward(g, 3);
     for (let i = 0; i < 30; i++) g.update(DT);
     const p = pawnOf(g.snapshot()).position;
-    expect(p.y).toBeGreaterThan(SPAWN.y + 30);
-    expect(p.x).toBeCloseTo(SPAWN.x, 6);
+    // It travelled ALONG the aim: measurably closer to the center, and
+    // still on the spawn→center line (no sideways drift).
+    expect(distFromCenter(p)).toBeLessThan(distFromCenter(SPAWN) - 30);
+    const travelled = Math.hypot(p.x - SPAWN.x, p.y - SPAWN.y);
+    expect(p.x).toBeCloseTo(SPAWN.x + INWARD_UNIT.x * travelled, 6);
+    expect(p.y).toBeCloseTo(SPAWN.y + INWARD_UNIT.y * travelled, 6);
     g.destroy();
   });
 
@@ -326,7 +365,7 @@ describe("phase transitions", () => {
     g.destroy();
   });
 
-  it("walks aiming → moving → finished on a rim fly-over", () => {
+  it("walks aiming → moving → finished on an outward launch", () => {
     // UPDATED expectation ("eliminated" → "finished"): a lone pawn leaving
     // the arena ends the match; elimination itself is a per-pawn flag.
     const g = createGame();
@@ -348,7 +387,7 @@ describe("phase transitions", () => {
 });
 
 describe("elimination (geometric rule)", () => {
-  it("eliminates a fast head-on launch over the rim", () => {
+  it("eliminates a fast head-on launch off the floor", () => {
     const g = createGame();
     launchAtRim(g, 5);
     const frames = pump(g, 700);
@@ -356,7 +395,7 @@ describe("elimination (geometric rule)", () => {
     expect(s.phase).toBe("finished"); // lone pawn out → match over
     expect(pawnOf(s).eliminated).toBe(true);
     expect(distFromCenter(pawnOf(s).position)).toBeGreaterThan(FLOOR + PAWN_R);
-    expect(frames).toBeLessThan(120); // a fly-over resolves quickly
+    expect(frames).toBeLessThan(120); // an open-edge exit resolves quickly
     g.destroy();
   });
 
@@ -394,9 +433,10 @@ describe("elimination (geometric rule)", () => {
     g.destroy();
   });
 
-  it("eliminates fast off-angle launches that still clear the rim speed", () => {
+  it("eliminates fast off-angle launches across the open edge", () => {
     const g = createGame();
-    // Aim 30° off the outward rim normal: outward component 3.6·cos(30°) ≈ 3.1 > 2.3.
+    // Aim 30° off the outward edge normal: with no wall the launch simply
+    // carries past the floor edge and out.
     const off = { x: Math.sin(Math.PI / 6), y: -Math.cos(Math.PI / 6) };
     g.dispatch({
       type: "aim",
@@ -412,27 +452,27 @@ describe("elimination (geometric rule)", () => {
   });
 });
 
-describe("weak bounce must not eliminate", () => {
-  it("bounces a below-threshold rim hit and settles normally", () => {
+describe("no wall: outward launches always leave", () => {
+  it("eliminates even a gentle outward launch (no threshold, no bounce)", () => {
     const g = createGame();
-    launchAtRim(g, 3); // 1.67 < knockoutSpeed 2.3
+    launchAtRim(g, 1); // the weakest launch still exits — nothing stops it
     pump(g, 700);
     const s = g.snapshot();
-    expect(s.phase).toBe("aiming");
-    expect(pawnOf(s).eliminated).toBe(false);
-    expect(distFromCenter(pawnOf(s).position)).toBeLessThan(FLOOR + PAWN_R);
+    expect(s.phase).toBe("finished");
+    expect(pawnOf(s).eliminated).toBe(true);
     g.destroy();
   });
 
-  it("never leaves the floor on a weak bounce", () => {
+  it("crosses the floor edge instead of bouncing back", () => {
     const g = createGame();
     let maxDist = 0;
     g.subscribe((s) => {
       maxDist = Math.max(maxDist, distFromCenter(pawnOf(s).position));
     });
-    launchAtRim(g, 3);
+    launchAtRim(g, 1);
     pump(g, 700);
-    expect(maxDist).toBeLessThan(FLOOR + PAWN_R);
+    // The pawn kept going outward past the edge — never reversed.
+    expect(maxDist).toBeGreaterThan(FLOOR + PAWN_R);
     g.destroy();
   });
 });
@@ -466,16 +506,18 @@ describe("reset", () => {
     g.destroy();
   });
 
-  it("restores rim collision after an elimination reset", () => {
+  it("restores live play after an elimination reset", () => {
     const g = createGame();
-    launchAtRim(g, 5); // disables wall collision on fly-over
+    launchAtRim(g, 5); // flies straight out — no wall to stop it
     pump(g, 700);
+    expect(g.snapshot().phase).toBe("finished");
     g.dispatch({ type: "reset" });
-    // A weak rim hit after reset must bounce again, not pass through.
-    launchAtRim(g, 3);
+    // A fresh match plays normally: an inward launch settles to aiming.
+    launchInward(g, 2);
     pump(g, 700);
     const s = g.snapshot();
     expect(s.phase).toBe("aiming");
+    expect(pawnOf(s).eliminated).toBe(false);
     expect(distFromCenter(pawnOf(s).position)).toBeLessThan(FLOOR + PAWN_R);
     g.destroy();
   });
@@ -494,7 +536,9 @@ describe("repeated turns", () => {
       expect(pawnOf(s).eliminated).toBe(false);
     }
     // The pawn drifted toward the center across turns.
-    expect(pawnOf(g.snapshot()).position.y).toBeGreaterThan(SPAWN.y + 40);
+    expect(distFromCenter(pawnOf(g.snapshot()).position)).toBeLessThan(
+      distFromCenter(SPAWN) - 40
+    );
     g.destroy();
   });
 
@@ -591,31 +635,32 @@ describe("identical trajectories at different render FPS", () => {
   });
 });
 
-describe("rim pass-over behavior", () => {
-  it("clears the rim only when the outward speed meets the knockout speed", () => {
-    // Power 4 (≈2.58 > 2.3) and 5 (3.6) fly over; power 3 (≈1.67) bounces.
-    for (const [power, expectOut] of [
-      [4, true],
-      [5, true],
-      [3, false],
-      [2, false],
-    ] as const) {
+describe("open floor edge (no wall)", () => {
+  it("every outward launch leaves the arena — no wall at any power", () => {
+    // At every power level 1–5 a head-on outward launch exits: there is no
+    // wall to bounce off and no speed threshold to beat.
+    for (const power of [1, 2, 3, 4, 5] as const) {
       const g = createGame();
       launchAtRim(g, power);
       pump(g, 700);
-      const out = g.snapshot().phase === "finished";
-      expect(out).toBe(expectOut);
+      expect(g.snapshot().phase).toBe("finished");
+      expect(pawnOf(g.snapshot()).eliminated).toBe(true);
       g.destroy();
     }
   });
 
-  it("keeps the walls solid for a pawn that stays slow near the rim", () => {
+  it("keeps a slow tangential glide inside without any wall", () => {
     const g = createGame();
-    // Aim along the rim (tangentially): the pawn hugs the wall without the
-    // outward speed to clear it, so it must never slip out.
-    const tangential = { x: 150, y: 110 }; // roughly along the top rim
+    // Aim along the edge (tangentially) from the spawn: with no wall, a
+    // gentle glide simply runs out of speed before the tangent carries
+    // it out, so it settles back inside. The tangent is perpendicular to
+    // the spawn→center line, so this follows the spawn slot.
+    const tangential = {
+      x: SPAWN.x + -INWARD_UNIT.y * 300,
+      y: SPAWN.y + INWARD_UNIT.x * 300,
+    };
     g.dispatch({ type: "aim", playerId: "p0", x: tangential.x, y: tangential.y });
-    g.dispatch({ type: "setPower", playerId: "p0", power: 3 });
+    g.dispatch({ type: "setPower", playerId: "p0", power: 1 });
     g.dispatch({ type: "confirmLaunch", playerId: "p0" });
     pump(g, 700);
     const s = g.snapshot();

@@ -5,6 +5,7 @@ import {
   floorRadius,
   isPawnOutOfBounds,
   spawnPositionAtAngle,
+  spawnRingRadius,
 } from "../arena";
 
 const PAWN_R = CONFIG.pawn.radius; // 16
@@ -74,23 +75,42 @@ describe("isPawnOutOfBounds (geometric elimination rule)", () => {
   });
 });
 
+describe("arena size (source of truth)", () => {
+  it("pins the enlarged radius: 330 outer, 314 floor, centered in the world", () => {
+    // CONFIG.arena is the single source of truth: spawns, the logical
+    // elimination boundary, resting projection and rendering all derive
+    // from it (nothing hard-codes a radius anywhere else).
+    expect(CONFIG.arena.radius).toBe(330);
+    expect(CONFIG.arena.centerX).toBe(450);
+    expect(CONFIG.arena.centerY).toBe(350);
+    expect(floorRadius(createArena())).toBe(314); // 330 - wallThickness 16
+    // The whole arena fits inside the world frame with room to spare.
+    expect(CONFIG.arena.radius).toBeLessThan(
+      Math.min(CONFIG.world.width / 2, CONFIG.world.height / 2)
+    );
+  });
+});
+
 describe("spawnPositionAtAngle", () => {
   const arena = createArena();
 
-  it("spawns at the top edge for angle -π/2 (the phase-1 spawn)", () => {
+  /** floor − pawnRadius − spawnMargin: the single spawn-ring formula. */
+  const RING = spawnRingRadius(arena);
+
+  it("spawns at the top edge for angle -π/2", () => {
     const [x, y] = spawnPositionAtAngle(arena, -Math.PI / 2);
     expect(x).toBeCloseTo(CONFIG.arena.centerX, 9);
-    expect(y).toBeCloseTo(110, 9); // centerY - (floor - pawnR - 8)
+    expect(y).toBeCloseTo(CONFIG.arena.centerY - RING, 9);
   });
 
   it("spawns at the right edge for angle 0", () => {
     const [x, y] = spawnPositionAtAngle(arena, 0);
-    expect(x).toBeCloseTo(690, 9); // centerX + 240
+    expect(x).toBeCloseTo(CONFIG.arena.centerX + RING, 9);
     expect(y).toBeCloseTo(CONFIG.arena.centerY, 9);
   });
 
   it("keeps every spawn inside the floor", () => {
-    const expected = floorRadius(arena) - PAWN_R - 8;
+    const expected = RING;
     for (let i = 0; i < 12; i++) {
       const angle = (i / 12) * Math.PI * 2;
       const [x, y] = spawnPositionAtAngle(arena, angle);

@@ -75,6 +75,11 @@ export interface GameServerOptions {
    * move, unconfirmed do not. Default 10 000 ms (see createGameHost).
    */
   roundDecisionTimeoutMs?: number;
+  /**
+   * The hard match time limit (default CONFIG.match.durationMs — 4
+   * minutes). Server policy, forwarded to every match started here.
+   */
+  matchDurationMs?: number;
 }
 
 /** A seat result that carries the seat's reconnect credential. */
@@ -191,6 +196,7 @@ export interface GameServer {
 export function createGameServer(options?: GameServerOptions): GameServer {
   const manager: RoomManager = createRoomManager({
     roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
+    matchDurationMs: options?.matchDurationMs,
   });
   const reservationMs = options?.reconnectReservationMs ?? DEFAULT_RESERVATION_MS;
   /** Live sessions by their opaque token (the registry's canonical objects). */
@@ -384,6 +390,11 @@ export function createGameServer(options?: GameServerOptions): GameServer {
       listener({
         ...projectSnapshot(deserializeGameState(serialized), seat.playerId),
         roundDeadline: manager.roundDeadline(seat.room.id),
+        // The match time limit, stamped the same way and for the same
+        // reason: an ABSOLUTE authoritative timestamp the client can
+        // render a countdown from. Null once the match is over (or
+        // before it starts), so no finished match keeps counting.
+        matchDeadline: manager.matchDeadline(seat.room.id),
       });
     });
   }

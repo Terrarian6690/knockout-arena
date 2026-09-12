@@ -10,7 +10,9 @@ import { audio } from "../../audio";
 import { MatchControls } from "./MatchControls";
 import { MatchRail } from "./MatchRail";
 import { MatchResultOverlay } from "./MatchResultOverlay";
+import { MatchTimer } from "./MatchTimer";
 import { RoundCountdown } from "./RoundCountdown";
+import { ShrinkWarning } from "./ShrinkWarning";
 import { canLocalPlayerAct } from "./localControl";
 
 /**
@@ -34,9 +36,12 @@ import { canLocalPlayerAct } from "./localControl";
  * Rounds are SIMULTANEOUS: during the aiming phase every alive player
  * chooses independently (aim, power) and Launch locks in their OWN move
  * ("Ready"); the round resolves on the server once everyone is ready.
- * While choosing, the mouse aims (the arrow previews the direction
- * locally and every move also sends the real aim command — the server's
- * echo always wins) and the power meter picks 1–5. Once the round
+ * While choosing, the mouse aims: moves preview the direction locally
+ * (every move also sends the real aim command — the server's echo always
+ * wins) until a primary arena click selects the current direction and
+ * locks it, so the trip to the Confirm button cannot disturb the choice;
+ * clicking the arena again selects a new direction. The power meter picks
+ * 1–5. Once the round
  * resolves, everyone's COMMITTED launches are revealed by the server
  * (pawns[].launch) and drawn as arrows during the movement phase.
  * Disconnects (seat recovery): the last authoritative snapshot stays
@@ -45,7 +50,10 @@ import { canLocalPlayerAct } from "./localControl";
  *
  * The round decision countdown (RoundCountdown) is presentation of the
  * server-stamped `snapshot.roundDeadline` only — the server remains the
- * sole authority for when a round ends.
+ * sole authority for when a round ends. The match clock (MatchTimer) is
+ * the same arrangement for the 4-minute match time limit: it renders
+ * `snapshot.matchDeadline` and never ends a match itself. Both are shown
+ * only during a match — a lobby has neither deadline.
  */
 export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
   const client = useNetworkClient();
@@ -171,6 +179,12 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
         <div className="flex items-center gap-2">
           <AudioControl />
           {snapshot !== null && (
+            <MatchTimer
+              phase={snapshot.phase}
+              deadline={snapshot.matchDeadline}
+            />
+          )}
+          {snapshot !== null && (
             <RoundCountdown
               phase={snapshot.phase}
               deadline={snapshot.roundDeadline}
@@ -204,6 +218,11 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
               interactive={canAct && connected}
               onAim={handleAim}
             />
+
+            {/* Authoritative shrink warning. Overlays the arena without
+                capturing pointer events, so aiming and Confirm are
+                unaffected; it reads the server's snapshot only. */}
+            <ShrinkWarning snapshot={snapshot} />
 
             {!connected && (
               <ConnectionBanner

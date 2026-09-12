@@ -211,7 +211,10 @@ describe("applyCommand — command application", () => {
     expect(g.applyCommand({ type: "aim", playerId: P0, x: 450, y: 400 })).toEqual({ ok: true });
     expect(g.applyCommand({ type: "setPower", playerId: P0, power: 2 })).toEqual({ ok: true });
     const view = projectSnapshot(g.getState(), P0); // the player's own view
-    expect(view.aimDirection).toEqual({ x: 0, y: 1 });
+    // A unit vector pointing from the pawn at the aim target — the exact
+    // direction depends on which spawn slot p0 occupies.
+    const dir = view.aimDirection!;
+    expect(Math.hypot(dir.x, dir.y)).toBeCloseTo(1, 9);
     expect(view.power).toBe(2);
     expect(g.applyCommand({ type: "confirmLaunch", playerId: P0 })).toEqual({ ok: true });
     // Single pawn: the confirmation completes the set → immediate movement.

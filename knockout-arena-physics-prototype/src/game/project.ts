@@ -1,6 +1,12 @@
 import { CONFIG } from "./config";
+import {
+  arenaShrinkView,
+  clampArenaRadius,
+  initialArenaRadius,
+  isMinArenaRadius,
+} from "./arena";
 import type { GameState, PawnState } from "./state";
-import type { GameStateSnapshot, PawnSnapshot } from "./types";
+import type { ArenaSnapshot, GameStateSnapshot, PawnSnapshot } from "./types";
 
 /**
  * Projection: authoritative GameState → client-facing GameStateSnapshot.
@@ -68,6 +74,7 @@ export function projectSnapshot(
     pawns,
     localPawnId,
     winnerId: state.winnerId,
+    arena: projectArena(state),
     // The controls shown by the UI are the VIEWER'S OWN selections — each
     // player's aim/power/confirmed live on their pawn in the authoritative
     // state, and everyone chooses simultaneously.
@@ -81,5 +88,35 @@ export function projectSnapshot(
       localPawn !== null &&
       localPawn.aim.active &&
       !localPawn.eliminated,
+  };
+}
+
+/**
+ * The shrinking arena, projected for clients.
+ *
+ * Everything except the stored radius/counter is DERIVED here, on the
+ * authoritative side, so no client ever counts rounds or re-implements the
+ * schedule: they render exactly what the server computed. States from
+ * before the mechanic (no `arena` field) project as a fresh full-size
+ * arena, and the radius is clamped — a hand-fed snapshot cannot make the
+ * UI draw an arena the rules do not allow.
+ */
+function projectArena(state: GameState): ArenaSnapshot {
+  const radius = clampArenaRadius(state.arena?.radius ?? initialArenaRadius());
+  const roundsSinceShrink = Math.max(
+    0,
+    Math.trunc(state.arena?.roundsSinceShrink ?? 0)
+  );
+  const view = arenaShrinkView(radius, roundsSinceShrink);
+  return {
+    radius,
+    roundsUntilShrink: view.roundsUntilShrink,
+    nextRadius: view.nextRadius,
+    // The warning is meaningful only while a round is being DECIDED: it
+    // announces what the current round's completion will do. During
+    // movement the shrink is already inevitable, and a finished match
+    // has no next round at all.
+    shrinkWarning: view.warning && state.phase === "aiming",
+    atMinRadius: isMinArenaRadius(radius),
   };
 }

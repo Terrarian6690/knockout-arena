@@ -22,15 +22,31 @@ import type * as EngineApi from "../index";
 const EXPECTED_RUNTIME_EXPORTS = [
   "CONFIG",
   "aimAt",
+  // The shrinking arena (Task 5): consumers need the authoritative
+  // radius as geometry (arenaFromSnapshot) and the schedule's derived
+  // helpers. They are exported because the client genuinely uses them —
+  // and so that nothing has to re-implement the schedule locally.
+  "arenaFromSnapshot",
+  "arenaShrinkView",
   "createArena",
   "createGame",
   "deserializeGameState",
   "floorRadius",
   "indicatorLength",
+  "initialArenaRadius",
+  "isMinArenaRadius",
+  "minArenaRadius",
   "playerColor",
   "playerStroke",
   "projectSnapshot",
   "serializeGameState",
+  // The FIXED spawn slots (Task 7 — six-player capacity): the single
+  // source of spawn positions. Exported so the server, tests and any
+  // future renderer reason about seats from one place instead of
+  // re-deriving angles.
+  "spawnPositionForSlot",
+  "spawnRingRadius",
+  "spawnSlotAngle",
   "validateCommand",
   "validateGameState",
   "withPlayerId",

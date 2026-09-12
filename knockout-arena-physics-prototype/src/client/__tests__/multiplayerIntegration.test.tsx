@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CONFIG, type GameStateSnapshot } from "../../game";
+import { INWARD_UNIT, expectDirection } from "./spawnGeometry";
 import {
   connectPlayer,
   createServerHarness,
@@ -165,7 +166,7 @@ describe("two clients play one authoritative match (full stack)", () => {
     // …and it carries the host's OWN aim only: the guest's pawn has no
     // launch datum, no direction, no power — readiness is all that is
     // public during aiming.
-    expect(hostDuringGuestAim.aimDirection).toEqual({ x: 0, y: 1 }); // host's own
+    expectDirection(hostDuringGuestAim.aimDirection, INWARD_UNIT[0]); // host's own
     expect(hostDuringGuestAim.pawns.find((p) => p.id === "p1")!.launch).toBeNull();
     expect(hostDuringGuestAim.pawns.find((p) => p.id === "p1")!.confirmed).toBe(false);
     await playerAct(() => guest.client.submitCommand({ type: "setPower", power: 2 }));
@@ -192,14 +193,12 @@ describe("two clients play one authoritative match (full stack)", () => {
     // The host fired down (power 2), the guest up (power 2) — and BOTH
     // viewers now see BOTH arrows' data: exact direction, exact power.
     for (const view of [hostMoving, guestMoving]) {
-      expect(view.pawns.find((p) => p.id === "p0")!.launch).toEqual({
-        direction: { x: 0, y: 1 },
-        power: 2,
-      });
-      expect(view.pawns.find((p) => p.id === "p1")!.launch).toEqual({
-        direction: { x: 0, y: -1 },
-        power: 2,
-      });
+      const p0Launch = view.pawns.find((p) => p.id === "p0")!.launch!;
+      const p1Launch = view.pawns.find((p) => p.id === "p1")!.launch!;
+      expectDirection(p0Launch.direction, INWARD_UNIT[0]);
+      expect(p0Launch.power).toBe(2);
+      expectDirection(p1Launch.direction, INWARD_UNIT[1]);
+      expect(p1Launch.power).toBe(2);
     }
 
     // ── the round settles into a fresh aiming round (no turn queue) ──
@@ -362,10 +361,9 @@ describe("two clients play one authoritative match (full stack)", () => {
     // silent guest's pawn carries no launch at all.
     for (const player of [host, guest]) {
       const view = player.client.getState().snapshot as GameStateSnapshot;
-      expect(view.pawns.find((p) => p.id === "p0")!.launch).toEqual({
-        direction: { x: 0, y: 1 },
-        power: 2,
-      });
+      const revealed = view.pawns.find((p) => p.id === "p0")!.launch!;
+      expectDirection(revealed.direction, INWARD_UNIT[0]);
+      expect(revealed.power).toBe(2);
       expect(view.pawns.find((p) => p.id === "p1")!.launch).toBeNull();
     }
 

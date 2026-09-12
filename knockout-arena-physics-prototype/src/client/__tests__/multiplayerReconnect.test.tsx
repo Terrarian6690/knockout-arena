@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { GameStateSnapshot } from "../../game";
+import { AIM_AT_CENTER, INWARD_UNIT, expectDirection } from "./spawnGeometry";
 import {
   connectPlayer,
   createServerHarness,
@@ -264,7 +265,9 @@ describe("seat recovery through the real UI", () => {
         5000
       )
     ).toBe(true);
-    await playerAct(() => guest.client.submitCommand({ type: "aim", x: 450, y: 150 }));
+    await playerAct(() =>
+      guest.client.submitCommand({ type: "aim", ...AIM_AT_CENTER })
+    );
     expect(
       await waitFor(
         () =>
@@ -275,6 +278,11 @@ describe("seat recovery through the real UI", () => {
     ).toBe(true);
     const deadlineBefore = (host.client.getState().snapshot as GameStateSnapshot)
       .roundDeadline;
+    // The host's aim as the SERVER recorded it, before the connection dies.
+    const hostAimBeforeDrop = (
+      host.client.getState().snapshot as GameStateSnapshot
+    ).aimDirection;
+    expect(hostAimBeforeDrop).not.toBeNull();
 
     // ── the host's connection dies mid-round and comes back ──
     await act(async () => {
@@ -292,7 +300,10 @@ describe("seat recovery through the real UI", () => {
     // the host's OWN aim is restored from the server state (never a
     // local cache, never reset)…
     const recovered = host.client.getState().snapshot as GameStateSnapshot;
-    expect(recovered.aimDirection).toEqual({ x: 0, y: 1 }); // host aimed down
+    // The host's own aim survives the drop EXACTLY as the server had it
+    // (captured before the disconnect — it came from a real pointer
+    // event, so it is compared against the authoritative value itself).
+    expect(recovered.aimDirection).toEqual(hostAimBeforeDrop);
     expect(recovered.localPawnId).toBe("p0");
     // …the opponent's aim is still private (nothing of the guest's
     // direction exists in the host's snapshot)…
@@ -309,7 +320,8 @@ describe("seat recovery through the real UI", () => {
     // The guest's view mirrors the privacy: each player's aim is theirs
     // alone — the host's drop/reconnect changed nothing about that.
     const guestView = guest.client.getState().snapshot as GameStateSnapshot;
-    expect(guestView.aimDirection).toEqual({ x: 0, y: -1 }); // guest aimed up
+    // The guest aimed at the center from seat p1: its own inward unit.
+    expectDirection(guestView.aimDirection, INWARD_UNIT[1]);
     expect(guestView.pawns.find((p) => p.id === "p0")!.launch).toBeNull();
   }, 15000);
 });

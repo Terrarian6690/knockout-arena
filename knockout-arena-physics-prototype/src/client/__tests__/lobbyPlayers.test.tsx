@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { MAX_SEATS } from "../components/lobby/SeatList";
 import {
   connectPlayer,
   createScriptedClient,
@@ -79,15 +80,15 @@ describe("lobby player list", () => {
 
     // Empty seats are explicit placeholders, not blank space.
     const emptySeats = screen.getAllByTestId("empty-seat");
-    expect(emptySeats).toHaveLength(3);
+    expect(emptySeats).toHaveLength(MAX_SEATS - 1); // one seated host
     for (const emptySeat of emptySeats) {
       expect(emptySeat).toHaveTextContent("Waiting for player…");
     }
 
     // The count is visible and accessible.
     const count = screen.getByTestId("player-count");
-    expect(count).toHaveTextContent("1 / 4");
-    expect(count).toHaveAttribute("aria-label", "1 of 4 players");
+    expect(count).toHaveTextContent(`1 / ${MAX_SEATS}`);
+    expect(count).toHaveAttribute("aria-label", `1 of ${MAX_SEATS} players`);
 
     // Task 14's room-code surface is still there next to the list.
     expect(screen.getByTestId("room-code")).toHaveTextContent(
@@ -116,33 +117,33 @@ describe("lobby player list", () => {
     expect(screen.getByTestId("local-player-id")).toHaveTextContent(
       "Player 2"
     );
-    expect(screen.getByTestId("player-count")).toHaveTextContent("2 / 4");
+    expect(screen.getByTestId("player-count")).toHaveTextContent(`2 / ${MAX_SEATS}`);
   });
 
   it("updates the list live when a player joins (no refresh)", async () => {
     const { harness, host } = await seatedHost();
-    expect(screen.getByTestId("player-count")).toHaveTextContent("1 / 4");
+    expect(screen.getByTestId("player-count")).toHaveTextContent(`1 / ${MAX_SEATS}`);
 
     await seatGuest(harness, host.client);
 
     // The roster push alone updates the rendered list.
-    expect(await screen.findByText("2 / 4")).toBeInTheDocument();
+    expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
     expect(screen.getByTestId("seat-p1")).toBeInTheDocument();
-    expect(screen.getAllByTestId("empty-seat")).toHaveLength(2);
+    expect(screen.getAllByTestId("empty-seat")).toHaveLength(MAX_SEATS - 2);
   });
 
   it("updates the list live when a player leaves (no refresh)", async () => {
     const { harness, host } = await seatedHost();
     const guest = await seatGuest(harness, host.client);
-    expect(await screen.findByText("2 / 4")).toBeInTheDocument();
+    expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
 
     // The guest leaves on purpose: in the waiting room the seat is freed,
     // and the host's list shrinks from the server's roster broadcast.
     await playerAct(() => guest.client.leaveRoom());
 
-    expect(await screen.findByText("1 / 4")).toBeInTheDocument();
+    expect(await screen.findByText(`1 / ${MAX_SEATS}`)).toBeInTheDocument();
     expect(screen.queryByTestId("seat-p1")).toBeNull();
-    expect(screen.getAllByTestId("empty-seat")).toHaveLength(3);
+    expect(screen.getAllByTestId("empty-seat")).toHaveLength(MAX_SEATS - 1);
   });
 
   it("marks a dropped player disconnected — as text, not just color", async () => {
@@ -190,7 +191,7 @@ describe("start-match UX", () => {
 
     // A second player seats (live): the button arms, the hint disappears.
     await seatGuest(harness, host.client);
-    expect(await screen.findByText("2 / 4")).toBeInTheDocument();
+    expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
     expect(screen.getByTestId("start-match")).toBeEnabled();
     expect(screen.queryByTestId("waiting-for-players")).toBeNull();
   });
@@ -198,7 +199,7 @@ describe("start-match UX", () => {
   it("starts the match through the real server: both clients transition", async () => {
     const { harness, host } = await seatedHost();
     const guest = await seatGuest(harness, host.client);
-    expect(await screen.findByText("2 / 4")).toBeInTheDocument();
+    expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("start-match"));
     // The start intent went on the wire; the real server starts the match
@@ -266,7 +267,7 @@ describe("leave room (from the player list screen)", () => {
   it("returns the leaver to the home screen; the room stays server-authoritative", async () => {
     const { harness, host } = await seatedHost();
     const guest = await seatGuest(harness, host.client);
-    expect(await screen.findByText("2 / 4")).toBeInTheDocument();
+    expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
 
     // Leave: a clearly labelled action that cannot start anything.
     fireEvent.click(screen.getByTestId("leave-room"));

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { CommandRejection, GameCommand, PlayerSpec } from "../game";
+import { CONFIG, type CommandRejection, type GameCommand, type PlayerSpec } from "../game";
 import { normalizeDisplayName } from "./displayName";
 import { createGameHost, type GameHost, type SerializedStateListener } from "./gameHost";
 import { generateUniqueRoomCode, normalizeRoomCode } from "./roomCode";
@@ -8,7 +8,7 @@ import { generateUniqueRoomCode, normalizeRoomCode } from "./roomCode";
  * Room/Match manager — the server-side multiplayer layer above GameHost.
  *
  * A room is the multiplayer wrapper around exactly ONE authoritative match:
- * it tracks a seat roster (playerIds p0..p3 assigned EXCLUSIVELY by the
+ * it tracks a seat roster (playerIds p0..p5 assigned EXCLUSIVELY by the
  * server, in join order), owns exactly one GameHost once the match starts,
  * and derives every command's ownership from the seat, never from the wire.
  *
@@ -16,7 +16,7 @@ import { generateUniqueRoomCode, normalizeRoomCode } from "./roomCode";
  * and winning all stay in the engine; the host wraps the engine; the room
  * manager wraps the host. What it does own is room policy:
  *
- *   - seats: 2..4 players, lowest free seat assigned, no duplicates;
+ *   - seats: 2..6 players, lowest free seat assigned, no duplicates;
  *   - room codes: a random 4-character player-facing code per room
  *     (unambiguous alphabet, unique among active rooms, reused only after
  *     the room is destroyed) — a LOCATOR, never a credential: identity
@@ -56,8 +56,14 @@ export type RoomState =
 
 /** A room needs at least this many seated players to start a match. */
 export const MIN_PLAYERS = 2;
-/** Hard seat capacity — the playerIds p0..p3. */
-export const MAX_PLAYERS = 4;
+/**
+ * Hard seat capacity — the playerIds p0..p5.
+ *
+ * DERIVED, not declared: the engine's CONFIG.match.maxPlayers is the one
+ * place capacity is defined (it also fixes the number of spawn slots).
+ * Re-exported here because room policy is expressed in these terms.
+ */
+export const MAX_PLAYERS = CONFIG.match.maxPlayers;
 /**
  * How long a disconnected player's seat stays reserved before the normal
  * leave rules take over (seat freed/vacated, credential revoked). The game
@@ -76,6 +82,12 @@ export interface RoomManagerOptions {
    */
   roundDecisionTimeoutMs?: number;
   /**
+   * The hard match time limit handed to every match this manager starts
+   * (defaults to CONFIG.match.durationMs — 4 minutes). Server policy;
+   * clients never influence it.
+   */
+  matchDurationMs?: number;
+  /**
    * Room-code generator, injectable so tests can drive collisions and
    * reuse deterministically. Must return a candidate 4-character code;
    * the manager re-asks until the candidate is free among active rooms.
@@ -86,7 +98,7 @@ export interface RoomManagerOptions {
 
 /** One roster seat as seen from outside. */
 export interface RoomSeatInfo {
-  /** Server-assigned seat id ("p0".."p3"). */
+  /** Server-assigned seat id ("p0".."p5"). */
   readonly playerId: string;
   /** false once that player left after the match started (roster frozen). */
   readonly connected: boolean;
@@ -211,9 +223,12 @@ interface RoomEntry {
   /** Player-facing 4-character code — the `roomsByCode` map key. */
   code: string;
   state: RoomState;
-  /** seat index (0..3) → occupying session token; null = free seat. */
+  /**
+   * seat index (0..MAX_PLAYERS-1) → occupying session token; null = free
+   * seat. Always exactly MAX_PLAYERS long (see createRoom).
+   */
   seats: Array<string | null>;
-  /** seat index (0..3) → the seat's display name; null = none (fallback). */
+  /** seat index → the seat's display name; null = none (fallback). */
   names: Array<string | null>;
   /** Seats vacated after the match started — the roster is frozen. */
   vacated: Set<number>;
@@ -266,6 +281,14 @@ export interface RoomManager {
    * snapshots for countdown displays; deliberately NOT part of RoomInfo.
    */
   roundDeadline(roomId: string): number | null;
+  /**
+   * The room match's hard TIME LIMIT as an absolute wall-clock
+   * timestamp, or null when the room has no match, the match finished,
+   * or the limit already fired. Server-internal observability — used by
+   * the facade to stamp viewer snapshots so clients can display the
+   * remaining match time; deliberately NOT part of RoomInfo.
+   */
+  matchDeadline(roomId: string): number | null;
   /** Resolve a session token to its room and assigned playerId. */
   resolveSeat(token: string): { room: RoomInfo; playerId: string } | null;
   /**
@@ -434,8 +457,12 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       id: randomUUID(),
       code,
       state: "waiting",
-      seats: [null, null, null, null],
-      names: [null, null, null, null],
+      // Capacity-sized and capacity-derived: every seat slot exists and
+      // starts explicitly FREE. A fixed-length literal here was the one
+      // hidden 4-player assumption in the room manager — the extra
+      // slots would have read as `undefined` rather than null.
+      seats: Array.from({ length: MAX_PLAYERS }, () => null),
+      names: Array.from({ length: MAX_PLAYERS }, () => null),
       vacated: new Set(),
       reserved: new Map(),
       hostToken: token, // the creator is the room host
@@ -574,6 +601,14 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     return room?.host ? room.host.roundDeadline() : null;
   }
 
+  function matchDeadline(roomId: string): number | null {
+    if (!validKey(roomId)) return null;
+    const room = resolveRoom(roomId);
+    // Null while a room merely WAITS: the timer belongs to the match, and
+    // a room without a host has no match — so the lobby never counts down.
+    return room?.host ? room.host.matchDeadline() : null;
+  }
+
   function resolveSeat(token: string): { room: RoomInfo; playerId: string } | null {
     if (!validKey(token)) return null;
     const seated = findSeat(token);
@@ -626,6 +661,9 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       // The round decision deadline is room policy: every match started
       // here gets the same server-configured aiming-round maximum.
       roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
+      // The 4-minute clock starts HERE — the host is created the moment
+      // the match starts, so lobby/waiting time is never counted.
+      matchDurationMs: options?.matchDurationMs,
     });
     room.host = host;
     room.state = "playing";
@@ -748,6 +786,13 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
           // reset other players' match — the server calls resetMatch()
           // (behind whatever authorization the transport adds later).
           return { ok: false, reason: "unauthorized" };
+        case "timeUp":
+          // Match-level action: privileged, and the strongest case of
+          // all — this command ENDS the match. It exists solely so the
+          // host can hand its authoritative match clock to the engine.
+          // A client claiming "time is up" is claiming authority over
+          // wall-clock time itself, which it does not have.
+          return { ok: false, reason: "unauthorized" };
         default:
           return { ok: false, reason: "invalid-command" };
       }
@@ -768,6 +813,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     restoreSeat,
     getRoom,
     roundDeadline,
+    matchDeadline,
     resolveSeat,
     startMatch,
     resetMatch,

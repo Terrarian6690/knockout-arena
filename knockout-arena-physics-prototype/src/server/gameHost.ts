@@ -85,6 +85,16 @@ export interface GameHostOptions {
    * Server-side configuration only — clients never influence it.
    */
   roundDecisionTimeoutMs?: number;
+  /**
+   * The hard MATCH TIME LIMIT: the maximum wall-clock duration of one
+   * match, measured from the moment this host is created (which is the
+   * moment the match starts — the room manager builds the host in
+   * startMatch, never while players wait in the lobby). When it expires
+   * the host ends the match through the engine's `timeUp` command.
+   * Default: CONFIG.match.durationMs (4 minutes). Server-side
+   * configuration only — clients never influence it.
+   */
+  matchDurationMs?: number;
 }
 
 /** Listener pushed the serialized authoritative state on every change. */
@@ -98,6 +108,12 @@ export const DEFAULT_MAX_CATCH_UP_TICKS = 60;
  * server after ten seconds even if not every alive player has confirmed.
  */
 export const DEFAULT_ROUND_DECISION_TIMEOUT_MS = 10_000;
+
+/**
+ * Default hard match duration: 4 minutes, owned by the engine config so
+ * engine, server and UI share one number.
+ */
+export const DEFAULT_MATCH_DURATION_MS = CONFIG.match.durationMs;
 
 /**
  * The transport-neutral server interface. A future WebSocket layer needs
@@ -136,6 +152,18 @@ export interface GameHost {
    */
   roundDeadline(): number | null;
   /**
+   * The wall-clock time (in the host's clock domain) at which this
+   * MATCH's hard time limit expires, or null once it has fired, the
+   * match has finished, or the host was destroyed. Armed when the host
+   * is created — i.e. when the match starts — and re-armed from scratch
+   * by a reset (a new match gets a full, fresh 4 minutes).
+   *
+   * Read by the facade to stamp viewer snapshots, so clients can display
+   * the remaining time from an ABSOLUTE authoritative timestamp instead
+   * of a locally counted duration.
+   */
+  matchDeadline(): number | null;
+  /**
    * The latest serialized authoritative state (the wire snapshot). Cached
    * and refreshed whenever the engine reports a change, so transports can
    * broadcast it without re-serializing.
@@ -170,6 +198,7 @@ export function createGameHost(options: GameHostOptions): GameHost {
   const maxCatchUpTicks = options.maxCatchUpTicks ?? DEFAULT_MAX_CATCH_UP_TICKS;
   const roundDecisionTimeoutMs =
     options.roundDecisionTimeoutMs ?? DEFAULT_ROUND_DECISION_TIMEOUT_MS;
+  const matchDurationMs = options.matchDurationMs ?? DEFAULT_MATCH_DURATION_MS;
 
   // The authoritative game. Created from the server-supplied roster and
   // never handed out — the outside world can only reach it through
@@ -203,6 +232,22 @@ export function createGameHost(options: GameHostOptions): GameHost {
   let roundDeadline: number | null = null;
 
   /**
+   * The MATCH TIME LIMIT (the host's match-level timer token).
+   *
+   * Armed HERE, at host construction — the host is created by
+   * startMatch, so the 4 minutes begin when the match actually starts
+   * and never while players sit in the lobby (a room without a match has
+   * no host and therefore no timer at all).
+   *
+   * Cleared when it fires, when the match finishes naturally, and on
+   * destroy; re-armed from scratch by a reset. Like the round deadline it
+   * is read synchronously inside the tick loop — never captured by a
+   * detached callback — so a timer from an older match cannot survive
+   * into a newer one.
+   */
+  let matchDeadline: number | null = clock() + matchDurationMs;
+
+  /**
    * Phase tracking: arm/cancel the round decision deadline. The engine
    * emits on every state change, so this runs exactly once per transition
    * (and cheaply no-ops for non-phase changes within the same round).
@@ -215,6 +260,35 @@ export function createGameHost(options: GameHostOptions): GameHost {
     } else {
       roundDeadline = null;
     }
+    // A finished match has no clocks left: whatever ended it (a natural
+    // winner, the time limit itself), the match timer stops existing —
+    // which is also what structurally prevents a second finish.
+    if (phase === "finished") {
+      matchDeadline = null;
+    }
+  }
+
+  /**
+   * Fire the MATCH TIME LIMIT if the match's time is up.
+   *
+   * ORDERING — deliberate and deterministic: this runs BEFORE
+   * checkRoundDeadline on every tick, so when both deadlines are due on
+   * the same tick the MATCH TIME LIMIT WINS. The match ends at 4:00; a
+   * round that would have resolved at the very same moment does not
+   * start its movement, because the match is already over. The reverse
+   * order would let a final round resolve after time expired (and could
+   * shuffle the winner), which is exactly the ambiguity we refuse.
+   *
+   * One-shot: the token is consumed before submitting, so the limit can
+   * never fire twice. The resolution re-enters through submitCommand —
+   * the same authoritative path everything else uses — and the engine
+   * rejects it outright if the match already finished.
+   */
+  function checkMatchDeadline(): void {
+    if (matchDeadline === null) return; // no live match timer
+    if (clock() < matchDeadline) return; // not due yet
+    matchDeadline = null; // consumed: exactly one time-limit finish
+    submitCommand({ type: "timeUp" });
   }
 
   /**
@@ -252,8 +326,10 @@ export function createGameHost(options: GameHostOptions): GameHost {
 
     const due = Math.floor(backlogMs / tickMs);
     if (due <= 0) {
-      // No fixed tick is due yet, but the round deadline may fall between
-      // ticks — check it so the resolution fires within one wakeup.
+      // No fixed tick is due yet, but a deadline may fall between ticks
+      // — check both (match limit first, same ordering as tick) so they
+      // fire within one wakeup.
+      checkMatchDeadline();
       checkRoundDeadline();
       return;
     }
@@ -301,8 +377,14 @@ export function createGameHost(options: GameHostOptions): GameHost {
     // (no state change, no emit), the old window is restored untouched.
     const isReset = (command as GameCommand).type === "reset";
     const previousDeadline = isReset ? roundDeadline : null;
+    // A reset is a NEW match: it gets a full, fresh time limit, armed
+    // here for the same reason the round window is — the engine emits
+    // the reset state synchronously inside applyCommand, so both tokens
+    // must already be the new ones when that broadcast goes out.
+    const previousMatchDeadline = isReset ? matchDeadline : null;
     if (isReset) {
       roundDeadline = clock() + roundDecisionTimeoutMs;
+      matchDeadline = clock() + matchDurationMs;
     }
     // Ownership (unknown/wrong player), phase rules and all effects are
     // engine policy — the host adds none of its own. The try/catch is
@@ -311,10 +393,16 @@ export function createGameHost(options: GameHostOptions): GameHost {
     // change introduces an accidental throw.
     try {
       const result = game.applyCommand(command as GameCommand);
-      if (isReset && !result.ok) roundDeadline = previousDeadline;
+      if (isReset && !result.ok) {
+        roundDeadline = previousDeadline;
+        matchDeadline = previousMatchDeadline;
+      }
       return result;
     } catch {
-      if (isReset) roundDeadline = previousDeadline;
+      if (isReset) {
+        roundDeadline = previousDeadline;
+        matchDeadline = previousMatchDeadline;
+      }
       return { ok: false, reason: "invalid-command" };
     }
   }
@@ -324,11 +412,15 @@ export function createGameHost(options: GameHostOptions): GameHost {
     ticks += 1;
     // Exactly one fixed step. The engine's internal accumulator converts
     // it into exactly one physics tick while the phase is "moving" and
-    // makes it a cheap no-op otherwise.
+    // makes it a cheap no-op otherwise. Deadlines are evaluated only
+    // BETWEEN whole ticks — never inside one — so no fixed timestep is
+    // ever interrupted and no resolved round is ever rewritten.
     game.update(tickMs);
-    // Then the round decision deadline — checked on every tick (manual or
-    // loop-driven) so an armed deadline fires deterministically regardless
-    // of how the simulation is being driven.
+    // Then the deadlines, in this FIXED order: the match time limit
+    // first, the round decision deadline second. If both are due on the
+    // same tick the match ends (see checkMatchDeadline) and the round
+    // resolution is refused by the engine as wrong-phase.
+    checkMatchDeadline();
     checkRoundDeadline();
   }
 
@@ -338,6 +430,10 @@ export function createGameHost(options: GameHostOptions): GameHost {
 
   function roundDeadlineFireAt(): number | null {
     return roundDeadline;
+  }
+
+  function matchDeadlineFireAt(): number | null {
+    return matchDeadline;
   }
 
   function serializedState(): string {
@@ -360,6 +456,7 @@ export function createGameHost(options: GameHostOptions): GameHost {
     destroyed = true;
     stop();
     roundDeadline = null; // no armed deadline survives teardown
+    matchDeadline = null; // …nor the match time limit
     unsubscribeEngine();
     stateListeners = [];
     game.destroy();
@@ -379,6 +476,7 @@ export function createGameHost(options: GameHostOptions): GameHost {
     tick,
     tickCount,
     roundDeadline: roundDeadlineFireAt,
+    matchDeadline: matchDeadlineFireAt,
     serializedState,
     onStateChange,
     destroy,

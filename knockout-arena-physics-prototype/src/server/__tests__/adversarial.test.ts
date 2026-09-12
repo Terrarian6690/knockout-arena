@@ -701,13 +701,14 @@ describe("adversarial: reconnect security", () => {
     const m = namedMatch(core, ["Host", "Guest"]);
     await until(() => m.host.lastView()?.phase === "aiming", "match reaches aiming");
 
-    // The host launches itself over the rim; the guest wins.
+    // The host launches itself off the floor; the guest, aiming safely
+    // inward (there is no wall to catch an outward launch), wins.
     const p0 = m.host.lastView()!.pawns.find((p) => p.id === "p0")!;
     const out = outwardFrom(p0.position);
     m.host.receiveMsg(wire.command({ type: "aim", x: out.x, y: out.y }));
     m.host.receiveMsg(wire.command({ type: "setPower", power: 5 }));
     const p1 = m.guest.lastView()!.pawns.find((p) => p.id === "p1")!;
-    m.guest.receiveMsg(wire.command({ type: "aim", x: p1.position.x, y: p1.position.y + 100 }));
+    m.guest.receiveMsg(wire.command({ type: "aim", x: p1.position.x, y: p1.position.y - 100 }));
     m.guest.receiveMsg(wire.command({ type: "setPower", power: 1 }));
     m.host.receiveMsg(wire.command({ type: "confirmLaunch" }));
     m.guest.receiveMsg(wire.command({ type: "confirmLaunch" }));

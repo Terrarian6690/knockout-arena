@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { MAX_SEATS } from "../components/lobby/SeatList";
 import {
   connectPlayer,
   createServerHarness,
@@ -138,7 +139,7 @@ describe("the display-name editor", () => {
     await playerAct(() =>
       guest.client.joinRoom(host.client.getState().roomId as string)
     );
-    expect(await screen.findByText("2 / 4")).toBeInTheDocument();
+    expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
 
     // The host renames… but the guest leaves a beat later and a race is
     // hard to stage honestly — instead drive the REAL server rule: names
@@ -182,7 +183,7 @@ describe("the display-name editor", () => {
       guest.client.joinRoom(host.client.getState().roomId as string)
     );
     await playerAct(() => guest.client.setName("Alex"));
-    expect(await screen.findByText("2 / 4")).toBeInTheDocument();
+    expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
 
     // The guest changes their name; the host sees the new one.
     await playerAct(() => guest.client.setName("Alexandra"));
