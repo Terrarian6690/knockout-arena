@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { PawnSnapshot } from "../../../game";
 import { cn } from "../../utils/cn";
 
@@ -7,6 +8,21 @@ import { cn } from "../../utils/cn";
  * match_finished message; the client only decides which emoji to show.
  * The way out of a finished match is Leave Room (protocol v1 has no
  * rematch yet — resetMatch is server-side only).
+ *
+ * Accessibility (Task 9): the visible result is three separate pieces of
+ * text (emoji, headline, detail sentence), which is right for sighted
+ * players but makes a poor announcement. A visually hidden polite live
+ * region carries ONE concise sentence instead — the same public verdict
+ * the overlay already shows, never anything private (no aim, no power,
+ * no other player's readiness).
+ *
+ * The region is deliberately mounted EMPTY and filled one effect later:
+ * assistive technology reliably announces a change inside an existing
+ * live region, whereas a region inserted with its text already in place
+ * is often missed. The effect is keyed on the announcement text, so the
+ * steady stream of re-renders a finished match still receives (snapshot
+ * pushes, match_finished, connection changes) leaves the DOM text
+ * untouched and nothing is announced twice.
  */
 interface MatchResultOverlayProps {
   /** Server-reported winner pawn id, or null when nobody survived. */
@@ -29,8 +45,31 @@ export function MatchResultOverlay({
       ? null
       : pawns.find((pawn) => pawn.id === winnerId)?.name ?? winnerId;
 
+  // One sentence, built from the SAME authoritative verdict the overlay
+  // renders visually: outcome first (it is what matters), then who won.
+  const announcement =
+    winnerId === null
+      ? "Match over. No survivor — every pawn left the arena."
+      : won
+        ? "Match over. Victory! You win the match."
+        : `Match over. You were knocked out. ${winnerName} wins the match.`;
+
+  const spokenResult = useDelayedAnnouncement(announcement);
+
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-[2px]">
+      {/* The announcement. Visually hidden (the sighted presentation
+          below is unchanged), polite so it never interrupts, and atomic
+          so the whole sentence is read as one. */}
+      <div
+        data-testid="match-result-announcement"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {spokenResult}
+      </div>
       <div
         data-testid="match-result"
         className={cn(
@@ -69,4 +108,27 @@ export function MatchResultOverlay({
       </div>
     </div>
   );
+}
+
+/**
+ * Publish `text` into a live region one commit AFTER mount, so assistive
+ * technology sees a CHANGE inside a region that already exists (a region
+ * rendered with its content already in place is frequently not
+ * announced).
+ *
+ * Re-announcing is prevented by the dependency: the effect only runs
+ * again when the sentence itself differs. A finished match keeps
+ * re-rendering — further snapshots, match_finished, connection status —
+ * and every one of those produces the identical string, so the DOM text
+ * never changes and the region stays silent.
+ */
+function useDelayedAnnouncement(text: string): string {
+  const [published, setPublished] = useState("");
+  useEffect(() => {
+    // A frame is not required; a microtask-after-paint is enough and
+    // keeps the test environment (jsdom, no rAF) behaving identically.
+    const id = setTimeout(() => setPublished(text), 0);
+    return () => clearTimeout(id);
+  }, [text]);
+  return published;
 }

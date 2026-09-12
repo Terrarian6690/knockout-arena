@@ -264,6 +264,20 @@ describe("two clients play one authoritative match (full stack)", () => {
     const result = await screen.findByTestId("match-result", {}, { timeout: 5000 });
     expect(result).toHaveTextContent("Victory!"); // local pawn p0 won
 
+    // …and the same authoritative verdict reaches assistive technology
+    // through the overlay's polite live region (Task 9).
+    const announcement = await screen.findByTestId(
+      "match-result-announcement",
+      {},
+      { timeout: 5000 }
+    );
+    expect(announcement).toHaveAttribute("aria-live", "polite");
+    await waitFor(
+      () => (announcement.textContent ?? "").includes("Victory"),
+      5000
+    );
+    expect(announcement).toHaveTextContent("You win the match.");
+
     const hostFinal = host.client.getState().snapshot as GameStateSnapshot;
     const guestFinal = guest.client.getState().snapshot as GameStateSnapshot;
     expect(hostFinal.phase).toBe("finished");
