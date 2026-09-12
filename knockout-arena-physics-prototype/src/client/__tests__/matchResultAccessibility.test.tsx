@@ -351,13 +351,19 @@ describe("the existing overlay behaviour is unchanged", () => {
     expect(onLeave).toHaveBeenCalledTimes(1);
   });
 
-  it("does not trap or steal focus when the result appears", async () => {
-    // The overlay is informational; it must not yank focus away.
+  it("moves focus to the result when it appears (superseded by Task 11)", async () => {
+    // SUPERSEDED. Task 9 pinned the opposite here — the overlay was
+    // informational and deliberately left focus alone. Task 11 makes it
+    // a real modal dialog, so taking focus is now the REQUIRED
+    // behaviour and this test asserts the new contract. Kept in place
+    // (rather than deleted) so the reversal is visible in history.
+    // Focus behaviour itself is covered in matchResultFocus.test.tsx.
     const outside = document.createElement("button");
     document.body.appendChild(outside);
     outside.focus();
     await renderOverlay({ winnerId: "p5", localPawnId: "p0" });
-    expect(outside).toHaveFocus();
+    expect(outside).not.toHaveFocus();
+    expect(screen.getByTestId("match-result")).toHaveFocus();
     outside.remove();
   });
 });

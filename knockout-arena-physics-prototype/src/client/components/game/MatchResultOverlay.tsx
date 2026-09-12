@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PawnSnapshot } from "../../../game";
 import { cn } from "../../utils/cn";
+import { handleTrapKeyDown, useDialogFocus } from "./focusTrap";
 
 /**
  * Match result overlay. The winner (or the absence of one) is entirely
@@ -31,6 +32,13 @@ interface MatchResultOverlayProps {
   readonly localPawnId: string | null;
   readonly pawns: readonly PawnSnapshot[];
   onLeave: () => void;
+  /**
+   * Where focus goes when the overlay closes, if whatever held focus
+   * when the match ended is gone by then (the match controls unmount
+   * with the running match, so this is the usual case, not the rare
+   * one). Read once, at mount.
+   */
+  getRestoreFocusFallback?: () => HTMLElement | null;
 }
 
 export function MatchResultOverlay({
@@ -38,7 +46,9 @@ export function MatchResultOverlay({
   localPawnId,
   pawns,
   onLeave,
+  getRestoreFocusFallback,
 }: MatchResultOverlayProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const won = winnerId !== null && winnerId === localPawnId;
   const winnerName =
     winnerId === null
@@ -56,6 +66,11 @@ export function MatchResultOverlay({
 
   const spokenResult = useDelayedAnnouncement(announcement);
 
+  // Focus management (Task 11). Separate concern, separate hook: it
+  // moves focus through refs only and sets no state, so it cannot
+  // re-run or duplicate the announcement above.
+  useDialogFocus(dialogRef, getRestoreFocusFallback);
+
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-[2px]">
       {/* The announcement. Visually hidden (the sighted presentation
@@ -70,15 +85,29 @@ export function MatchResultOverlay({
       >
         {spokenResult}
       </div>
+      {/* The dialog proper. tabIndex={-1} makes it programmatically
+          focusable without adding a Tab stop, so focus can land on the
+          result itself and a screen reader reads the headline and
+          detail (via aria-labelledby/-describedby) before the player
+          reaches "Back to lobby". Tab is contained on keydown, which
+          leaves the live regions outside untouched. */}
       <div
+        ref={dialogRef}
         data-testid="match-result"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="match-result-title"
+        aria-describedby="match-result-detail"
+        tabIndex={-1}
+        onKeyDown={(event) => handleTrapKeyDown(event, dialogRef.current)}
         className={cn(
-          "pointer-events-auto flex flex-col items-center gap-4 rounded-2xl border bg-slate-900/90 px-8 py-7 text-center shadow-2xl",
+          "pointer-events-auto flex flex-col items-center gap-4 rounded-2xl border bg-slate-900/90 px-8 py-7 text-center shadow-2xl outline-none",
           won ? "border-emerald-400/30" : "border-red-400/30"
         )}
       >
-        <div className="text-5xl">{winnerId === null ? "💥" : won ? "🏆" : "💥"}</div>
+        <div aria-hidden="true" className="text-5xl">{winnerId === null ? "💥" : won ? "🏆" : "💥"}</div>
         <h2
+          id="match-result-title"
           className={cn(
             "text-2xl font-black tracking-tight",
             won ? "text-emerald-300" : "text-red-300"
@@ -90,7 +119,7 @@ export function MatchResultOverlay({
               ? "Victory!"
               : "Knocked Out!"}
         </h2>
-        <p className="max-w-xs text-sm text-white/60">
+        <p id="match-result-detail" className="max-w-xs text-sm text-white/60">
           {winnerId === null
             ? "Every pawn left the arena — total knockout!"
             : won

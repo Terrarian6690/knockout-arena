@@ -163,6 +163,12 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
     client.connect();
   };
 
+  // Focus restore target for the result overlay (Task 11). The element
+  // focused when the match ended is often gone by the time the overlay
+  // closes — MatchControls unmounts with the running match — so the
+  // arena region, which outlives both, is the fallback.
+  const mainRef = useRef<HTMLElement>(null);
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased">
       <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
@@ -213,7 +219,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
             </div>
           )}
 
-          <main className="relative flex min-h-0 flex-1">
+          <main ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 outline-none">
             <ArenaView
               snapshot={displaySnapshot ?? snapshot}
               interactive={canAct && connected}
@@ -245,6 +251,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
                 localPawnId={snapshot.localPawnId}
                 pawns={snapshot.pawns}
                 onLeave={onLeave}
+                getRestoreFocusFallback={() => mainRef.current}
               />
             )}
           </main>
