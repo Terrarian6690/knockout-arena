@@ -9,6 +9,7 @@ import { AudioControl } from "./AudioControl";
 import { audio } from "../../audio";
 import { MatchControls } from "./MatchControls";
 import { MatchRail } from "./MatchRail";
+import { MatchProgressAnnouncer } from "./MatchProgressAnnouncer";
 import { MatchResultOverlay } from "./MatchResultOverlay";
 import { MatchTimer } from "./MatchTimer";
 import { RoundCountdown } from "./RoundCountdown";
@@ -231,6 +232,12 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
                 onReconnect={handleReconnect}
               />
             )}
+
+            {/* Mid-match accessible announcements (eliminations, round
+                transitions). Renders nothing visible and sits OUTSIDE the
+                finished branch so it speaks while the match is running;
+                the result overlay keeps its own separate live region. */}
+            <MatchProgressAnnouncer snapshot={snapshot} />
 
             {snapshot.phase === "finished" && (
               <MatchResultOverlay

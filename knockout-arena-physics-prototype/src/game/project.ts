@@ -74,6 +74,9 @@ export function projectSnapshot(
     pawns,
     localPawnId,
     winnerId: state.winnerId,
+    // The server's own completed-round count, surfaced verbatim (clamped
+    // to a sane ordinal for hand-fed states). Informational only.
+    roundNumber: Math.max(1, Math.trunc(state.round?.number ?? 1)),
     arena: projectArena(state),
     // The controls shown by the UI are the VIEWER'S OWN selections — each
     // player's aim/power/confirmed live on their pawn in the authoritative

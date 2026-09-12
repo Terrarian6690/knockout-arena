@@ -191,6 +191,13 @@ export function createGame(options?: GameOptions): GameHandle {
    */
   const arena = physics.arena;
   let roundsSinceShrink = 0;
+  /**
+   * Which round is being played (1-based). Counted from the same single
+   * event as `roundsSinceShrink` — one completed round — but without the
+   * every-3 reset, so it can be read as an ordinal. Nothing in the engine
+   * branches on it: it exists so clients can SAY which round it is.
+   */
+  let roundNumber = 1;
 
   // Deterministic spawns on the arena's FIXED slot ring (arena.ts):
   // seat i always occupies slot i, whatever the turnout, so a match with
@@ -376,6 +383,11 @@ export function createGame(options?: GameOptions): GameHandle {
    */
   function advanceShrinkSchedule() {
     roundsSinceShrink += 1;
+    // The same completed-round event, counted without the every-3 reset.
+    // Kept adjacent to the increment above on purpose: one round
+    // completing must move both counters or neither, so the ordinal can
+    // never disagree with the shrink cadence.
+    roundNumber += 1;
     if (!shrinkDueAfterRound(roundsSinceShrink)) return;
     roundsSinceShrink = 0;
 
@@ -465,6 +477,7 @@ export function createGame(options?: GameOptions): GameHandle {
       winnerId: winner,
       round: {
         settleTicks: round.settleTicks,
+        number: roundNumber,
       },
       // The shrinking arena: the current radius plus the schedule's
       // counter. Everything a client needs to draw the right arena and
@@ -585,6 +598,10 @@ export function createGame(options?: GameOptions): GameHandle {
 
     winner = s.winnerId;
     round.settleTicks = s.round.settleTicks;
+    // Travels with the state like the shrink counter, so a reconnecting
+    // client or a restored match keeps counting from the right round.
+    // ABSENT (a state from before the field) resumes at round 1.
+    roundNumber = Math.max(1, Math.trunc(s.round.number ?? 1));
     // The shrinking arena travels with the state, so a reconnecting
     // client, a restored match or a peer process continues at exactly the
     // authoritative size and schedule position. ABSENT (a state from
@@ -688,6 +705,7 @@ export function createGame(options?: GameOptions): GameHandle {
     // points computed for the full floor rather than the shrunken one.
     arena.radius = initialArenaRadius();
     roundsSinceShrink = 0;
+    roundNumber = 1; // a fresh match starts at round 1
     for (const p of players) {
       const body = bodies.get(p.id);
       if (body) {

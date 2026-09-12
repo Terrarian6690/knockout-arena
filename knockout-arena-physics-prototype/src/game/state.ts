@@ -142,6 +142,22 @@ export interface GameState {
   round: {
     /** Fixed simulation ticks since the round's movements started. */
     settleTicks: number;
+    /**
+     * Which simultaneous round is being played, 1-based: 1 while the
+     * first round is decided and resolved, 2 once it has completed, and
+     * so on. INFORMATIONAL ONLY — nothing in the engine branches on it.
+     *
+     * It is incremented from the SAME single event that already drives
+     * the shrink schedule (one completed round; see
+     * advanceShrinkSchedule), so it cannot drift out of step with
+     * `arena.roundsSinceShrink` — it is that same tick, counted without
+     * the every-3 reset so it can be spoken as an ordinal.
+     *
+     * ADDITIVE and backward-safe like `arena`: the engine always writes
+     * it, but it is OPTIONAL so states serialized before it existed stay
+     * loadable (they resume at round 1).
+     */
+    number?: number;
   };
   /**
    * The shrinking arena's authoritative state.
@@ -215,6 +231,12 @@ export function validateGameState(candidate: unknown): GameState {
   const r = round as Record<string, unknown>;
   if (!isInteger(r.settleTicks) || r.settleTicks < 0) {
     throw new Error("GameState: round.settleTicks must be a non-negative integer");
+  }
+  // Optional (see the field doc): absent is legal and resumes at round 1.
+  // A present value is fully validated — untrusted input must not be able
+  // to seed a nonsense ordinal.
+  if (r.number !== undefined && (!isInteger(r.number) || (r.number as number) < 1)) {
+    throw new Error("GameState: round.number must be a positive integer");
   }
 
   validateArenaState(s.arena);

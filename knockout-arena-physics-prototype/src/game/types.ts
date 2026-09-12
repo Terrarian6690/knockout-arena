@@ -116,6 +116,20 @@ export interface GameStateSnapshot {
   /** Winner pawn id once the match is finished (null = no survivor). */
   winnerId: string | null;
   /**
+   * Which simultaneous round is being played, 1-based (see
+   * GameState.round.number). READ-ONLY INFORMATIONAL DATA: it is the
+   * server's existing completed-round count, surfaced so a client can
+   * SAY which round it is (the accessible round announcement). It
+   * decides nothing — the shrink schedule, eliminations and the winner
+   * are all computed server-side from their own state, and no client
+   * may use this value to predict or duplicate any of them.
+   *
+   * ADDITIVE / BACKWARD-SAFE like `arena` and the deadlines: always
+   * filled by projectSnapshot, but optional so older or hand-built
+   * snapshots stay valid (they simply carry no round ordinal).
+   */
+  roundNumber?: number;
+  /**
    * The shrinking arena's authoritative geometry + warning state. Every
    * client derives its rendering and its countdown from THIS — never
    * from a local constant or a locally counted round.
