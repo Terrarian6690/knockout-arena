@@ -10,6 +10,10 @@ import {
 import { Vfx, prefersReducedMotion } from "../../effects";
 import { audio } from "../../audio";
 import { cn } from "../../utils/cn";
+import { ArenaStateDescription } from "./ArenaStateDescription";
+
+/** DOM id linking the canvas to its text alternative (Task 12). */
+const ARENA_DESCRIPTION_ID = "arena-state-description";
 
 /**
  * The multiplayer arena canvas.
@@ -65,9 +69,19 @@ interface ArenaViewProps {
   readonly interactive: boolean;
   /** Receives world-space aim points (input calculation only). */
   onAim: (point: { x: number; y: number }) => void;
+  /**
+   * Seat id of the room host, for the canvas's text alternative
+   * (Task 12). Display data only — never used for input decisions.
+   */
+  readonly hostPlayerId?: string | null;
 }
 
-export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
+export function ArenaView({
+  snapshot,
+  interactive,
+  onAim,
+  hostPlayerId = null,
+}: ArenaViewProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // The arena GEOMETRY IS AUTHORITATIVE STATE, not a constant: it shrinks
   // during a match, so it is derived from the latest snapshot on every
@@ -271,6 +285,13 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
       <canvas
         ref={canvasRef}
         data-testid="arena-canvas"
+        // The canvas is a picture of the match, so it gets a name and a
+        // text alternative describing the PUBLIC board state (Task 12).
+        // `img` is the honest role here: this element conveys content
+        // but takes no keyboard interaction of its own.
+        role="img"
+        aria-label="Arena"
+        aria-describedby={ARENA_DESCRIPTION_ID}
         className={cn(
           "h-full w-full touch-none",
           interactive ? "cursor-crosshair" : "cursor-default"
@@ -278,6 +299,13 @@ export function ArenaView({ snapshot, interactive, onAim }: ArenaViewProps) {
         onPointerDown={handlePointer}
         onPointerMove={handlePointer}
         onContextMenu={handleContextMenu}
+      />
+      {/* Visually hidden; rebuilt only when the described state
+          changes, never on plain snapshot ticks. */}
+      <ArenaStateDescription
+        id={ARENA_DESCRIPTION_ID}
+        snapshot={snapshot}
+        hostPlayerId={hostPlayerId}
       />
     </div>
   );

@@ -224,6 +224,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
               snapshot={displaySnapshot ?? snapshot}
               interactive={canAct && connected}
               onAim={handleAim}
+              hostPlayerId={state.hostPlayerId}
             />
 
             {/* Authoritative shrink warning. Overlays the arena without
