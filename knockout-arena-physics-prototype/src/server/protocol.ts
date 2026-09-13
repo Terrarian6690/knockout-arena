@@ -284,6 +284,10 @@ export const ERROR_DESCRIPTIONS: Record<string, string> = {
   "already-playing": "the match is already running",
   unauthorized: "not allowed for this session",
   "invalid-reconnect": "the reconnect credential is invalid or expired",
+  // Task 14: the ONE differentiated reconnect failure — sent only to a
+  // bearer whose own seat reservation ran out (see gameServer.reconnect).
+  "reservation-expired":
+    "your seat was released — you were away too long",
   "invalid-command": "the command is malformed",
   "wrong-player": "the player is eliminated",
   "wrong-phase": "the command is not allowed in the current phase",

@@ -24,6 +24,25 @@ import { createHash, randomBytes } from "node:crypto";
  *     The caller cannot choose a seat, a room or a playerId — the
  *     credential resolves to exactly the one seat it was issued for.
  *
+ * EXPIRY TOMBSTONES (Task 14). When a reservation window closes, the
+ * credential's DIGEST is moved to a short-lived tombstone set so the
+ * server can tell that one specific bearer "your seat was released"
+ * instead of the generic rejection. This does not weaken the uniform
+ * rejection property:
+ *
+ *   - a tombstone is only ever created for a credential THIS server
+ *     issued and then expired — never for arbitrary input;
+ *   - it is keyed by the same SHA-256 digest, so hitting one requires
+ *     possessing (or guessing) the original 256-bit random token, which
+ *     is exactly as hard as guessing a live credential. A guessed token
+ *     misses both maps and gets the generic answer, as before;
+ *   - it stores NO seat, room or session data — only the fact that a
+ *     digest expired, plus when;
+ *   - it is bounded in BOTH time (ttlMs) and size (maxEntries, oldest
+ *     evicted first), so it never becomes a permanent record of every
+ *     credential ever issued. Once it lapses the answer reverts to the
+ *     generic rejection.
+ *
  * No networking, no rooms, no gameplay — a pure registry.
  */
 
@@ -42,21 +61,69 @@ export interface ReconnectRegistry {
   resolve(rawToken: unknown): ReconnectCredential | null;
   /** Revoke whatever credential a session currently holds (leave/expire). */
   revokeSession(sessionToken: string): void;
+  /**
+   * Revoke a session's credential BECAUSE its reservation window closed,
+   * leaving a short-lived tombstone so that bearer — and only that
+   * bearer — can be told the seat was released. Use revokeSession() for
+   * every other revocation (leave, force disconnect, stale credential):
+   * those must stay indistinguishable from never-issued.
+   */
+  expireSession(sessionToken: string): void;
+  /**
+   * Whether this exact raw credential was issued by this server and then
+   * expired, within the tombstone's lifetime. False for everything else,
+   * including guessed tokens and lapsed tombstones.
+   */
+  wasExpired(rawToken: unknown): boolean;
   /** Revoke everything (server teardown). */
   clear(): void;
   /** Number of live credentials (observability/tests). */
   size(): number;
+  /** Number of live tombstones (observability/tests). */
+  expiredSize(): number;
+}
+
+/** How long a bearer can still learn that their own seat was released. */
+export const DEFAULT_EXPIRED_CREDENTIAL_TTL_MS = 5 * 60_000;
+
+/** Hard cap on tombstones, so the set can never grow without bound. */
+export const DEFAULT_MAX_EXPIRED_CREDENTIALS = 1024;
+
+export interface ReconnectRegistryOptions {
+  /** Tombstone lifetime; after it, the generic rejection returns. */
+  expiredTtlMs?: number;
+  /** Maximum tombstones retained (oldest evicted first). */
+  maxExpiredEntries?: number;
 }
 
 function digestOf(rawToken: string): string {
   return createHash("sha256").update(rawToken, "utf8").digest("hex");
 }
 
-export function createReconnectRegistry(): ReconnectRegistry {
+export function createReconnectRegistry(
+  options: ReconnectRegistryOptions = {}
+): ReconnectRegistry {
   /** sha256(raw credential) → credential record. */
   const byDigest = new Map<string, ReconnectCredential>();
   /** session token → sha256 of its current credential (one seat per session). */
   const bySession = new Map<string, string>();
+  /**
+   * sha256(raw credential) → when its reservation expired. Deliberately
+   * holds no seat/room/session data: it answers exactly one question,
+   * "did THIS credential expire recently?", for the bearer that already
+   * possesses the token.
+   */
+  const expiredAt = new Map<string, number>();
+
+  const ttlMs = options.expiredTtlMs ?? DEFAULT_EXPIRED_CREDENTIAL_TTL_MS;
+  const maxExpired = options.maxExpiredEntries ?? DEFAULT_MAX_EXPIRED_CREDENTIALS;
+
+  /** Drop lapsed tombstones (called on every read/write — no timers). */
+  function pruneExpired(now: number): void {
+    for (const [digest, at] of expiredAt) {
+      if (now - at >= ttlMs) expiredAt.delete(digest);
+    }
+  }
 
   function issue(
     sessionToken: string,
@@ -91,14 +158,57 @@ export function createReconnectRegistry(): ReconnectRegistry {
     }
   }
 
+  function expireSession(sessionToken: string): void {
+    // Capture the digest BEFORE revoking — revokeSession forgets it.
+    const digest = bySession.get(sessionToken);
+    const record = digest === undefined ? undefined : byDigest.get(digest);
+    revokeSession(sessionToken);
+    // Only tombstone a credential that really belonged to this session.
+    if (digest === undefined || record?.sessionToken !== sessionToken) return;
+
+    const now = Date.now();
+    pruneExpired(now);
+    // Bounded: evict the oldest insertion once full (Map preserves
+    // insertion order), so the set cannot grow without limit.
+    while (expiredAt.size >= maxExpired) {
+      const oldest = expiredAt.keys().next();
+      if (oldest.done === true) break;
+      expiredAt.delete(oldest.value);
+    }
+    expiredAt.set(digest, now);
+  }
+
+  function wasExpired(rawToken: unknown): boolean {
+    if (typeof rawToken !== "string" || rawToken.length === 0) return false;
+    const now = Date.now();
+    pruneExpired(now);
+    const at = expiredAt.get(digestOf(rawToken));
+    return at !== undefined && now - at < ttlMs;
+  }
+
   function clear(): void {
     byDigest.clear();
     bySession.clear();
+    expiredAt.clear();
   }
 
   function size(): number {
     return byDigest.size;
   }
 
-  return { issue, resolve, revokeSession, clear, size };
+  function expiredSize(): number {
+    pruneExpired(Date.now());
+    return expiredAt.size;
+  }
+
+  return {
+    issue,
+    resolve,
+    revokeSession,
+    expireSession,
+    wasExpired,
+    clear,
+    size,
+    expiredSize,
+  };
 }

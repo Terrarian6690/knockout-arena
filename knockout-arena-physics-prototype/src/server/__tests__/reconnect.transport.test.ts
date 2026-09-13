@@ -276,7 +276,7 @@ describe("reconnect over the wire", () => {
     expect(welcomeOf(socket).playerId).toBe("p0");
   });
 
-  it("an expired credential is the same clean error, and the seat is released", async () => {
+  it("an expired credential is a clean, specific error, and the seat is released", async () => {
     const { server, core } = newCore({ reconnectReservationMs: 40 });
     const creator = createdRoom(core);
     creator.socket.close();
@@ -284,7 +284,8 @@ describe("reconnect over the wire", () => {
 
     const late = connect(core).socket;
     late.receiveMsg(reconnectMsg(creator.token));
-    expect(late.lastOf("error")).toMatchObject({ code: "invalid-reconnect" });
+    // Task 14: the holder of an expired credential is told why.
+    expect(late.lastOf("error")).toMatchObject({ code: "reservation-expired" });
     // The freed seat is claimable by a fresh joiner per the normal rules.
     const newcomer = connect(core).socket;
     newcomer.receiveMsg(msg.create); // fresh room works again

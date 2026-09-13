@@ -524,10 +524,12 @@ describe("reservation expiry", () => {
     expect(server.reserve(sessions[1])).toEqual({ ok: true });
     expect(await waitFor(() => server.sessionCount() === 1, 3000)).toBe(true);
 
-    // The credential no longer works…
+    // The credential no longer works. Task 14: an EXPIRED credential is
+    // the one differentiated failure — the bearer already holds the
+    // token, so telling them their seat was released leaks nothing.
     expect(server.reconnect(tokens[1])).toEqual({
       ok: false,
-      reason: "invalid-reconnect",
+      reason: "reservation-expired",
     });
     // …and the seat was released with the normal leave rules: a fresh
     // session can take p1's place.
@@ -572,10 +574,11 @@ describe("reservation expiry", () => {
     expect(() => latestState(states)).not.toThrow();
     expect(latestState(states).phase).not.toBe("finished");
 
-    // And the expired credential is dead.
+    // And the expired credential is dead (Task 14: reported as an
+    // expiry to its own bearer, generic to everyone else).
     expect(server.reconnect(tokens[1])).toEqual({
       ok: false,
-      reason: "invalid-reconnect",
+      reason: "reservation-expired",
     });
   }, 8000);
 

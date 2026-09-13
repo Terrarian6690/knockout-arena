@@ -213,9 +213,15 @@ describe("seat recovery through the real UI", () => {
     expect(
       await screen.findByText("Enter the arena", {}, { timeout: 3000 })
     ).toBeInTheDocument(); // back home
-    expect(screen.getByTestId("error-banner")).toHaveTextContent(
-      "invalid-reconnect"
+    // Task 14: the player is told WHY in plain language, and the banner
+    // is not framed as a server fault — the seat simply timed out.
+    const banner = screen.getByTestId("error-banner");
+    expect(banner).toHaveTextContent("reservation-expired");
+    expect(banner).toHaveTextContent(
+      "your seat was released — you were away too long"
     );
+    expect(banner).toHaveTextContent("Seat released");
+    expect(banner).not.toHaveTextContent("Server error");
     expect(host.client.getState().roomId).toBeNull();
     expect(host.client.getState().playerId).toBeNull();
 

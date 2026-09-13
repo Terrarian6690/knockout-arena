@@ -3,13 +3,24 @@
  * by the network client (lastError) — the lobby never throws on them and
  * never retries an action behind the user's back; it just shows what the
  * server said.
+ *
+ * One code is presented differently (Task 14): "reservation-expired" is
+ * not a fault, it is the normal outcome of being away past the reconnect
+ * window. Calling that "Server error" would misinform the player, so it
+ * gets a plain heading; the sentence itself still comes from the server.
  */
+
+/** Rejections that are expected outcomes rather than faults. */
+const NOT_A_FAULT: Record<string, string> = {
+  "reservation-expired": "Seat released",
+};
 export interface ErrorBannerProps {
   error: { readonly code: string; readonly message: string };
   onDismiss: () => void;
 }
 
 export function ErrorBanner({ error, onDismiss }: ErrorBannerProps) {
+  const heading = NOT_A_FAULT[error.code] ?? "Server error";
   return (
     <div
       role="alert"
@@ -17,7 +28,7 @@ export function ErrorBanner({ error, onDismiss }: ErrorBannerProps) {
       className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3"
     >
       <div className="min-w-0">
-        <p className="text-sm font-semibold text-red-300">Server error</p>
+        <p className="text-sm font-semibold text-red-300">{heading}</p>
         <p className="mt-0.5 break-words text-sm text-red-200/80">
           {error.message}{" "}
           <span className="font-mono text-xs text-red-300/60">

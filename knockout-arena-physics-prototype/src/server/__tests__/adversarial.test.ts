@@ -684,10 +684,11 @@ describe("adversarial: reconnect security", () => {
     // …the window expires…
     await new Promise((r) => setTimeout(r, 300));
 
-    // …the credential is dead…
+    // …the credential is dead. Task 14: its own bearer is told the seat
+    // was released; every other rejection stays generic.
     const reconnector = connect(core);
     reconnector.socket.receiveMsg(wire.reconnect(guestToken));
-    expect(reconnector.socket.errorCodes()).toEqual(["invalid-reconnect"]);
+    expect(reconnector.socket.errorCodes()).toEqual(["reservation-expired"]);
 
     // …and the expired seat is genuinely free: the next joiner takes p1.
     const joiner = connect(core);

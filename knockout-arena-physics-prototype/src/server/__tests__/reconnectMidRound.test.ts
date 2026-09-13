@@ -312,10 +312,12 @@ describe("the reservation expiring while the player was mid-aim", () => {
     // the window on the clock, then probe exactly once.
     await new Promise((r) => setTimeout(r, 400));
 
-    // The credential is dead — same uniform failure as any bad token.
+    // The credential is dead. Task 14: its own bearer now learns WHY
+    // (the seat timed out) — a guessed token still gets the generic
+    // "invalid-reconnect", so nothing is leaked to anyone else.
     expect(server.reconnect(tokens[1]!)).toEqual({
       ok: false,
-      reason: "invalid-reconnect",
+      reason: "reservation-expired",
     });
 
     // The roster is frozen mid-match: the seat stays listed, reported

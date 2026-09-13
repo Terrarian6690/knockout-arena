@@ -94,9 +94,19 @@ export type SeatedResult =
   | Extract<SeatResult, { ok: false }>;
 
 /**
- * The outcome of presenting a reconnect credential. The failure carries
- * NO detail on purpose: unknown, malformed, stale and expired credentials
- * are indistinguishable ("invalid-reconnect") — no existence leak.
+ * The outcome of presenting a reconnect credential.
+ *
+ * Failures are deliberately undifferentiated — unknown, malformed, stale
+ * and wrong-room credentials all return "invalid-reconnect", so nothing
+ * about a guessed token is observable.
+ *
+ * The ONE exception (Task 14) is "reservation-expired": returned only
+ * when the presented credential was genuinely issued by this server and
+ * its reservation window has since closed, within the tombstone's
+ * lifetime. Reaching it requires already possessing that 256-bit random
+ * token, so it reveals nothing a guesser could not have learned by
+ * holding the credential in the first place. Everything else — and any
+ * tombstone that has lapsed — still answers "invalid-reconnect".
  */
 export type ReconnectResult =
   | {
@@ -107,7 +117,7 @@ export type ReconnectResult =
       /** The credential, valid again (persistent until revoked). */
       reconnectToken: string;
     }
-  | { ok: false; reason: "invalid-reconnect" };
+  | { ok: false; reason: "invalid-reconnect" | "reservation-expired" };
 
 export interface GameServer {
   /** Issue a new session (a connection identity). */
@@ -254,7 +264,13 @@ export function createGameServer(options?: GameServerOptions): GameServer {
         // The window closed: the seat is released (normal leave rules,
         // applied by the room manager before this callback) — the session
         // identity and its credential must not survive it.
-        credentials.revokeSession(s.token);
+        //
+        // expireSession (not revokeSession) additionally leaves a
+        // short-lived tombstone, so the player who actually holds this
+        // credential can be told their seat was released instead of
+        // getting the generic rejection. Every OTHER revocation path
+        // stays on revokeSession and remains indistinguishable.
+        credentials.expireSession(s.token);
         sessions.delete(s.token);
         if (seatedRoomId !== null) onExpire?.(seatedRoomId);
       },
@@ -265,7 +281,15 @@ export function createGameServer(options?: GameServerOptions): GameServer {
 
   function reconnect(rawToken: unknown): ReconnectResult {
     const cred = credentials.resolve(rawToken);
-    if (!cred) return { ok: false, reason: "invalid-reconnect" };
+    if (!cred) {
+      // Unknown digest. Either this credential never existed (the
+      // guesser's case — indistinguishable, as before) or it is one we
+      // ourselves expired recently, in which case the bearer already
+      // holds the token and may be told what happened.
+      return credentials.wasExpired(rawToken)
+        ? { ok: false, reason: "reservation-expired" }
+        : { ok: false, reason: "invalid-reconnect" };
+    }
     const session = sessions.get(cred.sessionToken);
     if (!session) {
       // Session already invalidated (force path / teardown) — the

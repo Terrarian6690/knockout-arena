@@ -441,7 +441,7 @@ describe("browser client ↔ real server (in-memory wire)", () => {
     ).toBe(true);
     expect(client.getState().roomId).toBeNull();
     expect(client.getState().playerId).toBeNull();
-    expect(client.getState().lastError?.code).toBe("invalid-reconnect");
+    expect(client.getState().lastError?.code).toBe("reservation-expired");
 
     // Server-side: the reservation expired, the seat and its room are
     // really gone (the still-connected client is a fresh, unseated
