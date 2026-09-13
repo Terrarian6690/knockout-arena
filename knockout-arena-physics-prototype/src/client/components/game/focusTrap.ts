@@ -119,18 +119,42 @@ export function useDialogFocus(
 }
 
 /**
- * Keep Tab inside the dialog: Tab past the last focusable element wraps
- * to the first, Shift+Tab before the first wraps to the last.
+ * Keep Tab inside the dialog, and let Escape close it (Task 16).
  *
  * Containment is implemented on keydown rather than by mutating the
  * background (no `inert`, no aria-hidden sweep), so the live regions
  * outside this dialog keep working exactly as they did.
+ *
+ * Escape lives in THIS handler rather than a second listener on
+ * document/window, and that is the whole design:
+ *
+ *   - scoping is structural, not conditional. The handler is bound to
+ *     the dialog element, so it only ever sees keys pressed while focus
+ *     is inside the dialog. A stray Escape elsewhere in the app — or
+ *     before the overlay mounts, or after it closes — never reaches
+ *     here, with no "is the modal open?" bookkeeping to get wrong;
+ *   - there is exactly one keydown path, so Tab and Escape cannot
+ *     double-handle an event or race on listener order.
+ *
+ * `onEscape` is the caller's existing dismissal callback. This function
+ * never closes anything itself: it forwards, so the button and the key
+ * necessarily share one exit path.
  */
 export function handleTrapKeyDown(
   event: Pick<KeyboardEvent, "key" | "shiftKey"> & { preventDefault(): void },
-  container: HTMLElement | null
+  container: HTMLElement | null,
+  onEscape?: () => void
 ): void {
-  if (event.key !== "Tab" || container === null) return;
+  if (container === null) return;
+
+  if (event.key === "Escape") {
+    // Claim the key so it cannot also reach a future outer handler.
+    event.preventDefault();
+    onEscape?.();
+    return;
+  }
+
+  if (event.key !== "Tab") return;
 
   const items = focusableWithin(container);
   if (items.length === 0) {

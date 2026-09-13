@@ -90,7 +90,14 @@ export function MatchResultOverlay({
           result itself and a screen reader reads the headline and
           detail (via aria-labelledby/-describedby) before the player
           reaches "Back to lobby". Tab is contained on keydown, which
-          leaves the live regions outside untouched. */}
+          leaves the live regions outside untouched.
+
+          Escape (Task 16) is handled by that same keydown handler and
+          forwards to `onLeave` — the identical callback the button's
+          onClick uses, so there is one dismissal path, one navigation
+          and one focus restoration, not a parallel exit. Because the
+          handler is bound to the dialog, Escape can only fire while
+          focus is inside it. */}
       <div
         ref={dialogRef}
         data-testid="match-result"
@@ -99,7 +106,7 @@ export function MatchResultOverlay({
         aria-labelledby="match-result-title"
         aria-describedby="match-result-detail"
         tabIndex={-1}
-        onKeyDown={(event) => handleTrapKeyDown(event, dialogRef.current)}
+        onKeyDown={(event) => handleTrapKeyDown(event, dialogRef.current, onLeave)}
         className={cn(
           "pointer-events-auto flex flex-col items-center gap-4 rounded-2xl border bg-slate-900/90 px-8 py-7 text-center shadow-2xl outline-none",
           won ? "border-emerald-400/30" : "border-red-400/30"
