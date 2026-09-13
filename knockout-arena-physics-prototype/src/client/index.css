@@ -43,3 +43,47 @@ button {
     animation: none;
   }
 }
+
+/*
+ * The lobby's loading ellipsis: three dots that fade in and out in
+ * sequence while the room waits for players. Each dot runs the same
+ * cycle, staggered by a third of it, so the wave reads left-to-right.
+ */
+@keyframes ka-ellipsis-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.15;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+.ka-ellipsis-dot {
+  animation: ka-ellipsis-dot 1.4s infinite both;
+}
+
+.ka-ellipsis-dot:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.ka-ellipsis-dot:nth-child(2) {
+  animation-delay: 200ms;
+}
+
+.ka-ellipsis-dot:nth-child(3) {
+  animation-delay: 400ms;
+}
+
+/*
+ * Reduced motion: the dots stop cycling and simply stay visible, so the
+ * text still reads "Waiting for players…" — the information survives,
+ * only the movement goes. Same rule as the pulse animations above.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .ka-ellipsis-dot {
+    animation: none;
+    opacity: 1;
+  }
+}

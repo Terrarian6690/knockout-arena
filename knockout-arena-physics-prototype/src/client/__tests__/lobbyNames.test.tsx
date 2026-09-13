@@ -64,12 +64,15 @@ describe("the display-name editor", () => {
   it("renders accessibly in the waiting room", async () => {
     await seatedHost();
 
-    const input = screen.getByLabelText("Your name");
+    const input = screen.getAllByLabelText("Your name").at(-1)!;
     expect(input).toBeEnabled();
     expect(input).toHaveAttribute("maxlength", "32"); // 2× the code-point max
     expect(screen.getByRole("button", { name: "Save Name" })).toBeInTheDocument();
-    // The fallback hint names the seat-derived default.
-    expect(screen.getByText(/leave empty to stay Player 1/i)).toBeInTheDocument();
+    // The in-room box is a RENAME box: a name is now mandatory before
+    // entering at all (Task 20), so it arrives pre-filled with the name
+    // the player chose on the home screen — there is no "leave empty to
+    // stay Player 1" fallback to advertise any more.
+    expect(input).toHaveValue("Tester");
   });
 
   it("saves a trimmed valid name: one set_name, own seat renamed", async () => {
@@ -171,8 +174,21 @@ describe("the display-name editor", () => {
       return seat.textContent?.includes("Żółć") ? seat : null;
     });
     expect(guestSeat).not.toBeNull();
-    // The host (still unnamed) keeps the seat-derived fallback.
-    expect(screen.getByTestId("seat-p0")).toHaveTextContent("Player 1");
+
+    // A player who never set a name keeps the seat-derived fallback. The
+    // rendered host is named by the lobby's name gate, so the unnamed
+    // subject is a third seat driven headless (a bare network client has
+    // no UI gate to pass).
+    const unnamed = harness.addPlayer();
+    await connectPlayer(unnamed);
+    await playerAct(() =>
+      unnamed.client.joinRoom(host.client.getState().roomId as string)
+    );
+    const unnamedSeat = await waitFor(() =>
+      screen.queryByTestId("seat-p2")
+    );
+    expect(unnamedSeat).not.toBeNull();
+    expect(unnamedSeat!).toHaveTextContent("Player 3");
   });
 
   it("renaming again updates everyone (change, not just set)", async () => {

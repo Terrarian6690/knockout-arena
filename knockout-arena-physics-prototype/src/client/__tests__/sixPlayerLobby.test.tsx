@@ -72,7 +72,11 @@ describe("the lobby shows up to six players", () => {
     for (let i = 1; i < MAX_SEATS; i++) await joinHeadless(harness, roomId);
     expect(await screen.findByText(`6 / ${MAX_SEATS}`)).toBeInTheDocument();
 
-    for (let i = 0; i < MAX_SEATS; i++) {
+    // Seat 0 is the rendered player, who named themselves through the
+    // lobby's gate; the five headless joiners keep the "Player N"
+    // fallback the server derives from their seat.
+    expect(within(screen.getByTestId("seat-p0")).getByText("Tester")).toBeInTheDocument();
+    for (let i = 1; i < MAX_SEATS; i++) {
       const seat = screen.getByTestId(`seat-p${i}`);
       expect(within(seat).getByText(`Player ${i + 1}`)).toBeInTheDocument();
     }

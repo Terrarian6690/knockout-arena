@@ -168,7 +168,9 @@ describe("normal fresh joins never carry a credential", () => {
     });
     await waitFor(() => expect(player.client.getState().roomId).not.toBeNull());
 
-    expect(framesOf(player)).toEqual(["join_public"]);
+    // join_public, then the set_name that applies the chosen name to the
+    // new seat (Task 20's name gate) — and crucially NO credential.
+    expect(framesOf(player)).toEqual(["join_public", "set_name"]);
     expect(player.client.getState().lastError).toBeNull();
   });
 
@@ -183,7 +185,7 @@ describe("normal fresh joins never carry a credential", () => {
     });
     await waitFor(() => expect(player.client.getState().roomId).not.toBeNull());
 
-    expect(framesOf(player)).toEqual(["create_room"]);
+    expect(framesOf(player)).toEqual(["create_room", "set_name"]);
     expect(player.client.getState().lastError).toBeNull();
   });
 
@@ -204,6 +206,8 @@ describe("normal fresh joins never carry a credential", () => {
     });
     await tick(50);
 
+    // Driven through the network client directly (no rendered lobby, so
+    // no name gate): the join frame stands alone.
     expect(framesOf(friend)).toEqual(["join_room"]);
     expect(friend.client.getState().lastError).toBeNull();
   });

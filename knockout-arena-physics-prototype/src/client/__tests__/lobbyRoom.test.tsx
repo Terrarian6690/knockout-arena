@@ -181,10 +181,13 @@ describe("lobby room screen", () => {
     fireEvent.click(screen.getByTestId("start-match"));
     expect(screen.getByTestId("start-match")).toHaveTextContent("Starting…");
     expect(screen.getByTestId("start-match")).toBeDisabled();
-    expect(JSON.parse(sockets[0].sent[0])).toEqual({
-      protocolVersion: 1,
-      type: "start_match",
-    });
+    // The seat is named as soon as it is granted (the lobby's name gate
+    // applies the chosen name on seating), so pick out the start frame.
+    expect(
+      sockets[0].sent
+        .map((raw) => JSON.parse(raw) as { type: string })
+        .filter((message) => message.type === "start_match")
+    ).toEqual([{ protocolVersion: 1, type: "start_match" }]);
 
     // The server moves the room on → the lobby hands the screen to the
     // multiplayer game (no local guessing).

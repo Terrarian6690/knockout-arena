@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   connectPlayer,
   createServerHarness,
-  lastSent,
+  sentOfType,
   renderLobby,
 } from "./lobbyTestHarness";
 
@@ -65,7 +65,9 @@ describe("lobby room code UX", () => {
     expect(
       screen.getByText("Share this code so others can join")
     ).toBeInTheDocument();
-    expect(screen.getByText("Room code")).toBeInTheDocument();
+    // The code is labelled as such (on the element itself — the separate
+    // caption line was dropped so the screen fits without scrolling).
+    expect(codeEl).toHaveAttribute("aria-label", `Room code ${code}`);
 
     // The internal id exists server-side… and appears nowhere in the UI.
     const room = harness.gameServer.getRoom(code);
@@ -204,7 +206,7 @@ describe("lobby room code UX", () => {
     fireEvent.click(screen.getByRole("button", { name: "Join Room" }));
 
     // Exactly the normalized code goes on the wire.
-    expect(lastSent(pair)).toEqual({
+    expect(sentOfType(pair, "join_room")).toEqual({
       protocolVersion: 1,
       type: "join_room",
       roomId: code,
@@ -231,7 +233,7 @@ describe("lobby room code UX", () => {
     });
     fireEvent.keyDown(screen.getByLabelText("Room code"), { key: "Enter" });
 
-    expect(lastSent(pair)).toEqual({
+    expect(sentOfType(pair, "join_room")).toEqual({
       protocolVersion: 1,
       type: "join_room",
       roomId: code,

@@ -1,4 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  MAX_DISPLAY_NAME_LENGTH,
+  normalizeDisplayName,
+} from "../../network/displayName";
 import { useNetworkClient, useNetworkState } from "../../network/react";
 import { normalizeRoomCode } from "../../network/roomCode";
 import type { ConnectionStatus } from "../../network/types";
@@ -49,6 +53,15 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
   const [joinCode, setJoinCode] = useState<string>(() => getPrefillJoinCode());
   /** Local, purely visual: the join input's shape validation error. */
   const [joinError, setJoinError] = useState<string | null>(null);
+  /**
+   * The player's chosen display name. Required before entering any room
+   * (see `nameReady` below). It is kept here, above both screens, so the
+   * home screen's name box and the room's rename box are one value.
+   */
+  const [playerName, setPlayerName] = useState("");
+  /** Local, purely visual: why the name was refused, if it was. */
+  const [nameError, setNameError] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [leftRoom, setLeftRoom] = useState(false);
   const [startPending, setStartPending] = useState(false);
   const [dismissedError, setDismissedError] = useState(false);
@@ -74,6 +87,54 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
 
   const inRoom = state.roomId !== null && !leftRoom;
 
+  // ── the name gate ──────────────────────────────────────────────────
+  // A player must name themselves before entering a room. The rule is
+  // the SERVER's own display-name rule (normalizeDisplayName, shared with
+  // src/server/displayName.ts) — the gate reuses it rather than inventing
+  // a second definition of "valid name".
+  const validName = normalizeDisplayName(playerName);
+  const nameReady = validName !== null;
+
+  /**
+   * Guard every room entry point. Returns the valid name, or null after
+   * explaining the refusal and sending focus to the name box — so the
+   * block is never a dead click.
+   */
+  const requireName = (): string | null => {
+    if (validName !== null) return validName;
+    setNameError(
+      playerName.trim().length === 0
+        ? "Choose a name before you play."
+        : `Names are 1\u2013${MAX_DISPLAY_NAME_LENGTH} characters — letters, digits, punctuation; no line breaks.`
+    );
+    nameInputRef.current?.focus();
+    return null;
+  };
+
+  // Name the seat as soon as the server gives us one. The server only
+  // accepts set_name from a SEATED session, so the chosen name is applied
+  // on arrival rather than sent with the join — no protocol change, no
+  // matchmaking change.
+  //
+  // The ref keeps this to ONE send per name per seat. It records the seat
+  // it applied to, not just the name: leaving and re-entering can land
+  // the player back in the same room id with the same player id, and that
+  // genuinely new seat still needs naming.
+  const appliedName = useRef<{ seat: string; name: string } | null>(null);
+  useEffect(() => {
+    if (state.roomId === null || state.playerId === null) {
+      appliedName.current = null; // a new seat must be named again
+      return;
+    }
+    const seat = `${state.roomId}:${state.playerId}`;
+    const applied = appliedName.current;
+    if (validName === null) return;
+    if (applied !== null && applied.seat === seat && applied.name === validName) {
+      return;
+    }
+    if (client.setName(validName)) appliedName.current = { seat, name: validName };
+  }, [client, state.roomId, state.playerId, validName]);
+
   // The server moved the room into the match → the game screen takes over.
   useEffect(() => {
     if (
@@ -96,6 +157,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
   }, [matchActive, state.status, inRoom]);
 
   const handleCreate = () => {
+    if (requireName() === null) return;
     client.createRoom();
   };
 
@@ -107,14 +169,16 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
   };
 
   const handleJoinPublic = () => {
-    // Matchmaking needs no input, so there is nothing to validate; any
-    // stale code-entry error is cleared so it cannot look like a result
-    // of this action.
+    // Matchmaking needs no room input, but it still needs a named player.
+    if (requireName() === null) return;
+    // Any stale code-entry error is cleared so it cannot look like a
+    // result of this action.
     setJoinError(null);
     client.joinPublicRoom();
   };
 
   const handleJoin = () => {
+    if (requireName() === null) return;
     const code = normalizeRoomCode(joinCode);
     if (code === null) {
       setJoinError(
@@ -154,16 +218,15 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased">
-      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-lg font-black text-white shadow-lg shadow-orange-900/40">
+      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 sm:px-6">
+        <div className="flex items-center gap-2">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-sm font-black text-white shadow-lg shadow-orange-900/40">
             KA
           </div>
           <div className="leading-tight">
-            <h1 className="text-lg font-bold tracking-tight text-white">
+            <h1 className="text-base font-bold tracking-tight text-white">
               Knockout Arena
             </h1>
-            <p className="text-[11px] text-white/50">Multiplayer lobby</p>
           </div>
         </div>
         <ConnectionStatusBadge status={state.status} />
@@ -175,11 +238,11 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
       <main
         className={cn(
           "flex min-h-0 flex-1 justify-center overflow-y-auto px-4",
-          inRoom ? "items-start py-4" : "items-center py-6"
+          inRoom ? "items-start py-2" : "items-center py-3"
         )}
       >
         {inRoom ? (
-          <div className="w-full max-w-md">
+          <div className="w-full max-w-2xl">
             {state.lastError !== null && !dismissedError && (
               <ErrorBanner
                 error={state.lastError}
@@ -197,7 +260,22 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               startPending={startPending}
               connected={state.status === "connected"}
               onStart={handleStart}
-              onSetName={(name) => client.setName(name)}
+              onSetName={(name) => {
+                // A rename in the room updates the gate's name too, so
+                // the two boxes never disagree (and a later room entry
+                // reuses the latest name).
+                const sent = client.setName(name);
+                if (sent) {
+                  setPlayerName(name);
+                  if (state.roomId !== null && state.playerId !== null) {
+                    appliedName.current = {
+                      seat: `${state.roomId}:${state.playerId}`,
+                      name,
+                    };
+                  }
+                }
+                return sent;
+              }}
               onLeave={handleLeave}
             />
             {/* The seat is server-reserved while the client reconnects —
@@ -214,6 +292,14 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
             reconnectAttempt={state.reconnectAttempt}
             joinCode={joinCode}
             joinError={joinError}
+            playerName={playerName}
+            nameError={nameError}
+            nameReady={nameReady}
+            nameInputRef={nameInputRef}
+            onPlayerNameChange={(value) => {
+              setPlayerName(value);
+              setNameError(null);
+            }}
             onJoinCodeChange={handleJoinCodeChange}
             onCreate={handleCreate}
             onJoin={handleJoin}
@@ -241,6 +327,14 @@ interface HomeViewProps {
   readonly joinCode: string;
   /** Local shape-validation error, or null. */
   readonly joinError: string | null;
+  /** The player's chosen name (required before any room entry). */
+  readonly playerName: string;
+  /** Why the name was refused, or null. */
+  readonly nameError: string | null;
+  /** Whether the current name passes the shared display-name rule. */
+  readonly nameReady: boolean;
+  readonly nameInputRef: React.RefObject<HTMLInputElement | null>;
+  onPlayerNameChange: (value: string) => void;
   onJoinCodeChange: (value: string) => void;
   onCreate: () => void;
   onJoin: () => void;
@@ -256,6 +350,11 @@ function HomeView({
   reconnectAttempt,
   joinCode,
   joinError,
+  playerName,
+  nameError,
+  nameReady,
+  nameInputRef,
+  onPlayerNameChange,
   onJoinCodeChange,
   onCreate,
   onJoin,
@@ -267,6 +366,10 @@ function HomeView({
 }: HomeViewProps) {
   const connected = status === "connected";
   const joinDisabled = !connected || joinCode.trim().length === 0;
+  // The gate is advisory in the UI and enforced in the handlers: the
+  // buttons stay ENABLED without a name so clicking one explains the
+  // requirement (a disabled button with no reason is a dead end).
+  const needsName = !nameReady;
 
   return (
     <div className="w-full max-w-md">
@@ -274,13 +377,58 @@ function HomeView({
         <ErrorBanner error={error} onDismiss={onDismissError} />
       )}
 
-      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 sm:p-8">
+      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5">
         <h2 className="text-center text-xl font-black tracking-tight text-white">
           Enter the arena
         </h2>
-        <p className="mt-1 text-center text-sm text-white/50">
+        <p className="mt-0.5 text-center text-sm text-white/50">
           Jump into a public game, or play privately with friends.
         </p>
+
+        {/* The name comes FIRST: every way into a room needs one, so it
+            is asked for before any of them are offered. The buttons stay
+            clickable without it and explain the requirement on use. */}
+        <div className="mt-3">
+          <label
+            htmlFor="player-name-input"
+            className="text-[11px] uppercase tracking-widest text-white/50"
+          >
+            Your name <span className="text-amber-300">(required)</span>
+          </label>
+          <input
+            id="player-name-input"
+            data-testid="player-name-input"
+            ref={nameInputRef}
+            value={playerName}
+            onChange={(event) => onPlayerNameChange(event.target.value)}
+            placeholder="e.g. Ada"
+            // Bounds the UTF-16 units at 2× the code-point maximum, so
+            // every valid name (including surrogate pairs) still fits.
+            maxLength={2 * MAX_DISPLAY_NAME_LENGTH}
+            autoComplete="nickname"
+            spellCheck={false}
+            required
+            aria-required="true"
+            aria-invalid={nameError !== null}
+            aria-describedby={nameError !== null ? "player-name-error" : undefined}
+            className={cn(
+              "mt-1 w-full rounded-xl border bg-white/5 px-4 py-2 text-sm text-white outline-none transition-colors",
+              "placeholder:text-white/50 focus:border-amber-400/50",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+              nameError !== null ? "border-red-400/50" : "border-white/15"
+            )}
+          />
+          {nameError !== null && (
+            <p
+              id="player-name-error"
+              data-testid="name-required-error"
+              role="alert"
+              className="mt-1 text-xs text-red-300"
+            >
+              {nameError}
+            </p>
+          )}
+        </div>
 
         {/* Matchmaking (Task 17). One click, no code: the server finds an
             open public game or opens a new one. Deliberately NOT a room
@@ -290,8 +438,9 @@ function HomeView({
           onClick={onJoinPublic}
           disabled={!connected}
           data-testid="join-public"
+          aria-describedby={needsName ? "name-gate-hint" : undefined}
           className={cn(
-            "mt-6 w-full rounded-xl px-7 py-3 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
+            "mt-3 w-full rounded-xl px-7 py-2.5 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
             "bg-gradient-to-br from-sky-400 to-indigo-600 text-white",
             "hover:from-sky-300 hover:to-indigo-500 active:scale-95",
             "shadow-indigo-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",
@@ -300,11 +449,20 @@ function HomeView({
         >
           Quick Play
         </button>
-        <p className="mt-2 text-center text-xs text-white/40">
+        <p className="mt-1 text-center text-xs text-white/40">
           Play against anyone online — no room code needed.
         </p>
+        {needsName && (
+          <p
+            id="name-gate-hint"
+            data-testid="name-gate-hint"
+            className="mt-1 text-center text-xs text-amber-300/80"
+          >
+            Enter a name above to play.
+          </p>
+        )}
 
-        <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-widest text-white/50">
+        <div className="my-2 flex items-center gap-3 text-[11px] uppercase tracking-widest text-white/50">
           <span className="h-px flex-1 bg-white/10" />
           or play with friends
           <span className="h-px flex-1 bg-white/10" />
@@ -314,8 +472,9 @@ function HomeView({
           type="button"
           onClick={onCreate}
           disabled={!connected}
+          aria-describedby={needsName ? "name-gate-hint" : undefined}
           className={cn(
-            "mt-6 w-full rounded-xl px-7 py-3 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
+            "w-full rounded-xl px-7 py-2.5 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
             "bg-gradient-to-br from-amber-400 to-orange-600 text-white",
             "hover:from-amber-300 hover:to-orange-500 active:scale-95",
             "shadow-orange-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",
@@ -325,7 +484,7 @@ function HomeView({
           Create Room
         </button>
 
-        <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-widest text-white/50">
+        <div className="my-2 flex items-center gap-3 text-[11px] uppercase tracking-widest text-white/50">
           <span className="h-px flex-1 bg-white/10" />
           or
           <span className="h-px flex-1 bg-white/10" />
@@ -338,7 +497,7 @@ function HomeView({
         >
           Room code
         </label>
-        <div className="mt-2 flex gap-2">
+        <div className="mt-1 flex gap-2">
           <input
             id="room-code-input"
             data-testid="room-code-input"
@@ -351,14 +510,14 @@ function HomeView({
             disabled={!connected}
             autoComplete="off"
             spellCheck={false}
-            className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/5 px-4 py-3 font-mono text-sm uppercase text-white outline-none transition-colors placeholder:text-white/50 focus:border-amber-400/50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/5 px-4 py-2 font-mono text-sm uppercase text-white outline-none transition-colors placeholder:text-white/50 focus:border-amber-400/50 disabled:cursor-not-allowed disabled:opacity-40"
           />
           <button
             type="button"
             onClick={onJoin}
             disabled={joinDisabled}
             className={cn(
-              "rounded-xl border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white/80 transition-colors",
+              "rounded-xl border border-white/15 bg-white/5 px-5 py-2 text-sm font-semibold text-white/80 transition-colors",
               "hover:bg-white/10 active:scale-95",
               "disabled:cursor-not-allowed disabled:opacity-40",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
@@ -384,7 +543,7 @@ function HomeView({
         />
       </div>
 
-      <div className="mt-4 text-center">
+      <div className="mt-2 text-center">
         <button
           type="button"
           onClick={onPracticeSolo}

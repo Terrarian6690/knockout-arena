@@ -47,7 +47,12 @@ describe("app shell", () => {
   it("boots into the lobby (initial screen with connection status)", () => {
     render(<App />);
 
-    expect(screen.getByText("Multiplayer lobby")).toBeInTheDocument();
+    // The lobby's own heading (the "Multiplayer lobby" subtitle was
+    // dropped from the header to keep the screen scroll-free).
+    expect(
+      screen.getByRole("heading", { name: "Knockout Arena" })
+    ).toBeInTheDocument();
+    expect(screen.getByText("Enter the arena")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create Room" })).toBeDisabled();
     expect(screen.getByTestId("connection-status")).toHaveTextContent(
       "Disconnected"

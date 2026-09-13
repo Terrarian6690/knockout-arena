@@ -52,14 +52,21 @@ export interface SeatListProps {
 export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) {
   const emptySeats = Math.max(0, MAX_SEATS - roster.length);
   return (
-    <ul data-testid="seat-list" className="flex flex-col gap-2">
+    <ul
+      data-testid="seat-list"
+      // Six seats as a grid rather than a six-row stack: the lobby has
+      // horizontal room to spare and vertical room it does not, so the
+      // list is the first thing to fold. Two columns from `sm`, three
+      // once the panel is wide enough for them.
+      className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3"
+    >
       {roster.map((seat) => (
         <li
           key={seat.playerId}
           data-testid={`seat-${seat.playerId}`}
-          className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2"
+          className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5"
         >
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
             <span
               role="img"
               aria-label={seat.connected ? "connected" : "disconnected"}
@@ -69,15 +76,17 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
                 seat.connected ? "bg-emerald-400" : "bg-red-400/70"
               )}
             />
-            <span className="text-sm font-bold text-white">
+            <span className="truncate text-sm font-bold leading-tight text-white">
               {seat.displayName ?? seatLabel(seat.playerId)}
             </span>
             {seat.playerId === selfPlayerId && <YouChip />}
             {seat.playerId === hostPlayerId && <HostChip />}
           </div>
+          {/* The state is TEXT, never colour alone (accessibility), but
+              it is secondary information: small and muted. */}
           <span
             className={cn(
-              "shrink-0 text-xs",
+              "shrink-0 text-[10px] leading-tight",
               seat.connected ? "text-white/50" : "text-red-300/70"
             )}
           >
@@ -90,14 +99,14 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
         <li
           key={`empty-seat-${index}`}
           data-testid="empty-seat"
-          className="flex items-center rounded-xl border border-dashed border-white/15 px-4 py-2"
+          className="flex items-center rounded-lg border border-dashed border-white/15 px-3 py-1.5"
         >
           <span
             role="img"
             aria-label="empty seat"
             className="h-2 w-2 shrink-0 rounded-full border border-white/25"
           />
-          <span className="ml-2 text-sm text-white/50">
+          <span className="ml-2 text-sm leading-tight text-white/50">
             Waiting for player…
           </span>
         </li>

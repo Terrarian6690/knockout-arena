@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   connectPlayer,
   createServerHarness,
-  lastSent,
+  sentOfType,
   renderLobby,
 } from "./lobbyTestHarness";
 
@@ -55,8 +55,10 @@ describe("the Quick Play control", () => {
       fireEvent.click(quickPlayButton());
     });
 
-    const sent = lastSent(pair);
-    expect(sent.type).toBe("join_public");
+    // The seat is named right after it is granted (the name gate applies
+    // the chosen name on seating), so assert on the join frame itself.
+    const sent = sentOfType(pair, "join_public");
+    expect(sent).toEqual({ protocolVersion: 1, type: "join_public" });
     expect(sent).not.toHaveProperty("roomId");
   });
 

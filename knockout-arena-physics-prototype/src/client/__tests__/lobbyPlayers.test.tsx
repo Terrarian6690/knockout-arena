@@ -67,10 +67,12 @@ describe("lobby player list", () => {
   it("shows friendly labels, the local player, empty seats and the count", async () => {
     const { host } = await seatedHost();
 
-    // Friendly label (the server's own pawn naming), You + Host chips,
+    // The seat shows the player's chosen name (a name is required before
+    // entering — Task 20); the seat-derived "Player N" identity is still
+    // shown as the local seat label below. You + Host chips and the
     // connection state as text.
     const ownSeat = screen.getByTestId("seat-p0");
-    expect(within(ownSeat).getByText("Player 1")).toBeInTheDocument();
+    expect(within(ownSeat).getByText("Tester")).toBeInTheDocument();
     expect(within(ownSeat).getByText("You")).toBeInTheDocument();
     expect(within(ownSeat).getByText("Host")).toBeInTheDocument();
     expect(within(ownSeat).getByText("Connected")).toBeInTheDocument();
@@ -107,11 +109,14 @@ describe("lobby player list", () => {
     await screen.findByTestId("seat-p1");
 
     const ownSeat = screen.getByTestId("seat-p1");
+    // This guest joined headless (a bare client has no UI gate to pass),
+    // so it keeps the seat-derived fallback; the host went through the
+    // rendered lobby and carries its chosen name.
     expect(within(ownSeat).getByText("Player 2")).toBeInTheDocument();
     expect(within(ownSeat).getByText("You")).toBeInTheDocument();
     expect(within(ownSeat).queryByText("Host")).toBeNull();
     const otherSeat = screen.getByTestId("seat-p0");
-    expect(within(otherSeat).getByText("Player 1")).toBeInTheDocument();
+    expect(within(otherSeat).getByText("Tester")).toBeInTheDocument();
     expect(within(otherSeat).getByText("Host")).toBeInTheDocument();
     expect(within(otherSeat).queryByText("You")).toBeNull();
     expect(screen.getByTestId("local-player-id")).toHaveTextContent(
@@ -242,10 +247,12 @@ describe("start-match UX", () => {
     // Pending feedback immediately; the click cannot double-fire.
     expect(start).toHaveTextContent("Starting…");
     expect(start).toBeDisabled();
-    expect(JSON.parse(sockets[0].sent[0])).toEqual({
-      protocolVersion: 1,
-      type: "start_match",
-    });
+    // The seat is named on arrival (the name gate applies the chosen
+    // name once the server seats us), so find the start frame itself.
+    const startFrames = sockets[0].sent
+      .map((raw) => JSON.parse(raw) as { type: string })
+      .filter((message) => message.type === "start_match");
+    expect(startFrames).toEqual([{ protocolVersion: 1, type: "start_match" }]);
 
     // The server says no (e.g. the other player left a beat earlier):
     // the pending state resets, the error shows, the button re-arms.

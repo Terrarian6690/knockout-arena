@@ -6,6 +6,7 @@ import {
 import type { RoomState, RoomVisibility, RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
 import { copyTextToClipboard, getInviteUrl } from "./invite";
+import { AnimatedEllipsis, WaitingIndicator } from "./WaitingIndicator";
 import { MAX_SEATS, MIN_PLAYERS, SeatList, seatLabel } from "./SeatList";
 
 /**
@@ -219,286 +220,325 @@ export function RoomPanel({
   };
 
   return (
-    <div
-      data-testid="room-panel"
-      className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5"
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] uppercase tracking-widest text-white/50">
-          Room
-        </span>
-        <span
+    <div className="w-full max-w-2xl">
+      {/* The room's status line lives ABOVE the panel: the player reads
+          what the room is doing before the details of it. While waiting
+          the three dots animate (reduced motion keeps them static); the
+          settled states are a plain badge, since nothing is pending. */}
+      {roomState === "waiting" ? (
+        <WaitingIndicator
+          testId="room-state-badge"
+          label={badge.label}
+          className="mb-2"
+        />
+      ) : (
+        <p
           data-testid="room-state-badge"
+          role="status"
           className={cn(
-            "rounded-full border px-3 py-1 text-xs font-semibold",
+            "mb-2 rounded-full border px-3 py-1 text-center text-xs font-semibold",
             badge.className
           )}
         >
           {badge.label}
-        </span>
-      </div>
-
-      {/* PUBLIC rooms have no shareable identity (Task 17 made their code
-          unusable via the join field), so showing a code and an invite
-          link here would hand the player a link that cannot work. They
-          get a plain label instead; private rooms are unchanged. */}
-      {isPublic ? (
-        <div className="mt-2 text-center">
-          <div className="text-[11px] uppercase tracking-widest text-white/50">
-            Public game
-          </div>
-          <div
-            data-testid="public-room-label"
-            className="mt-1 text-lg font-bold tracking-tight text-sky-300"
-          >
-            Quick Play
-          </div>
-        </div>
-      ) : (
-      <div className="mt-2 text-center">
-        <div className="text-[11px] uppercase tracking-widest text-white/50">
-          Room code
-        </div>
-        <div
-          data-testid="room-code"
-          className="mt-1 font-mono text-3xl font-black tracking-[0.2em] text-amber-400"
-        >
-          {roomCode}
-        </div>
-        <div className="mt-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
-          <button
-            type="button"
-            onClick={handleCopyCode}
-            data-testid="copy-code"
-            className={cn(
-              "rounded-xl border border-white/15 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/80 transition-colors",
-              "hover:bg-white/10 active:scale-95",
-              FOCUS_RING
-            )}
-          >
-            Copy Code
-          </button>
-          <button
-            type="button"
-            onClick={handleInvite}
-            data-testid="invite-button"
-            className={cn(
-              "rounded-xl border border-white/15 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/80 transition-colors",
-              "hover:bg-white/10 active:scale-95",
-              FOCUS_RING
-            )}
-          >
-            Invite
-          </button>
-          <span
-            data-testid="copy-feedback"
-            role="status"
-            className="text-xs font-semibold text-emerald-300"
-          >
-            {copied ? "Copied!" : ""}
-          </span>
-          <span
-            data-testid="invite-feedback"
-            role="status"
-            className={cn(
-              "text-xs font-semibold",
-              inviteFeedback?.ok === false
-                ? "text-red-300"
-                : "text-emerald-300"
-            )}
-          >
-            {inviteFeedback?.message ?? ""}
-          </span>
-        </div>
-        {roomState === "waiting" && (
-          <p className="mt-1 text-xs text-white/50">
-            Share this code so others can join
-          </p>
-        )}
-      </div>
+        </p>
       )}
 
-      <div className="mt-5 flex items-center justify-center gap-2 text-xs">
-        <span className="text-white/50">You are</span>
-        <span
-          data-testid="local-player-id"
-          className="text-sm font-bold text-white"
-        >
-          {seatLabel(playerId)}
-        </span>
-        {isHost && (
-          <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
-            Host
+      <div
+        data-testid="room-panel"
+        className="w-full rounded-2xl border border-white/10 bg-white/[0.02] p-3 sm:p-4"
+      >
+        {/* The panel's top line. The HOST indicator sits in the top-RIGHT
+            corner — the slot the room-state badge used to occupy; that
+            badge is now the status banner ABOVE this panel, so the room's
+            state is read before its details. */}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] uppercase tracking-widest text-white/50">
+            Room
           </span>
-        )}
-      </div>
+          {isHost && (
+            <span
+              data-testid="host-badge"
+              className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300"
+            >
+              Host
+            </span>
+          )}
+        </div>
 
-      {roomState === "waiting" && (
-        <div className="mt-3">
-          <label
-            htmlFor="display-name-input"
-            className="text-[11px] uppercase tracking-widest text-white/50"
+        {/* PUBLIC rooms have no shareable identity (Task 17 made their code
+            unusable via the join field), so showing a code and an invite
+            link here would hand the player a link that cannot work. They
+            get a plain label instead; private rooms are unchanged. */}
+        {isPublic ? (
+          <div className="mt-1 text-center">
+            <div className="text-[11px] uppercase tracking-widest text-white/50">
+              Public game
+            </div>
+            <div
+              data-testid="public-room-label"
+              className="text-lg font-bold tracking-tight text-sky-300"
+            >
+              Quick Play
+            </div>
+          </div>
+        ) : (
+        <div className="mt-1 text-center">
+          {/* The room code is the one thing a player must read off the
+              screen and type or dictate elsewhere, so it is the largest
+              text in the lobby. */}
+          <div
+            data-testid="room-code"
+            // The visible caption was dropped to save vertical space; the
+            // label lives on the element itself so the code is still
+            // announced as "Room code" rather than four bare letters.
+            aria-label={`Room code ${roomCode}`}
+            className="font-mono text-5xl font-black leading-none tracking-[0.2em] text-amber-400"
           >
-            Your name
-          </label>
-          <div className="mt-2 flex gap-2">
-            <input
-              id="display-name-input"
-              data-testid="display-name-input"
-              value={nameDraft}
-              onChange={(event) => {
-                setNameDraft(event.target.value);
-                setNameError(null);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") saveName();
-              }}
-              placeholder={seatLabel(playerId)}
-              // maxLength bounds the UTF-16 units, so 2× the code-point
-              // maximum still admits any valid name (surrogate pairs)
-              // while keeping pasted novels out of the field.
-              maxLength={2 * MAX_DISPLAY_NAME_LENGTH}
-              disabled={connected === false}
-              autoComplete="off"
-              spellCheck={false}
-              aria-invalid={nameError !== null}
-              className={cn(
-                "min-w-0 flex-1 rounded-xl border bg-white/5 px-4 py-2 text-sm text-white outline-none transition-colors",
-                "placeholder:text-white/50 focus:border-amber-400/50",
-                "disabled:cursor-not-allowed disabled:opacity-40",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
-                nameError !== null ? "border-red-400/50" : "border-white/15"
-              )}
-            />
+            {roomCode}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
             <button
               type="button"
-              onClick={saveName}
-              disabled={connected === false || nameDraft.trim().length === 0}
-              data-testid="save-name"
+              onClick={handleCopyCode}
+              data-testid="copy-code"
               className={cn(
-                "rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-white/80 transition-colors",
+                "rounded-xl border border-white/15 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/80 transition-colors",
                 "hover:bg-white/10 active:scale-95",
-                "disabled:cursor-not-allowed disabled:opacity-40",
                 FOCUS_RING
               )}
             >
-              Save Name
+              Copy Code
             </button>
+            {/* Invite is the action that actually fills the room, so it is
+                the prominent one here: a filled emerald button against the
+                outlined Copy Code. Emerald is the design system's existing
+                "success / positive outcome" colour (match result, copy
+                confirmation, connected seats) and is not used by any other
+                button, so it reads as distinct without inventing a hue. */}
+            <button
+              type="button"
+              onClick={handleInvite}
+              data-testid="invite-button"
+              className={cn(
+                "rounded-xl px-4 py-1.5 text-xs font-bold uppercase tracking-wide shadow-md transition-all",
+                "bg-gradient-to-br from-emerald-400 to-teal-600 text-white",
+                "hover:from-emerald-300 hover:to-teal-500 active:scale-95",
+                "shadow-emerald-900/40",
+                FOCUS_RING
+              )}
+            >
+              Invite
+            </button>
+            <span
+              data-testid="copy-feedback"
+              role="status"
+              className="text-xs font-semibold text-emerald-300"
+            >
+              {copied ? "Copied!" : ""}
+            </span>
+            <span
+              data-testid="invite-feedback"
+              role="status"
+              className={cn(
+                "text-xs font-semibold",
+                inviteFeedback?.ok === false
+                  ? "text-red-300"
+                  : "text-emerald-300"
+              )}
+            >
+              {inviteFeedback?.message ?? ""}
+            </span>
           </div>
-          {nameError !== null && (
-            <p data-testid="name-error" role="alert" className="mt-2 text-xs text-red-300">
-              {nameError}
+          {roomState === "waiting" && (
+            <p className="text-[11px] leading-tight text-white/50">
+              Share this code so others can join
             </p>
           )}
-          <p className="mt-1 text-[11px] text-white/50">
-            1–16 characters; leave empty to stay {seatLabel(playerId)}.
-          </p>
         </div>
-      )}
+        )}
 
-      <div className="mt-4">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-[11px] uppercase tracking-widest text-white/50">
-            Players
-          </span>
+        {/* The HOST indicator is NOT repeated here: it sits in the
+            panel's top-right corner (and on your own seat row). */}
+        <div className="mt-2 flex items-center justify-center gap-2 text-xs leading-tight">
+          <span className="text-white/50">You are</span>
           <span
-            data-testid="player-count"
-            aria-label={`${roster.length} of ${MAX_SEATS} players`}
-            className="text-[11px] tabular-nums text-white/50"
+            data-testid="local-player-id"
+            className="text-sm font-bold text-white"
           >
-            {roster.length} / {MAX_SEATS}
+            {seatLabel(playerId)}
           </span>
         </div>
-        <SeatList
-          roster={roster}
-          selfPlayerId={playerId}
-          hostPlayerId={hostPlayerId}
-        />
-      </div>
 
-      {roomState === "finished" && (
-        <div
-          data-testid="match-result"
-          className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-center"
-        >
-          <div className="text-3xl">🏆</div>
-          <p className="mt-1 text-lg font-black text-emerald-300">
-            {winnerId
-              ? `${
-                  roster.find((entry) => entry.playerId === winnerId)
-                    ?.displayName ?? seatLabel(winnerId)
-                } wins!`
-              : "No survivor — total knockout!"}
-          </p>
-        </div>
-      )}
+        {roomState === "waiting" && (
+          <div className="mt-2">
+            {/* The label is visually hidden: the player already named
+                themselves on the home screen, so this is a rename box,
+                not a prompt. The accessible name is unchanged. */}
+            <label htmlFor="display-name-input" className="sr-only">
+              Your name
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="display-name-input"
+                data-testid="display-name-input"
+                value={nameDraft}
+                onChange={(event) => {
+                  setNameDraft(event.target.value);
+                  setNameError(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") saveName();
+                }}
+                placeholder={seatLabel(playerId)}
+                // maxLength bounds the UTF-16 units, so 2× the code-point
+                // maximum still admits any valid name (surrogate pairs)
+                // while keeping pasted novels out of the field.
+                maxLength={2 * MAX_DISPLAY_NAME_LENGTH}
+                disabled={connected === false}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={nameError !== null}
+                className={cn(
+                  "min-w-0 flex-1 rounded-xl border bg-white/5 px-4 py-1.5 text-sm text-white outline-none transition-colors",
+                  "placeholder:text-white/50 focus:border-amber-400/50",
+                  "disabled:cursor-not-allowed disabled:opacity-40",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+                  nameError !== null ? "border-red-400/50" : "border-white/15"
+                )}
+              />
+              <button
+                type="button"
+                onClick={saveName}
+                disabled={connected === false || nameDraft.trim().length === 0}
+                data-testid="save-name"
+                className={cn(
+                  "rounded-xl border border-white/15 bg-white/5 px-4 py-1.5 text-sm font-semibold text-white/80 transition-colors",
+                  "hover:bg-white/10 active:scale-95",
+                  "disabled:cursor-not-allowed disabled:opacity-40",
+                  FOCUS_RING
+                )}
+              >
+                Save Name
+              </button>
+            </div>
+            {nameError !== null && (
+              <p data-testid="name-error" role="alert" className="mt-2 text-xs text-red-300">
+                {nameError}
+              </p>
+            )}
 
-      <div className="mt-6 flex flex-col gap-2">
-        {isHost && roomState === "waiting" && (
-          <>
-            <button
-              type="button"
-              onClick={onStart}
-              disabled={
-                startPending || connected === false || !enoughPlayers
-              }
-              data-testid="start-match"
-              className={cn(
-                "rounded-xl px-7 py-3 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
-                "bg-gradient-to-br from-amber-400 to-orange-600 text-white",
-                "hover:from-amber-300 hover:to-orange-500 active:scale-95",
-                "shadow-orange-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",
-                FOCUS_RING
-              )}
+          </div>
+        )}
+
+        <div className="mt-3">
+          <div className="mb-1 flex items-center justify-between leading-tight">
+            <span className="text-[11px] uppercase tracking-widest text-white/50">
+              Players
+            </span>
+            <span
+              data-testid="player-count"
+              aria-label={`${roster.length} of ${MAX_SEATS} players`}
+              className="text-[11px] tabular-nums text-white/50"
             >
-              {startPending ? "Starting…" : "Start Match"}
-            </button>
-            {!enoughPlayers && (
-              <p
-                data-testid="waiting-for-players"
-                className="text-center text-xs text-white/50"
-              >
-                {roomVisibility === "public"
-                  ? "Waiting for another player to join…"
-                  : "Waiting for another player…"}
-              </p>
-            )}
-            {/* Public rooms only: say how someone will arrive, since
-                there is no code to share and nothing else to do. The
-                wait is indefinite by design — no timeout, no bots — so
-                the leave button below is the explicit way out. */}
-            {!enoughPlayers && roomVisibility === "public" && (
-              <p
-                data-testid="public-waiting-hint"
-                className="text-center text-xs text-white/40"
-              >
-                You will be matched with the next player who picks Quick Play.
-              </p>
-            )}
-          </>
-        )}
+              {roster.length} / {MAX_SEATS}
+            </span>
+          </div>
+          <SeatList
+            roster={roster}
+            selfPlayerId={playerId}
+            hostPlayerId={hostPlayerId}
+          />
+        </div>
 
-        {!isHost && roomState === "waiting" && (
-          <p
-            data-testid="waiting-for-host"
-            className="py-1 text-center text-xs text-white/50"
+        {roomState === "finished" && (
+          <div
+            data-testid="match-result"
+            className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-center"
           >
-            Waiting for the host to start the match…
-          </p>
+            <div className="text-3xl">🏆</div>
+            <p className="mt-1 text-lg font-black text-emerald-300">
+              {winnerId
+                ? `${
+                    roster.find((entry) => entry.playerId === winnerId)
+                      ?.displayName ?? seatLabel(winnerId)
+                  } wins!`
+                : "No survivor — total knockout!"}
+            </p>
+          </div>
         )}
 
-        <button
-          type="button"
-          onClick={onLeave}
-          data-testid="leave-room"
-          className={cn(
-            "rounded-xl border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white/80",
-            "transition-colors hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300 active:scale-95",
-            FOCUS_RING
+        <div className="mt-3 flex flex-col gap-1.5">
+          {isHost && roomState === "waiting" && (
+            <>
+              <button
+                type="button"
+                onClick={onStart}
+                disabled={
+                  startPending || connected === false || !enoughPlayers
+                }
+                data-testid="start-match"
+                className={cn(
+                  "rounded-xl px-7 py-2.5 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
+                  "bg-gradient-to-br from-amber-400 to-orange-600 text-white",
+                  "hover:from-amber-300 hover:to-orange-500 active:scale-95",
+                  "shadow-orange-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",
+                  FOCUS_RING
+                )}
+              >
+                {startPending ? "Starting…" : "Start Match"}
+              </button>
+              {!enoughPlayers && (
+                <p
+                  data-testid="waiting-for-players"
+                  className="text-center text-xs leading-tight text-white/50"
+                >
+                  {roomVisibility === "public"
+                    ? "Waiting for another player to join"
+                    : "Waiting for another player"}
+                  <span className="sr-only">…</span>
+                  <AnimatedEllipsis />
+                </p>
+              )}
+              {/* Public rooms only: say how someone will arrive, since
+                  there is no code to share and nothing else to do. The
+                  wait is indefinite by design — no timeout, no bots — so
+                  the leave button below is the explicit way out. */}
+              {!enoughPlayers && roomVisibility === "public" && (
+                <p
+                  data-testid="public-waiting-hint"
+                  className="text-center text-xs leading-tight text-white/40"
+                >
+                  You will be matched with the next player who picks Quick Play.
+                </p>
+              )}
+            </>
           )}
-        >
-          Leave Room
-        </button>
+
+          {!isHost && roomState === "waiting" && (
+            <p
+              data-testid="waiting-for-host"
+              className="py-0.5 text-center text-xs leading-tight text-white/50"
+            >
+              Waiting for the host to start the match
+              <span className="sr-only">…</span>
+              <AnimatedEllipsis />
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={onLeave}
+            data-testid="leave-room"
+            className={cn(
+              "rounded-xl border border-white/15 bg-white/5 px-5 py-2 text-sm font-semibold text-white/80",
+              "transition-colors hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300 active:scale-95",
+              FOCUS_RING
+            )}
+          >
+            Leave Room
+          </button>
+        </div>
       </div>
     </div>
   );

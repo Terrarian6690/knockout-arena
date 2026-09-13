@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   connectPlayer,
   createServerHarness,
-  lastSent,
+  sentOfType,
   playerAct,
   renderLobby,
 } from "./lobbyTestHarness";
@@ -106,7 +106,7 @@ describe("invite link prefill (?room=CODE)", () => {
     expect(pair.clientSent).toHaveLength(0); // no auto-join
 
     fireEvent.click(screen.getByRole("button", { name: "Join Room" }));
-    expect(lastSent(pair)).toEqual({
+    expect(sentOfType(pair, "join_room")).toEqual({
       protocolVersion: 1,
       type: "join_room",
       roomId: code,

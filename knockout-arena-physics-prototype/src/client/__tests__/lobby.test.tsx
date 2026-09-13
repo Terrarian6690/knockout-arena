@@ -9,7 +9,8 @@ import {
   connectPlayer,
   createScriptedClient,
   createServerHarness,
-  lastSent,
+  allSent,
+  sentOfType,
   playerAct,
   renderLobby,
 } from "./lobbyTestHarness";
@@ -77,9 +78,17 @@ describe("lobby initial screen", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Create Room" }));
 
-    // Exactly the protocol envelope, nothing else.
-    expect(lastSent(pair)).toEqual({ protocolVersion: 1, type: "create_room" });
-    expect(pair.clientSent).toHaveLength(1);
+    // Exactly the protocol envelope, nothing else. (The seat is named
+    // straight after it arrives — the name gate applies the player's
+    // chosen name on seating — so assert on the create frame itself.)
+    expect(sentOfType(pair, "create_room")).toEqual({
+      protocolVersion: 1,
+      type: "create_room",
+    });
+    expect(allSent(pair).map((m) => m.type)).toEqual([
+      "create_room",
+      "set_name",
+    ]);
 
     // The room screen shows the SERVER-assigned room code and seat.
     const roomCode = player.client.getState().roomId as string;
@@ -110,7 +119,7 @@ describe("lobby initial screen", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Join Room" }));
 
-    expect(lastSent(guestPair)).toEqual({
+    expect(sentOfType(guestPair, "join_room")).toEqual({
       protocolVersion: 1,
       type: "join_room",
       roomId: roomCode,

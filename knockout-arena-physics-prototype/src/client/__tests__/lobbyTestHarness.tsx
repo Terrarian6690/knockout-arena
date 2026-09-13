@@ -1,4 +1,4 @@
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach } from "vitest";
 import {  createNetworkClient,
   type NetworkClient,
@@ -165,13 +165,26 @@ export function createServerHarness(
   return { gameServer, core, addPlayer };
 }
 
-/** Render the lobby (initial screen) for one player's client. */
-export function renderLobby(client: NetworkClient) {
-  return render(
+/**
+ * Render the lobby (initial screen) for one player's client.
+ *
+ * The lobby requires a display name before any room can be entered
+ * (Task 20). Rendering fills that box with a default, so suites that are
+ * not about the gate read as they always did; pass `{ playerName: null }`
+ * to render an un-named player and exercise the gate itself.
+ */
+export function renderLobby(
+  client: NetworkClient,
+  options: { playerName?: string | null } = {}
+) {
+  const view = render(
     <NetworkProvider client={client}>
       <Lobby onPracticeSolo={() => {}} />
     </NetworkProvider>
   );
+  const name = options.playerName === undefined ? "Tester" : options.playerName;
+  if (name !== null) enterPlayerName(name);
+  return view;
 }
 
 /** Connect a player's client and complete the (in-memory) handshake. */
@@ -189,11 +202,53 @@ export async function connectPlayer(player: {
   return pair;
 }
 
+/**
+ * Satisfy the lobby's name gate (Task 20): a player must name themselves
+ * before any room can be entered. Tests that are not ABOUT the gate call
+ * this once after rendering, the way a real player types their name
+ * before clicking anything.
+ *
+ * It only fills the home screen's name box — it asserts nothing and
+ * bypasses nothing, so the gate is still genuinely exercised.
+ */
+export function enterPlayerName(name = "Tester") {
+  const input = screen.queryByTestId("player-name-input");
+  if (input === null) return; // already in a room: nothing to fill in
+  fireEvent.change(input, { target: { value: name } });
+}
+
 /** Drive a player not backed by a rendered UI (act-wrapped store updates). */
 export async function playerAct(action: () => void): Promise<void> {
   await act(async () => {
     action();
   });
+}
+
+/**
+ * Every message a player put on the wire, parsed, in order.
+ *
+ * Useful where a single click legitimately produces more than one frame:
+ * entering a room also names the seat (Task 20's name gate applies the
+ * chosen name as soon as the server seats the player), so "the last
+ * thing sent" is no longer the same as "the frame under test".
+ */
+export function allSent(pair: SocketPair): Array<Record<string, unknown>> {
+  return pair.clientSent.map((raw) => JSON.parse(raw) as Record<string, unknown>);
+}
+
+/** The one message of the given type a player sent (fails if not exactly one). */
+export function sentOfType(
+  pair: SocketPair,
+  type: string
+): Record<string, unknown> {
+  const matches = allSent(pair).filter((message) => message.type === type);
+  if (matches.length !== 1) {
+    throw new Error(
+      `expected exactly one ${type} frame, saw ${matches.length} ` +
+        `(wire: ${allSent(pair).map((m) => String(m.type)).join(", ")})`
+    );
+  }
+  return matches[0]!;
 }
 
 /** The last message a player put on the wire, parsed. */
