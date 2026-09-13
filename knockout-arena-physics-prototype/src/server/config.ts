@@ -16,6 +16,16 @@
  *   MAX_MALFORMED_MESSAGES   32       Malformed wire messages per
  *                                     connection before it is closed
  *   SHUTDOWN_TIMEOUT_MS      10000    Bound on graceful shutdown
+ *   RECONNECT_RESERVATION_MS 30000    How long a dropped player's seat is
+ *                                     held for reconnect (5000..300000)
+ *
+ * NOTE ON VALIDATION STYLE: every variable above fails LOUDLY except
+ * RECONNECT_RESERVATION_MS, which warns and falls back to its default.
+ * That is deliberate: the others describe how the process must run (a
+ * bad port or connection cap means the operator got the deployment
+ * wrong), whereas the reservation window is a gameplay tuning knob — a
+ * typo in it should not take a running game server offline. The
+ * fallback is always the documented 30s default, never the bad value.
  *
  * There are no secrets in this configuration (nothing to commit), no
  * hardcoded production URLs, and no client exposure: the client needs no
@@ -39,6 +49,11 @@ export interface ServerConfig {
   readonly maxConnections: number;
   readonly maxMalformedMessages: number;
   readonly shutdownTimeoutMs: number;
+  /**
+   * How long a dropped connection's seat stays reserved for reconnect.
+   * Read once at startup; never hot-reloaded.
+   */
+  readonly reconnectReservationMs: number;
 }
 
 export const DEFAULT_SERVER_CONFIG: Readonly<Omit<ServerConfig, "nodeEnv">> = {
@@ -48,7 +63,28 @@ export const DEFAULT_SERVER_CONFIG: Readonly<Omit<ServerConfig, "nodeEnv">> = {
   maxConnections: 256,
   maxMalformedMessages: 32,
   shutdownTimeoutMs: 10_000,
+  reconnectReservationMs: 30_000,
 };
+
+/**
+ * Sanity bounds for RECONNECT_RESERVATION_MS.
+ *
+ * Lower bound 5s: below this the window is degenerate — a real client
+ * cannot notice the drop, re-establish a socket and replay its
+ * credential in time, so every drop would become a permanent
+ * elimination while still paying the full reconnect machinery cost.
+ *
+ * Upper bound 5 minutes: a seat held this long already blocks the room
+ * and pins per-seat state for an opponent who has almost certainly
+ * left; anything beyond is indistinguishable from a leak.
+ *
+ * The upper bound happening to equal DEFAULT_EXPIRED_CREDENTIAL_TTL_MS
+ * is a COINCIDENCE, not a dependency: the tombstone TTL is hardcoded in
+ * reconnect.ts and starts counting only once a reservation has already
+ * expired. The two values are never derived from each other.
+ */
+export const MIN_RECONNECT_RESERVATION_MS = 5_000;
+export const MAX_RECONNECT_RESERVATION_MS = 300_000;
 
 function readInteger(
   env: Record<string, string | undefined>,
@@ -64,6 +100,31 @@ function readInteger(
     throw new ConfigError(
       `${name} must be an integer between ${min} and ${max} (got ${JSON.stringify(raw)})`
     );
+  }
+  return value;
+}
+
+/**
+ * Read an integer that must NOT be able to crash the server: an absent,
+ * malformed or out-of-range value falls back to `fallback` and reports
+ * one human-readable warning line. Returns the default on every failure.
+ */
+function readIntegerLenient(
+  env: Record<string, string | undefined>,
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+  onWarning: ((message: string) => void) | undefined
+): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    onWarning?.(
+      `${name} must be an integer between ${min} and ${max} (got ${JSON.stringify(raw)}) — using the default ${fallback}`
+    );
+    return fallback;
   }
   return value;
 }
@@ -84,7 +145,19 @@ function readHost(env: Record<string, string | undefined>): string {
  * Parse and validate the environment. Throws {@link ConfigError} on the
  * first invalid value — the entrypoint logs it and exits non-zero.
  */
-export function loadServerConfig(env: Record<string, string | undefined>): ServerConfig {
+export interface LoadConfigOptions {
+  /**
+   * Called with one human-readable line per value that was present but
+   * unusable. Only the lenient settings can reach this; strict ones
+   * still throw. Injectable so tests can assert the warning path.
+   */
+  onWarning?: (message: string) => void;
+}
+
+export function loadServerConfig(
+  env: Record<string, string | undefined>,
+  options: LoadConfigOptions = {}
+): ServerConfig {
   return {
     port: readInteger(env, "PORT", DEFAULT_SERVER_CONFIG.port, 1, 65535),
     host: readHost(env),
@@ -116,6 +189,15 @@ export function loadServerConfig(env: Record<string, string | undefined>): Serve
       DEFAULT_SERVER_CONFIG.shutdownTimeoutMs,
       100,
       120_000
+    ),
+    // Lenient on purpose — see NOTE ON VALIDATION STYLE above.
+    reconnectReservationMs: readIntegerLenient(
+      env,
+      "RECONNECT_RESERVATION_MS",
+      DEFAULT_SERVER_CONFIG.reconnectReservationMs,
+      MIN_RECONNECT_RESERVATION_MS,
+      MAX_RECONNECT_RESERVATION_MS,
+      options.onWarning
     ),
   };
 }

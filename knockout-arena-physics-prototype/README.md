@@ -881,10 +881,31 @@ behavior, not data loss.
 | `MAX_CONNECTIONS`      | `256`      | Max simultaneous connections (refused cleanly beyond)|
 | `MAX_MALFORMED_MESSAGES` | `32`     | Malformed wire messages per connection before close  |
 | `SHUTDOWN_TIMEOUT_MS`  | `10000`    | Bound on graceful shutdown                           |
+| `RECONNECT_RESERVATION_MS` | `30000` | How long a dropped player's seat is held for reconnect (5000–300000) |
 
 Every value is validated at startup: an invalid setting logs a
 field-specific `configuration error` and exits non-zero instead of
-silently behaving incorrectly. No secrets exist in this configuration;
+silently behaving incorrectly.
+
+`RECONNECT_RESERVATION_MS` is the one deliberate exception to that rule.
+It is a gameplay tuning knob rather than a deployment-shape setting, so
+an absent, malformed or out-of-range value logs a single
+`startup_config_fallback` warning and falls back to the documented 30s
+default instead of taking a running game server offline. It is read
+**once at startup** — there is no hot reload.
+
+Its sanity bounds are **5000–300000 ms**. Below 5s the window is
+degenerate: a real client cannot notice the drop, re-establish a socket
+and replay its credential in time, so every brief disconnect would
+become a permanent elimination. Above 5 minutes a seat blocks the room
+long after the player has realistically gone, which is indistinguishable
+from a leak.
+
+This window is independent of the expired-credential tombstone TTL
+(5 minutes, hardcoded in `src/server/reconnect.ts`), which governs how
+long an *already-expired* credential can still be told apart from a
+never-issued one. The two are never derived from each other; the
+reservation env var does not move the tombstone TTL. No secrets exist in this configuration;
 the client needs none of it (same-origin by default).
 
 ### Graceful shutdown

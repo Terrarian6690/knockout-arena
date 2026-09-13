@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { createGameServer, createTransportCore, type TransportSocket } from "../src/server";
+import { loadServerConfig } from "../src/server/config";
 
 /**
  * MANUAL SMOKE-TEST SERVER (dev helper — not the production entry point).
@@ -30,7 +31,9 @@ const APP_FILE = path.resolve(process.cwd(), "dist", "index.html");
  * (default 30 s, like production). Shrink it to watch the expiry path in
  * the manual smoke test, e.g. RECONNECT_RESERVATION_MS=5000.
  */
-const RECONNECT_RESERVATION_MS = Number(process.env.RECONNECT_RESERVATION_MS ?? 30_000);
+const RECONNECT_RESERVATION_MS = loadServerConfig(process.env, {
+  onWarning: (detail) => console.warn(`[smoke] ${detail}`),
+}).reconnectReservationMs;
 /**
  * Round decision deadline (default 10 s, like production): after this long
  * in the aiming phase the server itself resolves the round. Shrink it to

@@ -18,8 +18,11 @@ describe("server configuration", () => {
       maxConnections: 256,
       maxMalformedMessages: 32,
       shutdownTimeoutMs: 10_000,
+      reconnectReservationMs: 30_000,
     });
     expect(DEFAULT_SERVER_CONFIG.port).toBe(4173);
+    // Task 15: the reconnect window default must stay 30s when unset.
+    expect(DEFAULT_SERVER_CONFIG.reconnectReservationMs).toBe(30_000);
   });
 
   it("valid overrides are parsed", () => {
@@ -31,6 +34,7 @@ describe("server configuration", () => {
       MAX_CONNECTIONS: "10",
       MAX_MALFORMED_MESSAGES: "3",
       SHUTDOWN_TIMEOUT_MS: "2500",
+      RECONNECT_RESERVATION_MS: "45000",
     });
     expect(config).toEqual({
       port: 8443,
@@ -40,6 +44,7 @@ describe("server configuration", () => {
       maxConnections: 10,
       maxMalformedMessages: 3,
       shutdownTimeoutMs: 2500,
+      reconnectReservationMs: 45_000,
     });
   });
 
