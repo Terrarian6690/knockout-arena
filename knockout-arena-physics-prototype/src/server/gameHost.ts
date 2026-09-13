@@ -38,7 +38,7 @@ import {
  *
  * The host owns exactly ONE piece of orchestration policy on top of the
  * engine: the ROUND DECISION DEADLINE. While a match is in the "aiming"
- * phase, the host arms a wall-clock deadline (default 10 s); when it fires
+ * phase, the host arms a wall-clock deadline (default 20 s); when it fires
  * the host submits the engine's match-level `resolveRound` command through
  * the exact same authoritative path the room manager's privileged facade
  * uses. All gameplay rules — who may confirm, who moves, elimination,
@@ -81,7 +81,7 @@ export interface GameHostOptions {
    * The round decision deadline: the maximum wall-clock time an "aiming"
    * round may last. When it expires the host resolves the round with
    * whatever confirmations exist (confirmed players move, unconfirmed
-   * players do not). Default: DEFAULT_ROUND_DECISION_TIMEOUT_MS (10 s).
+   * players do not). Default: DEFAULT_ROUND_DECISION_TIMEOUT_MS (20 s).
    * Server-side configuration only — clients never influence it.
    */
   roundDecisionTimeoutMs?: number;
@@ -105,9 +105,21 @@ export const DEFAULT_MAX_CATCH_UP_TICKS = 60;
 
 /**
  * Default round decision deadline: an aiming round is resolved by the
- * server after ten seconds even if not every alive player has confirmed.
+ * server after twenty seconds even if not every alive player has
+ * confirmed.
+ *
+ * Authoritative and server-only: the client never holds a duration, it
+ * renders the countdown from the absolute `roundDeadline` timestamp the
+ * server stamps on each aiming snapshot. Changing this number here is
+ * the whole change — nothing client-side needs to agree with it.
+ *
+ * On expiry the round resolves for everyone at once, and a player who
+ * LOCKED an aim but never pressed Confirm is launched with that aim and
+ * their selected power (see beginRoundMovement in game.ts). Twenty
+ * seconds is the budget for aiming plus power plus confirm; ten was
+ * tight enough that deliberate aims were regularly lost.
  */
-export const DEFAULT_ROUND_DECISION_TIMEOUT_MS = 10_000;
+export const DEFAULT_ROUND_DECISION_TIMEOUT_MS = 20_000;
 
 /**
  * Default hard match duration: 4 minutes, owned by the engine config so

@@ -40,10 +40,12 @@ import { projectSnapshot } from "./project";
  *     immutable for the round) but does NOT start movement by itself;
  *   - when EVERY alive player has confirmed — or when the server submits
  *     the match-level `resolveRound` command (its decision deadline) —
- *     all confirmed movements start together in ONE transition and the
- *     physics resolves them simultaneously (collisions between movers
- *     included). Unconfirmed players do not move that round: their pawns
- *     simply stay where they are;
+ *     all movements start together in ONE transition and the physics
+ *     resolves them simultaneously (collisions between movers included).
+ *     At the deadline a player who LOCKED an aim but never confirmed is
+ *     auto-launched with that aim and their selected power, through this
+ *     same transition. A player with no locked aim does not move that
+ *     round: their pawn simply stays where it is;
  *   - when every survivor has settled, eliminations are final and a NEW
  *     aiming round begins for all remaining alive players;
  *   - the match ends by the elimination rule alone (≤1 alive), exactly
@@ -329,21 +331,56 @@ export function createGame(options?: GameOptions): GameHandle {
   }
 
   /**
-   * Begin the CURRENT round's movement phase. Every alive player whose
-   * choice is confirmed gets their launch impulse applied in this ONE
-   * synchronous transition — no physics step happens in between, so all
-   * confirmed movements start together and the simulation resolves them
-   * simultaneously. Unconfirmed players receive no impulse and simply stay
+   * Does this player launch when the current round resolves?
+   *
+   * Two ways to qualify, and they are deliberately ONE rule rather than
+   * two code paths:
+   *
+   *   - CONFIRMED: the player pressed Confirm. Launches whatever they
+   *     chose (an explicit aim, or the default direction if they
+   *     confirmed without aiming).
+   *   - LOCKED AIM, NOT CONFIRMED: the player committed a direction but
+   *     the decision deadline arrived first. Rather than losing the turn,
+   *     that locked aim is honoured with their currently selected power.
+   *     A deliberate aim is intent; the deadline should not silently
+   *     discard it.
+   *
+   * A player who locked NO aim does not launch: an empty round is still a
+   * legitimate outcome (they stay exactly where they are, and it is not
+   * an elimination). That distinction — `aim.active` — is the whole
+   * difference, and it is why this is a predicate and not a flag set at
+   * timeout: the resolution path cannot tell, and must not care, WHY it
+   * is running.
+   */
+  function launchesThisRound(p: Player): boolean {
+    if (p.eliminated) return false;
+    return confirmed.get(p.id) === true || p.aim.active;
+  }
+
+  /**
+   * Begin the CURRENT round's movement phase. Every alive player who
+   * qualifies (see launchesThisRound) gets their launch impulse applied
+   * in this ONE synchronous transition — no physics step happens in
+   * between, so all movements start together and the simulation resolves
+   * them simultaneously, whether a given launch was confirmed by hand or
+   * auto-launched from a locked aim at the deadline. Players with neither
+   * a confirmation nor a locked aim receive no impulse and simply stay
    * where they are.
    */
   function beginRoundMovement() {
     for (const p of players) {
-      if (p.eliminated || !confirmed.get(p.id)) continue;
+      if (!launchesThisRound(p)) continue;
       const body = bodies.get(p.id);
       if (!body) continue;
-      // A confirmed player without an explicit aim launches along the
-      // default direction — the same rule the sequential model had.
+      // An explicit aim always wins. The default direction is the
+      // fallback for a player who confirmed without aiming — an
+      // auto-launched player reaches this line only BECAUSE they have an
+      // aim, so they never take the fallback.
       const dir = p.aim.active ? p.aim.direction : { x: 0, y: -1 };
+      // Power is whatever the player currently has selected: explicitly
+      // chosen this round, carried over from an earlier one, or the
+      // CONFIG.power.default every pawn is created with. Identical for
+      // confirmed and auto-launched players — there is only one source.
       const vel = launchVelocity(dir, p.power);
       physics.applyImpulse(body, vel.x, vel.y);
       p.aim.active = false; // the aim was consumed by this launch
@@ -351,7 +388,9 @@ export function createGame(options?: GameOptions): GameHandle {
       // state the moment movements begin. Until this exact moment the aim
       // was private (only its owner's projection carried it); from here on
       // it is public fact, projected to every viewer for the movement
-      // phase — including a disconnected-but-confirmed player's launch.
+      // phase — including a disconnected-but-confirmed player's launch,
+      // and an auto-launched one, which is revealed here and not a moment
+      // sooner.
       p.lastLaunch = { direction: { x: dir.x, y: dir.y }, power: p.power };
     }
     round.settleTicks = 0;
