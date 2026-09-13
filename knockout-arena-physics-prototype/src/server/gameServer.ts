@@ -127,7 +127,16 @@ export interface GameServer {
    * expires. Returns not-in-room if the session has no seat — the caller
    * should then disconnect() instead.
    */
-  reserve(session: unknown): { ok: true } | { ok: false; reason: "unknown-session" | "not-in-room" };
+  reserve(
+    session: unknown,
+    /**
+     * Called once the reservation expires and the seat has been
+     * released. The transport uses this to tell the remaining players
+     * the seat is gone — without it they keep showing a ghost seat that
+     * no longer exists server-side.
+     */
+    onExpire?: (roomId: string) => void
+  ): { ok: true } | { ok: false; reason: "unknown-session" | "not-in-room" };
   /**
    * Reclaim a seat with a reconnect credential: restores the session's
    * identity (same session, same playerId, same match state — nothing is
@@ -230,10 +239,15 @@ export function createGameServer(options?: GameServerOptions): GameServer {
   }
 
   function reserve(
-    session: unknown
+    session: unknown,
+    onExpire?: (roomId: string) => void
   ): { ok: true } | { ok: false; reason: "unknown-session" | "not-in-room" } {
     const s = resolve(session);
     if (!s) return { ok: false, reason: "unknown-session" };
+    // Captured BEFORE the seat is released: once the reservation
+    // expires the session is no longer in a room, so the room can no
+    // longer be looked up from it.
+    const seatedRoomId = manager.resolveSeat(s.token)?.room.id ?? null;
     const reserved = manager.reserveSeat(s.token, {
       reservationMs,
       onExpire: () => {
@@ -242,6 +256,7 @@ export function createGameServer(options?: GameServerOptions): GameServer {
         // identity and its credential must not survive it.
         credentials.revokeSession(s.token);
         sessions.delete(s.token);
+        if (seatedRoomId !== null) onExpire?.(seatedRoomId);
       },
     });
     if (!reserved.ok) return reserved;

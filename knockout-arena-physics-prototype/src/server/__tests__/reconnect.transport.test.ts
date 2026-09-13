@@ -346,3 +346,73 @@ describe("reconnect over the wire", () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// Reservation expiry must be BROADCAST (Task 13)
+// ────────────────────────────────────────────────────────────────────────
+
+describe("peers are notified when a reservation expires", () => {
+  it("broadcasts room_state when the window closes, not just on the drop", async () => {
+    // Before Task 13 the transport broadcast only on the DROP, so the
+    // remaining players' rosters kept a seat that the server had already
+    // released — a ghost seat that never went away.
+    const { core } = newCore({ reconnectReservationMs: 60 });
+    const host = createdRoom(core);
+    const guest = connect(core);
+    guest.socket.receiveMsg(join(host.roomId));
+    host.socket.receiveMsg(msg.start);
+
+    // The drop itself broadcasts (seat reported disconnected).
+    guest.socket.close();
+    const afterDrop = host.socket.ofType("room_state").length;
+    expect(afterDrop).toBeGreaterThan(0);
+
+    // The expiry must produce a FURTHER broadcast.
+    const sawExpiryBroadcast = await waitFor(
+      () => host.socket.ofType("room_state").length > afterDrop,
+      2000
+    );
+    expect(sawExpiryBroadcast).toBe(true);
+  });
+
+  it("the expiry broadcast carries no private data", async () => {
+    const { core } = newCore({ reconnectReservationMs: 60 });
+    const host = createdRoom(core);
+    const guest = connect(core);
+    guest.socket.receiveMsg(join(host.roomId));
+    host.socket.receiveMsg(msg.start);
+
+    // The guest locks a choice, then vanishes for good.
+    guest.socket.receiveMsg({
+      protocolVersion: 1,
+      type: "command",
+      command: { type: "setPower", power: 5 },
+    });
+    const guestToken = welcomeOf(guest.socket).reconnectToken as string;
+    guest.socket.close();
+    const afterDrop = host.socket.ofType("room_state").length;
+    await waitFor(() => host.socket.ofType("room_state").length > afterDrop, 2000);
+
+    const broadcast = JSON.stringify(host.socket.ofType("room_state"));
+    expect(broadcast).not.toContain(guestToken);
+    expect(broadcast).not.toMatch(/"(aim|power|launch)"\s*:/);
+  });
+
+  it("does not broadcast an expiry for a seat that reconnected in time", async () => {
+    const { core } = newCore({ reconnectReservationMs: 400 });
+    const host = createdRoom(core);
+    const guest = connect(core);
+    guest.socket.receiveMsg(join(host.roomId));
+    const guestToken = welcomeOf(guest.socket).reconnectToken as string;
+    host.socket.receiveMsg(msg.start);
+
+    guest.socket.close();
+    const back = connect(core);
+    back.socket.receiveMsg(reconnectMsg(guestToken));
+    const afterReconnect = host.socket.ofType("room_state").length;
+
+    // Wait past the ORIGINAL window: no expiry broadcast may appear,
+    // because the reservation was cancelled by the reconnect.
+    await new Promise((r) => setTimeout(r, 700));
+    expect(host.socket.ofType("room_state").length).toBe(afterReconnect);
+  });
+});

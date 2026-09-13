@@ -472,7 +472,17 @@ export function createTransportCore(
     } else {
       // Unexpected loss: open the seat's reconnect reservation. A session
       // with no seat has nothing to reserve — clean disconnect instead.
-      if (!gameServer.reserve(state.session).ok) {
+      //
+      // If the window later EXPIRES, the seat is released server-side;
+      // the remaining players must be told, or their roster keeps a
+      // ghost seat for a player who is gone for good (the drop
+      // broadcast below only says "disconnected").
+      if (
+        !gameServer.reserve(state.session, (expiredRoomId) => {
+          const room = gameServer.getRoom(expiredRoomId);
+          if (room) broadcastRoomState(room);
+        }).ok
+      ) {
         gameServer.disconnect(state.session);
       }
     }
