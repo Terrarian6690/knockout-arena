@@ -1,6 +1,7 @@
 import {
   commandMessage,
   createRoomMessage,
+  joinPublicMessage,
   setNameMessage,
   joinRoomMessage,
   leaveRoomMessage,
@@ -71,6 +72,8 @@ export interface NetworkClient {
   close(): void;
   createRoom(): boolean;
   joinRoom(roomId: string): boolean;
+  /** Matchmaking (Task 17): join any open public game. */
+  joinPublicRoom(): boolean;
   leaveRoom(): boolean;
   startMatch(): boolean;
   /**
@@ -331,6 +334,9 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     },
     createRoom(): boolean {
       return sendRaw(createRoomMessage());
+    },
+    joinPublicRoom(): boolean {
+      return sendRaw(joinPublicMessage());
     },
     joinRoom(roomId: string): boolean {
       if (typeof roomId !== "string" || roomId.length === 0) return false;

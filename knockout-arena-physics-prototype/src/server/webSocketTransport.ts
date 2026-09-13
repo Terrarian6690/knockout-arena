@@ -287,6 +287,29 @@ export function createTransportCore(
         return;
       }
 
+      case "join_public": {
+        // Identical to join_room below apart from how the room is
+        // chosen: same welcome, same subscription, same broadcast.
+        const result = gameServer.joinPublicRoom(state.session);
+        if (!result.ok) {
+          sendError(state, result.reason);
+          return;
+        }
+        state.roomId = result.room.id;
+        subscribeView(state);
+        send(
+          state,
+          welcomeMessage(
+            result.room.code,
+            result.playerId,
+            result.room,
+            result.reconnectToken
+          )
+        );
+        broadcastRoomState(result.room);
+        return;
+      }
+
       case "join_room": {
         const result = gameServer.joinRoom(state.session, message.roomId);
         if (!result.ok) {

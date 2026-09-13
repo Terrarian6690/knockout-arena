@@ -262,7 +262,10 @@ strict-envelope violations are rejected with a clean `error` message; the
 connection stays alive.
 
 Client → server: `create_room` · `join_room {roomId}` (the room CODE —
-  case and whitespace tolerated: `k7 p4` joins `K7P4`) · `leave_room` ·
+  case and whitespace tolerated: `k7 p4` joins `K7P4`) ·
+`join_public` (matchmaking: no room id — the server seats you in an open
+  public room or opens a new one; public rooms are a separate namespace
+  and are never reachable through `join_room`) · `leave_room` ·
 `start_match` · `set_name {name}` (the sender's OWN cosmetic display
   name; there is no playerId field — the seat is derived from the
   session, and the server validates: trimmed, 1–16 Unicode code points,

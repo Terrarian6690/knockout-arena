@@ -106,6 +106,14 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     setJoinError(null);
   };
 
+  const handleJoinPublic = () => {
+    // Matchmaking needs no input, so there is nothing to validate; any
+    // stale code-entry error is cleared so it cannot look like a result
+    // of this action.
+    setJoinError(null);
+    client.joinPublicRoom();
+  };
+
   const handleJoin = () => {
     const code = normalizeRoomCode(joinCode);
     if (code === null) {
@@ -208,6 +216,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
             onJoinCodeChange={handleJoinCodeChange}
             onCreate={handleCreate}
             onJoin={handleJoin}
+            onJoinPublic={handleJoinPublic}
             onReconnect={handleReconnect}
             onPracticeSolo={onPracticeSolo}
             error={
@@ -234,6 +243,7 @@ interface HomeViewProps {
   onJoinCodeChange: (value: string) => void;
   onCreate: () => void;
   onJoin: () => void;
+  onJoinPublic: () => void;
   onReconnect: () => void;
   onPracticeSolo: () => void;
   readonly error: { readonly code: string; readonly message: string } | null;
@@ -248,6 +258,7 @@ function HomeView({
   onJoinCodeChange,
   onCreate,
   onJoin,
+  onJoinPublic,
   onReconnect,
   onPracticeSolo,
   error,
@@ -267,8 +278,36 @@ function HomeView({
           Enter the arena
         </h2>
         <p className="mt-1 text-center text-sm text-white/50">
-          Create a room and share its code, or join your friends.
+          Jump into a public game, or play privately with friends.
         </p>
+
+        {/* Matchmaking (Task 17). One click, no code: the server finds an
+            open public game or opens a new one. Deliberately NOT a room
+            browser — there is nothing to choose between. */}
+        <button
+          type="button"
+          onClick={onJoinPublic}
+          disabled={!connected}
+          data-testid="join-public"
+          className={cn(
+            "mt-6 w-full rounded-xl px-7 py-3 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
+            "bg-gradient-to-br from-sky-400 to-indigo-600 text-white",
+            "hover:from-sky-300 hover:to-indigo-500 active:scale-95",
+            "shadow-indigo-900/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          )}
+        >
+          Quick Play
+        </button>
+        <p className="mt-2 text-center text-xs text-white/40">
+          Play against anyone online — no room code needed.
+        </p>
+
+        <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-widest text-white/50">
+          <span className="h-px flex-1 bg-white/10" />
+          or play with friends
+          <span className="h-px flex-1 bg-white/10" />
+        </div>
 
         <button
           type="button"
@@ -290,6 +329,7 @@ function HomeView({
           or
           <span className="h-px flex-1 bg-white/10" />
         </div>
+
 
         <label
           htmlFor="room-code-input"

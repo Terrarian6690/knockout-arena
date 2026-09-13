@@ -45,6 +45,19 @@ import { generateUniqueRoomCode, normalizeRoomCode } from "./roomCode";
  * server facade (gameServer.ts).
  */
 
+/**
+ * How a room is discovered (Task 17).
+ *
+ *   - "private": created deliberately by a player; joined ONLY by typing
+ *     its 4-character code (or following an invite link carrying it).
+ *   - "public": created by matchmaking; joined ONLY by asking for a
+ *     public game. Its code is never shown and never accepted as input.
+ *
+ * The two are separate namespaces, not two flavours of the same lookup —
+ * see resolveRoom(), which refuses to resolve public rooms at all.
+ */
+export type RoomVisibility = "private" | "public";
+
 /** Room lifecycle. Minimal by design — no matchmaking, no turn timers. */
 export type RoomState =
   /** Roster forming; seats may still join/leave freely. */
@@ -96,6 +109,12 @@ export interface RoomManagerOptions {
   roomCodeFactory?: () => string;
 }
 
+/** Options for createRoom (Task 17: room visibility). */
+export interface CreateRoomOptions {
+  /** Defaults to "private" — the historical behaviour. */
+  visibility?: RoomVisibility;
+}
+
 /** One roster seat as seen from outside. */
 export interface RoomSeatInfo {
   /** Server-assigned seat id ("p0".."p5"). */
@@ -122,6 +141,12 @@ export interface RoomInfo {
    */
   readonly code: string;
   readonly state: RoomState;
+  /**
+   * Whether this room is code-joinable ("private") or matchmaking-only
+   * ("public"). Private is the default everywhere, so every pre-existing
+   * caller keeps its exact behaviour.
+   */
+  readonly visibility: RoomVisibility;
   /** Occupied seats in seat order (vacated match seats stay listed). */
   readonly seats: readonly RoomSeatInfo[];
   /**
@@ -223,6 +248,8 @@ interface RoomEntry {
   /** Player-facing 4-character code — the `roomsByCode` map key. */
   code: string;
   state: RoomState;
+  /** Code-joinable, or matchmaking-only. See RoomVisibility. */
+  visibility: RoomVisibility;
   /**
    * seat index (0..MAX_PLAYERS-1) → occupying session token; null = free
    * seat. Always exactly MAX_PLAYERS long (see createRoom).
@@ -249,7 +276,12 @@ interface RoomEntry {
 
 export interface RoomManager {
   /** Create a room; the creating session takes seat p0. */
-  createRoom(token: string): SeatResult;
+  createRoom(token: string, options?: CreateRoomOptions): SeatResult;
+  /**
+   * Matchmaking (Task 17): seat the session in an open public room,
+   * creating one if none is available. No room code is involved.
+   */
+  joinPublicRoom(token: string): SeatResult;
   /**
    * Join a waiting room; the session takes the lowest free seat. The
    * identifier is the player-facing 4-character room CODE (normalized —
@@ -351,6 +383,12 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
    * server-internal/compat callers, the room's internal UUID. The two key
    * spaces are disjoint (a 4-char code is never a UUID), so both lookups
    * are safe to try in either order.
+   *
+   * Visibility is NOT filtered here. Most callers (startMatch,
+   * resolveRound, roundDeadline, ...) are handed a room.id the server
+   * already holds for a seated player, and those must keep working for
+   * public rooms. The namespace separation belongs on the one path
+   * where the identifier comes from the PLAYER — see joinRoom.
    */
   function resolveRoom(identifier: string): RoomEntry | null {
     const code = normalizeRoomCode(identifier);
@@ -411,6 +449,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       id: room.id,
       code: room.code,
       state: room.state,
+      visibility: room.visibility,
       seats,
       hostPlayerId: hostSeat === -1 ? null : `p${hostSeat}`,
     };
@@ -444,7 +483,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
 
   // ── room operations ───────────────────────────────────────────────────
 
-  function createRoom(token: string): SeatResult {
+  function createRoom(token: string, options?: CreateRoomOptions): SeatResult {
     if (!validKey(token)) return { ok: false, reason: "unknown-session" };
     if (findSeat(token)) return { ok: false, reason: "already-in-room" };
     // The player-facing code: random (never sequential/predictable) and
@@ -457,6 +496,8 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       id: randomUUID(),
       code,
       state: "waiting",
+      // Default private: every pre-existing call site is unchanged.
+      visibility: options?.visibility ?? "private",
       // Capacity-sized and capacity-derived: every seat slot exists and
       // starts explicitly FREE. A fixed-length literal here was the one
       // hidden 4-player assumption in the room manager — the extra
@@ -487,13 +528,73 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     if (!validKey(token)) return { ok: false, reason: "unknown-session" };
     if (!validKey(roomId)) return { ok: false, reason: "unknown-room" };
     const room = resolveRoom(roomId);
-    if (!room) return { ok: false, reason: "unknown-room" };
+    // A public room is not addressable by code or id: matchmaking is the
+    // only way in. Reporting the SAME `unknown-room` as a genuine miss
+    // keeps the two namespaces disjoint without leaking that a public
+    // room with that identifier exists.
+    if (!room || room.visibility !== "private") {
+      return { ok: false, reason: "unknown-room" };
+    }
     if (findSeat(token)) return { ok: false, reason: "already-in-room" };
     if (room.state !== "waiting") return { ok: false, reason: "room-playing" };
     const seat = lowestFreeSeat(room);
     if (seat === -1) return { ok: false, reason: "room-full" };
     room.seats[seat] = token;
     return { ok: true, room: infoOf(room), playerId: `p${seat}` };
+  }
+
+  /**
+   * MATCHMAKING (Task 17): seat the session in a public game.
+   *
+   * Deliberately a thin policy layer over the existing primitives — it
+   * picks a room, then reuses the same seat assignment every other join
+   * uses. No new seating rules, no new start semantics, no new capacity
+   * logic; a matchmade player is an ordinary player in an ordinary room.
+   *
+   * CONCURRENCY. This runs to completion synchronously, and so does
+   * every caller above it (the transport's message switch, the game
+   * server facade, this manager — none of them await anything between
+   * choosing a room and writing the seat). On Node's single-threaded
+   * event loop that makes choose-then-seat effectively atomic: a second
+   * public join cannot interleave between the scan below and the
+   * assignment, so two players can never be handed the same seat, and
+   * the second caller always observes the first player's seat already
+   * taken. That is why no lock or CAS is needed — the invariant is
+   * structural. It is pinned by tests that fire many joins in one tick
+   * (see matchmaking.test.ts) so that if anyone ever makes this path
+   * async, the tests fail loudly rather than corrupting rosters.
+   */
+  function joinPublicRoom(token: string): SeatResult {
+    if (!validKey(token)) return { ok: false, reason: "unknown-session" };
+    if (findSeat(token)) return { ok: false, reason: "already-in-room" };
+
+    const open = findOpenPublicRoom();
+    if (open === null) {
+      // Nobody to play with yet: open a new public room and wait there.
+      return createRoom(token, { visibility: "public" });
+    }
+    const seat = lowestFreeSeat(open);
+    /* c8 ignore next */
+    if (seat === -1) return { ok: false, reason: "room-full" }; // unreachable: findOpenPublicRoom filters full rooms
+    open.seats[seat] = token;
+    return { ok: true, room: infoOf(open), playerId: `p${seat}` };
+  }
+
+  /**
+   * The oldest public room still accepting players, or null.
+   *
+   * Oldest-first (insertion order of the rooms map) deliberately
+   * concentrates players into the room closest to starting instead of
+   * scattering them across half-empty lobbies.
+   */
+  function findOpenPublicRoom(): RoomEntry | null {
+    for (const room of rooms.values()) {
+      if (room.visibility !== "public") continue;
+      if (room.state !== "waiting") continue; // started or finished
+      if (lowestFreeSeat(room) === -1) continue; // full
+      return room;
+    }
+    return null;
   }
 
   function leaveRoom(token: string): LeaveResult {
@@ -808,6 +909,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
   return {
     createRoom,
     joinRoom,
+    joinPublicRoom,
     leaveRoom,
     reserveSeat,
     restoreSeat,

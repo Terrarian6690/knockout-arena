@@ -159,6 +159,8 @@ export interface GameServer {
   createRoom(session: unknown): SeatedResult;
   /** Join a waiting room by id; the session takes the lowest free seat (issues a credential). */
   joinRoom(session: unknown, roomId: unknown): SeatedResult;
+  /** Seat the session in an open public room, creating one if needed. */
+  joinPublicRoom(session: unknown): SeatedResult;
   /** Leave the session's current room (revokes its credential). */
   leaveRoom(session: unknown): LeaveResult;
   /**
@@ -339,6 +341,17 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     return withCredential(s.token, manager.createRoom(s.token));
   }
 
+  /**
+   * Matchmaking (Task 17). Reuses the credential issuance and seating of
+   * every other join — the only difference is that the room is chosen by
+   * the server instead of named by the player.
+   */
+  function joinPublicRoom(session: unknown): SeatedResult {
+    const s = resolve(session);
+    if (!s) return { ok: false, reason: "unknown-session" };
+    return withCredential(s.token, manager.joinPublicRoom(s.token));
+  }
+
   function joinRoom(session: unknown, roomId: unknown): SeatedResult {
     const s = resolve(session);
     if (!s) return { ok: false, reason: "unknown-session" };
@@ -463,6 +476,7 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     reconnect,
     createRoom,
     joinRoom,
+    joinPublicRoom,
     leaveRoom,
     setName,
     getRoom,

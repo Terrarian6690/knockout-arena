@@ -40,6 +40,11 @@ export function joinRoomMessage(roomId: string): string {
   });
 }
 
+/** Matchmaking (Task 17): ask the server for any open public game. */
+export function joinPublicMessage(): string {
+  return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "join_public" });
+}
+
 export function leaveRoomMessage(): string {
   return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "leave_room" });
 }

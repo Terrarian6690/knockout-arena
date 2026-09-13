@@ -10,7 +10,8 @@
  *
  *   { "protocolVersion": 1, "type": "..." }
  *
- * Client → server (see ClientMessage): create_room, join_room, leave_room,
+ * Client → server (see ClientMessage): create_room, join_room,
+ * join_public, leave_room,
  * start_match, reconnect, command. The envelope is STRICT: unknown top-level
  * fields are rejected (malformed-payload) so protocol mistakes surface early.
  * The
@@ -33,6 +34,8 @@ export type ClientMessage =
   // roomId = the player-facing 4-character room code (the manager
   // normalizes it: lowercase and whitespace are tolerated).
   | { type: "join_room"; roomId: string }
+  /** Matchmaking (Task 17): no room code — the server picks the room. */
+  | { type: "join_public" }
   | { type: "leave_room" }
   | { type: "start_match" }
   | { type: "reconnect"; token: string }
@@ -83,6 +86,14 @@ export function parseClientMessage(raw: string): ParsedClientMessage {
     case "create_room":
       if (hasOnly(envelope, "type", "protocolVersion")) {
         return { ok: true, message: { type: "create_room" } };
+      }
+      return { ok: false, code: "malformed-payload" };
+
+    case "join_public":
+      // No fields beyond the envelope: matchmaking takes no input, so
+      // there is nothing a client could smuggle in here.
+      if (hasOnly(envelope, "type", "protocolVersion")) {
+        return { ok: true, message: { type: "join_public" } };
       }
       return { ok: false, code: "malformed-payload" };
 
