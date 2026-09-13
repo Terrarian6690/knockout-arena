@@ -4,8 +4,8 @@ import { PowerMeter } from "./PowerMeter";
 
 /**
  * The multiplayer control bar — the bottom strip of the match screen:
- * the horizontal power meter (1..5), the numeric power readout, and the
- * CONFIRM control. Every control only SENDS AN INTENT: the displayed
+ * the power arrow (1..5), the numeric power readout, and the CONFIRM
+ * control. Every control only SENDS AN INTENT: the displayed
  * power is the authoritative one (optionally the local pending choice
  * until the next server snapshot replaces it), and Confirm locks in the
  * player's CURRENT aim + power for the CURRENT round (confirmLaunch) —
@@ -40,7 +40,7 @@ export function MatchControls({
       data-testid="match-controls"
       className="flex flex-col items-center justify-center gap-4 border-t border-white/10 bg-white/[0.02] px-4 py-4 sm:flex-row sm:gap-8 sm:py-4"
     >
-      {/* The power meter: horizontal wedge, weak (green) → strong (red). */}
+      {/* The power arrow: grows thin+green (weak) → wide+red (strong). */}
       <div className="flex flex-col items-center gap-1.5">
         <div className="text-[11px] uppercase tracking-widest text-white/50">
           Power
@@ -87,7 +87,7 @@ export function MatchControls({
           )}
         >
           {canAct
-            ? "Confirm launch"
+            ? "Confirm"
             : lockedIn
               ? "Confirmed — waiting…"
               : "Waiting for round…"}
