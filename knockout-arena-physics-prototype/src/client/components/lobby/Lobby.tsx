@@ -191,6 +191,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               playerId={state.playerId as string}
               hostPlayerId={state.hostPlayerId}
               roomState={state.roomState ?? "waiting"}
+              roomVisibility={state.roomVisibility}
               roster={state.roster}
               winnerId={state.winnerId}
               startPending={startPending}

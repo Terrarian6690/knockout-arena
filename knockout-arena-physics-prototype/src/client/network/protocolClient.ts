@@ -1,5 +1,5 @@
 import type { GameStateSnapshot, PlayerIntent } from "../../game";
-import type { RosterEntry, RoomState } from "./types";
+import type { RosterEntry, RoomState, RoomVisibility } from "./types";
 
 /**
  * The browser-side end of wire protocol v1 — pure parsing and building.
@@ -114,6 +114,7 @@ export type ServerMessage =
       roomId: string;
       playerId: string;
       roomState: RoomState;
+      roomVisibility: RoomVisibility | null;
       roster: RosterEntry[];
       hostPlayerId: string | null;
       /**
@@ -127,6 +128,12 @@ export type ServerMessage =
       type: "room_state";
       roomId: string | null;
       roomState: RoomState;
+      /**
+       * "public" (matchmade) or "private" (code-shared). Null when the
+       * server did not send it — the field is presentation-only, so the
+       * client degrades to generic copy rather than rejecting the frame.
+       */
+      roomVisibility: RoomVisibility | null;
       roster: RosterEntry[];
       hostPlayerId: string | null;
     }
@@ -172,6 +179,7 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
       const roomState = asRoomState(envelope.roomState);
       const roster = asRoster(envelope.roster);
       const hostPlayerId = asPlayerIdOrNull(envelope.hostPlayerId);
+      const roomVisibility = asRoomVisibility(envelope.roomVisibility);
       // The credential is optional (older servers): absent is fine, but
       // anything present must be an opaque non-empty string (or null).
       const reconnectToken =
@@ -192,6 +200,7 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
           type: "welcome",
           roomId: envelope.roomId,
           playerId: envelope.playerId,
+          roomVisibility,
           roomState,
           roster,
           hostPlayerId,
@@ -204,6 +213,7 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
       const roomState = asRoomState(envelope.roomState);
       const roster = asRoster(envelope.roster);
       const hostPlayerId = asPlayerIdOrNull(envelope.hostPlayerId);
+      const roomVisibility = asRoomVisibility(envelope.roomVisibility);
       const roomId =
         envelope.roomId === undefined ? null : asPlayerIdOrNull(envelope.roomId) ?? null;
       if (
@@ -216,7 +226,14 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
       }
       return {
         ok: true,
-        message: { type: "room_state", roomId, roomState, roster, hostPlayerId },
+        message: {
+          type: "room_state",
+          roomId,
+          roomState,
+          roomVisibility,
+          roster,
+          hostPlayerId,
+        },
       };
     }
 
@@ -277,6 +294,15 @@ function asRoomState(value: unknown): RoomState | null {
   return value === "waiting" || value === "playing" || value === "finished"
     ? value
     : null;
+}
+
+/**
+ * Room visibility, or null when absent/unrecognised. Deliberately
+ * tolerant: this is presentation metadata, so an older or future server
+ * that omits it must not make the whole room_state frame malformed.
+ */
+function asRoomVisibility(value: unknown): RoomVisibility | null {
+  return value === "public" || value === "private" ? value : null;
 }
 
 /** Returns the roster, null if malformed. */

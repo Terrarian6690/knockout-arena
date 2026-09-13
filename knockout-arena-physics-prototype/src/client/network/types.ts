@@ -27,6 +27,13 @@ export type ConnectionStatus =
 /** Room lifecycle, as broadcast by the server. */
 export type RoomState = "waiting" | "playing" | "finished";
 
+/**
+ * How the room was entered: "public" rooms come from matchmaking (Quick
+ * Play), "private" rooms from a code. Presentation only — the client
+ * uses it to word the waiting copy; every rule is server-enforced.
+ */
+export type RoomVisibility = "public" | "private";
+
 /** One seat in the room roster, as broadcast by the server. */
 export interface RosterEntry {
   readonly playerId: string;
@@ -50,6 +57,11 @@ export interface NetworkClientState {
   /** The SERVER-assigned seat id for this connection, or null. */
   readonly playerId: string | null;
   readonly roomState: RoomState | null;
+  /**
+   * Whether the current room is matchmade ("public") or code-shared
+   * ("private"); null when not in a room or the server did not say.
+   */
+  readonly roomVisibility: RoomVisibility | null;
   readonly roster: readonly RosterEntry[];
   /** Seat id of the room host (only the host may start the match). */
   readonly hostPlayerId: string | null;

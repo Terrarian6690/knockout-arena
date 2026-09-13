@@ -3,7 +3,7 @@ import {
   MAX_DISPLAY_NAME_LENGTH,
   normalizeDisplayName,
 } from "../../network/displayName";
-import type { RoomState, RosterEntry } from "../../network/types";
+import type { RoomState, RoomVisibility, RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
 import { copyTextToClipboard, getInviteUrl } from "./invite";
 import { MAX_SEATS, MIN_PLAYERS, SeatList, seatLabel } from "./SeatList";
@@ -86,6 +86,12 @@ export interface RoomPanelProps {
   onSetName: (name: string) => boolean;
   onStart: () => void;
   onLeave: () => void;
+  /**
+   * "public" for a matchmade room, "private" for a code-shared one.
+   * Presentation only: it changes the WORDING of the waiting hint, never
+   * who may start or join.
+   */
+  roomVisibility?: RoomVisibility | null;
 }
 
 export function RoomPanel({
@@ -100,6 +106,7 @@ export function RoomPanel({
   onSetName,
   onStart,
   onLeave,
+  roomVisibility,
 }: RoomPanelProps) {
   const isHost = hostPlayerId !== null && hostPlayerId === playerId;
   const badge = ROOM_STATE_BADGE[roomState];
@@ -108,6 +115,7 @@ export function RoomPanel({
   // button stays visible-but-disabled with a reason; the server remains
   // the authority.
   const enoughPlayers = roster.length >= MIN_PLAYERS;
+  const isPublic = roomVisibility === "public";
 
   // Local, purely visual: whether the code was just copied, plus the timer
   // that reverts the "Copied!" feedback. Cleared on unmount.
@@ -230,6 +238,23 @@ export function RoomPanel({
         </span>
       </div>
 
+      {/* PUBLIC rooms have no shareable identity (Task 17 made their code
+          unusable via the join field), so showing a code and an invite
+          link here would hand the player a link that cannot work. They
+          get a plain label instead; private rooms are unchanged. */}
+      {isPublic ? (
+        <div className="mt-2 text-center">
+          <div className="text-[11px] uppercase tracking-widest text-white/50">
+            Public game
+          </div>
+          <div
+            data-testid="public-room-label"
+            className="mt-1 text-lg font-bold tracking-tight text-sky-300"
+          >
+            Quick Play
+          </div>
+        </div>
+      ) : (
       <div className="mt-2 text-center">
         <div className="text-[11px] uppercase tracking-widest text-white/50">
           Room code
@@ -291,6 +316,7 @@ export function RoomPanel({
           </p>
         )}
       </div>
+      )}
 
       <div className="mt-5 flex items-center justify-center gap-2 text-xs">
         <span className="text-white/50">You are</span>
@@ -432,7 +458,21 @@ export function RoomPanel({
                 data-testid="waiting-for-players"
                 className="text-center text-xs text-white/50"
               >
-                Waiting for another player…
+                {roomVisibility === "public"
+                  ? "Waiting for another player to join…"
+                  : "Waiting for another player…"}
+              </p>
+            )}
+            {/* Public rooms only: say how someone will arrive, since
+                there is no code to share and nothing else to do. The
+                wait is indefinite by design — no timeout, no bots — so
+                the leave button below is the explicit way out. */}
+            {!enoughPlayers && roomVisibility === "public" && (
+              <p
+                data-testid="public-waiting-hint"
+                className="text-center text-xs text-white/40"
+              >
+                You will be matched with the next player who picks Quick Play.
               </p>
             )}
           </>

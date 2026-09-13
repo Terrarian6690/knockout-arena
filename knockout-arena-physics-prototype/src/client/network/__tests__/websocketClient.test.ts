@@ -163,6 +163,7 @@ describe("connection lifecycle", () => {
       roomId: null,
       playerId: null,
       roomState: null,
+      roomVisibility: null,
       roster: [],
       hostPlayerId: null,
       snapshot: null,

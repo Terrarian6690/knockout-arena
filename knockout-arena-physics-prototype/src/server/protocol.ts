@@ -219,6 +219,8 @@ export function welcomeMessage(
     roomId,
     playerId,
     roomState: room.state,
+    /** See roomStateMessage: presentation-only room visibility. */
+    roomVisibility: room.visibility,
     roster: room.seats.map(wireSeat),
     hostPlayerId: room.hostPlayerId,
     reconnectToken,
@@ -235,6 +237,13 @@ export function roomStateMessage(room: RoomInfo): string {
     type: "room_state",
     roomId: room.code,
     roomState: room.state,
+    /**
+     * Whether this is a matchmade ("public") or code-shared ("private")
+     * room (Task 18). Presentation only — the client tailors its waiting
+     * copy with it. It grants no capability: every join/start rule is
+     * enforced server-side and is unchanged by this field.
+     */
+    roomVisibility: room.visibility,
     roster: room.seats.map(wireSeat),
     hostPlayerId: room.hostPlayerId,
   });

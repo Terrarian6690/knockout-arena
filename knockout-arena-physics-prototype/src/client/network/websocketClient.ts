@@ -102,6 +102,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     roomId: null,
     playerId: null,
     roomState: null,
+    roomVisibility: null,
     roster: [],
     hostPlayerId: null,
     snapshot: null,
@@ -140,6 +141,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
       roomId: null,
       playerId: null,
       roomState: null,
+      roomVisibility: null,
       roster: [],
       hostPlayerId: null,
       snapshot: null,
@@ -214,6 +216,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
           roomId: message.roomId,
           playerId: message.playerId,
           roomState: message.roomState,
+          roomVisibility: message.roomVisibility,
           roster: message.roster,
           hostPlayerId: message.hostPlayerId,
         });
@@ -222,6 +225,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
         setState({
           roomId: message.roomId ?? state.roomId,
           roomState: message.roomState,
+          roomVisibility: message.roomVisibility,
           roster: message.roster,
           hostPlayerId: message.hostPlayerId,
         });

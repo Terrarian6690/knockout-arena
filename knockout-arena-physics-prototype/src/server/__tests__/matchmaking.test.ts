@@ -380,6 +380,69 @@ describe("a matchmade player follows the normal flow", () => {
   });
 });
 
+// ── what happens to an emptied public room (Task 18) ─────────────────────
+
+describe("an emptied public room is cleaned up", () => {
+  it("is destroyed when its only player leaves", () => {
+    const m = manager();
+    const solo = m.joinPublicRoom("alice");
+    expect(m.roomCount()).toBe(1);
+    if (!solo.ok) return;
+
+    m.leaveRoom("alice");
+    // Existing detachSeat behaviour: empty rooms do not linger.
+    expect(m.roomCount()).toBe(0);
+    expect(m.getRoom(solo.room.id)).toBeNull();
+  });
+
+  it("does not leave a ghost room for the next matchmaker", () => {
+    const m = manager();
+    const first = m.joinPublicRoom("alice");
+    if (!first.ok) return;
+    m.leaveRoom("alice");
+
+    // The next player gets a brand-new room, not the destroyed one.
+    const next = m.joinPublicRoom("bob");
+    expect(next.ok && next.room.id).not.toBe(first.room.id);
+    expect(next.ok && next.playerId).toBe("p0");
+    expect(m.roomCount()).toBe(1);
+  });
+
+  it("survives with a reduced roster when one of two leaves", () => {
+    const m = manager();
+    const a = m.joinPublicRoom("alice");
+    m.joinPublicRoom("bob");
+    if (!a.ok) return;
+
+    m.leaveRoom("alice");
+    const room = m.getRoom(a.room.id);
+    expect(room).not.toBeNull();
+    expect(room?.seats.map((s) => s.playerId)).toEqual(["p1"]);
+    // And it is still offered to the next matchmaking request.
+    const carol = m.joinPublicRoom("carol");
+    expect(carol.ok && carol.room.id).toBe(a.room.id);
+  });
+
+  it("frees the lowest seat for the next joiner", () => {
+    const m = manager();
+    const a = m.joinPublicRoom("alice");
+    m.joinPublicRoom("bob");
+    if (!a.ok) return;
+    m.leaveRoom("alice"); // frees p0
+
+    const carol = m.joinPublicRoom("carol");
+    expect(carol.ok && carol.playerId).toBe("p0");
+  });
+
+  it("removeEmptyRooms finds nothing to do after a clean leave", () => {
+    const m = manager();
+    m.joinPublicRoom("alice");
+    m.leaveRoom("alice");
+    expect(m.removeEmptyRooms()).toBe(0);
+    expect(m.roomCount()).toBe(0);
+  });
+});
+
 // ── through the game server facade ───────────────────────────────────────
 
 describe("the facade issues credentials like any other join", () => {
