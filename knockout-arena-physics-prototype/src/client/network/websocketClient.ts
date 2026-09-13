@@ -270,6 +270,25 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     // With a credential the room/seat state is KEPT: the server reserves
     // the seat for a bounded window and the retry will reclaim it.
     if (!reconnect.enabled || state.reconnectAttempt >= reconnect.maxAttempts) {
+      // Recovery is over: this client will not retry again on its own, so
+      // the seat is not coming back through THIS credential.
+      //
+      // The credential must die here. Keeping it meant the next
+      // connect() — which the player experiences as starting a fresh
+      // game, not resuming one — replayed a dead credential and greeted
+      // them with "the reconnect credential is invalid or expired".
+      // A credential is only ever replayed by an automatic retry that is
+      // still in flight; once we stop retrying, a later connect() is a
+      // FRESH session and must send no credential at all.
+      //
+      // This does not weaken recovery: every retry within the budget
+      // still replays it, and the server-side window is untouched.
+      if (reconnectToken !== null) {
+        reconnectToken = null;
+        // The seat state was being held on the credential's behalf; with
+        // no way left to reclaim it, showing it would be a lie.
+        clearRoomState();
+      }
       setState({ status: "disconnected", reconnectAttempt: 0 });
       return;
     }
