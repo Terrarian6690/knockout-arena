@@ -62,6 +62,19 @@ export function startMatchMessage(): string {
 }
 
 /**
+ * return_to_lobby (Task 25): leave the RESULT SCREEN, not the room. Any
+ * seated player may send it; the server moves a finished room back to
+ * "waiting" so the same players can start another match together.
+ * Deliberately distinct from start_match, which stays host-only.
+ */
+export function returnToLobbyMessage(): string {
+  return JSON.stringify({
+    protocolVersion: PROTOCOL_VERSION,
+    type: "return_to_lobby",
+  });
+}
+
+/**
  * The seat-recovery handshake: present the reconnect credential this
  * client's seat was issued (in its personal welcome message). The server
  * resolves the credential to exactly one seat — the client never chooses

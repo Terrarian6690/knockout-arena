@@ -415,6 +415,34 @@ export function createTransportCore(
         return;
       }
 
+      case "return_to_lobby": {
+        const seat = gameServer.getSeat(state.session);
+        if (!seat) {
+          sendError(state, "not-in-room");
+          return;
+        }
+        // ANY seated player may dismiss the result and drop back into the
+        // lobby — it is their own result screen. Starting the next match
+        // remains the host's call (see start_match above), so this cannot
+        // be used to rush anyone into a game.
+        const result = gameServer.returnToLobby(seat.room.id);
+        if (!result.ok) {
+          sendError(
+            state,
+            result.reason,
+            result.reason === "already-playing"
+              ? "the match is still running"
+              : undefined
+          );
+          return;
+        }
+        // Everyone sees the room go back to "waiting" — including players
+        // still looking at the result overlay, whose clients use this to
+        // return to the lobby view.
+        broadcastRoomState(result.room);
+        return;
+      }
+
       case "set_name": {
         // Cosmetic display name for the sender's OWN seat. Identity comes
         // from the session — there is no playerId in the payload to forge,

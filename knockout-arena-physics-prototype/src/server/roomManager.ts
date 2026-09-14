@@ -219,6 +219,15 @@ export type StartResult =
       reason: "unknown-room" | "not-enough-players" | "already-playing";
     };
 
+/**
+ * Result of returning a finished room to its lobby (Task 25). Succeeds
+ * for a finished room AND for one already waiting (idempotent), so two
+ * players dismissing the result at once both get a clean answer.
+ */
+export type ReturnToLobbyResult =
+  | { ok: true; room: RoomInfo }
+  | { ok: false; reason: "unknown-room" | "already-playing" };
+
 export type ResetResult =
   | { ok: true }
   | { ok: false; reason: "unknown-room" | "no-match" | CommandRejection };
@@ -337,6 +346,13 @@ export interface RoomManager {
    * the host may start while waiting for a player to reconnect.
    */
   startMatch(roomId: string): StartResult;
+  /**
+   * Send a FINISHED room back to its waiting lobby, keeping the room, its
+   * code and everyone seated in it (Task 25). Any seated player may do
+   * this — it dismisses the result screen, it does not start anything.
+   * A room that is still playing is left alone.
+   */
+  returnToLobby(roomId: string): ReturnToLobbyResult;
   /**
    * Privileged, server-controlled reset of a running match. This is the
    * ONLY path through which a match may be reset — players cannot.
@@ -732,10 +748,55 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     return { ok: true, room: infoOf(seated.room) };
   }
 
+  /**
+   * Return a FINISHED room to the waiting lobby so the same group can play
+   * again (Task 25).
+   *
+   * The room object, its id/code, its seats and its host all survive — the
+   * only thing torn down is the finished match's GameHost. Two pieces of
+   * per-match bookkeeping have to be cleared or the next match inherits
+   * them:
+   *
+   *   - `vacated`: seats abandoned mid-match are deliberately held (the
+   *     roster is frozen while playing, so the seat keeps showing as a
+   *     disconnected player). Once the match is over that freeze is
+   *     meaningless, and holding it would permanently shrink the room —
+   *     lowestFreeSeat skips vacated seats, so those slots could never be
+   *     filled again, not even by the player coming back.
+   *   - `host`/`detachHost`: the finished host must be destroyed, or its
+   *     loop and listeners outlive the match they belong to.
+   *
+   * Seat names, reservations and the host token are per-PLAYER, not
+   * per-match, so they are left exactly as they are.
+   *
+   * Idempotent by state: only a "finished" room is affected, so a
+   * duplicate call (two players both clicking Play Again) is a harmless
+   * no-op rather than a second teardown.
+   */
+  function reopenRoom(room: RoomEntry): void {
+    if (room.state !== "finished") return;
+    if (room.detachHost) room.detachHost();
+    room.detachHost = null;
+    if (room.host) {
+      room.host.destroy();
+      room.host = null;
+    }
+    // Mid-match departures become ordinary empty seats again.
+    for (const seat of room.vacated) {
+      room.names[seat] = null;
+    }
+    room.vacated.clear();
+    room.state = "waiting";
+  }
+
   function startMatch(roomId: string): StartResult {
     if (!validKey(roomId)) return { ok: false, reason: "unknown-room" };
     const room = resolveRoom(roomId);
     if (!room) return { ok: false, reason: "unknown-room" };
+    // A finished match is not an obstacle to the next one: reuse the same
+    // room rather than making the group re-form somewhere else. A PLAYING
+    // room is still rejected — that is a genuine double-start.
+    if (room.state === "finished") reopenRoom(room);
     if (room.state !== "waiting") return { ok: false, reason: "already-playing" };
 
     const occupied: number[] = [];
@@ -775,6 +836,21 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       for (const listener of [...room.listeners]) listener.cb(serialized);
     });
     host.start(); // the fixed 60 Hz loop — this is a real match now
+    return { ok: true, room: infoOf(room) };
+  }
+
+  function returnToLobby(roomId: string): ReturnToLobbyResult {
+    if (!validKey(roomId)) return { ok: false, reason: "unknown-room" };
+    const room = resolveRoom(roomId);
+    if (!room) return { ok: false, reason: "unknown-room" };
+    // Only a finished match can be dismissed. Mid-match this would be a
+    // way for one player to end everyone else's game.
+    if (room.state === "playing") {
+      return { ok: false, reason: "already-playing" };
+    }
+    // Already waiting → no-op success: two players clicking Play Again at
+    // once should both be told "you are in the lobby", not one an error.
+    reopenRoom(room);
     return { ok: true, room: infoOf(room) };
   }
 
@@ -918,6 +994,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     matchDeadline,
     resolveSeat,
     startMatch,
+    returnToLobby,
     resetMatch,
     resolveRound,
     removeEmptyRooms,

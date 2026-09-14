@@ -10,6 +10,7 @@ import {
   type RoomManager,
   type SeatResult,
   type ServerCommandResult,
+  type ReturnToLobbyResult,
   type StartResult,
 } from "./roomManager";
 import { createReconnectRegistry } from "./reconnect";
@@ -175,6 +176,8 @@ export interface GameServer {
   getSeat(session: unknown): { room: RoomInfo; playerId: string } | null;
   /** Start the room's match with its stable roster (creates the GameHost). */
   startMatch(roomId: unknown): StartResult;
+  /** Send a finished room back to its waiting lobby (Task 25). */
+  returnToLobby(roomId: unknown): ReturnToLobbyResult;
   /**
    * Privileged, server-controlled match reset. Not reachable through the
    * player command path — the transport calls this after its own
@@ -394,6 +397,12 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     return manager.startMatch(id);
   }
 
+  function returnToLobby(roomId: unknown): ReturnToLobbyResult {
+    const id = asRoomId(roomId);
+    if (!id) return { ok: false, reason: "unknown-room" };
+    return manager.returnToLobby(id);
+  }
+
   function resetMatch(roomId: unknown): ResetResult {
     const id = asRoomId(roomId);
     if (!id) return { ok: false, reason: "unknown-room" };
@@ -482,6 +491,7 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     getRoom,
     getSeat,
     startMatch,
+    returnToLobby,
     resetMatch,
     resolveRound,
     submitCommand,

@@ -20,11 +20,14 @@ import { MultiplayerGame } from "../game/MultiplayerGame";
  * When the server moves the room into "playing"/"finished", the lobby
  * hands the whole screen to <MultiplayerGame/> (authoritative snapshot
  * rendering + intent sending only). The hand-back rules: the player
- * leaves (view-level navigation, protocol v1 has no leave ack), or a
+ * leaves (view-level navigation, protocol v1 has no leave ack); a
  * reconnect completed as a fresh session with no seat (the match view
- * must not pretend the seat survived). A drop MID-MATCH keeps the game
- * screen mounted: the last snapshot stays visible and MultiplayerGame
- * offers the reconnect affordance.
+ * must not pretend the seat survived); or the server returns the room
+ * to "waiting" while we are still seated — the Task 25 rematch, where
+ * the players stay in their room and this same lobby comes back for the
+ * next match. A drop MID-MATCH keeps the game screen mounted: the last
+ * snapshot stays visible and MultiplayerGame offers the reconnect
+ * affordance.
  *
  * Authority rules these screens live by:
  *   - every room fact (room code, your seat, host, roster, room state,
@@ -156,6 +159,19 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     }
   }, [matchActive, state.status, inRoom]);
 
+  // The rematch hand-back (Task 25). The server put the room back into
+  // "waiting" — after a finished match, because someone chose Play
+  // again. We are STILL SEATED, so this is not a leave: the match screen
+  // gives way to the very same pre-match lobby the room started in, and
+  // the host's existing Start Match button runs the next match. Driven
+  // by server-reported room state like every other room fact here, so
+  // every player in the room returns together, whoever pressed it.
+  useEffect(() => {
+    if (matchActive && inRoom && state.roomState === "waiting") {
+      setMatchActive(false);
+    }
+  }, [matchActive, inRoom, state.roomState]);
+
   const handleCreate = () => {
     if (requireName() === null) return;
     client.createRoom();
@@ -200,6 +216,14 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     }
   };
 
+  const handlePlayAgain = () => {
+    // Stay in the room: ask the server to reopen it. The view is NOT
+    // switched here — the room state push that follows does it (above),
+    // so the lobby only ever reflects what the server actually did. A
+    // refusal surfaces as a normal error banner, like any other action.
+    client.returnToLobby();
+  };
+
   const handleStart = () => {
     // The server authorizes the start; the pending flag is only button
     // feedback while we wait for its answer.
@@ -213,7 +237,9 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
   // The live match takes over the whole screen (also while the room is
   // "finished", so the result overlay is shown in context).
   if (matchActive) {
-    return <MultiplayerGame onLeave={handleLeave} />;
+    return (
+      <MultiplayerGame onLeave={handleLeave} onPlayAgain={handlePlayAgain} />
+    );
   }
 
   return (

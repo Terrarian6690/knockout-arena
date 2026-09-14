@@ -7,6 +7,7 @@ import {
   leaveRoomMessage,
   parseServerMessage,
   reconnectMessage,
+  returnToLobbyMessage,
   startMatchMessage,
 } from "./protocolClient";
 import {
@@ -76,6 +77,13 @@ export interface NetworkClient {
   joinPublicRoom(): boolean;
   leaveRoom(): boolean;
   startMatch(): boolean;
+  /**
+   * Return to THIS room's waiting lobby after a match (Task 25). Unlike
+   * leaveRoom it keeps the seat and the reconnect credential — the
+   * player stays in the room, the result screen just gives way to the
+   * pre-match lobby so the group can play again.
+   */
+  returnToLobby(): boolean;
   /**
    * Set THIS client's own display name (cosmetic, lobby-only; the server
    * derives the seat from the session and validates the name — a local
@@ -233,9 +241,16 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
       case "snapshot":
         // The authoritative state REPLACES whatever we had — no local
         // simulation, no merging, no extrapolation.
+        //
+        // A winner belongs to a FINISHED match, so a snapshot of a match
+        // in progress clears it (Task 25). Before rematches existed this
+        // could only ever be the current match's own verdict and holding
+        // it was harmless; once a room can play again, keeping the last
+        // match's winner through the next one is simply stale state.
         setState({
           snapshot: message.state,
-          winnerId: message.state.phase === "finished" ? message.state.winnerId : state.winnerId,
+          winnerId:
+            message.state.phase === "finished" ? message.state.winnerId : null,
         });
         return;
       case "match_finished":
@@ -380,6 +395,11 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     },
     startMatch(): boolean {
       return sendRaw(startMatchMessage());
+    },
+    returnToLobby(): boolean {
+      // The seat survives, so (unlike leaveRoom) the reconnect
+      // credential is deliberately left intact.
+      return sendRaw(returnToLobbyMessage());
     },
     submitCommand(intent: unknown): boolean {
       const payload = commandMessage(intent);

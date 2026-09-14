@@ -56,7 +56,18 @@ import { canLocalPlayerAct } from "./localControl";
  * `snapshot.matchDeadline` and never ends a match itself. Both are shown
  * only during a match — a lobby has neither deadline.
  */
-export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
+export function MultiplayerGame({
+  onLeave,
+  onPlayAgain,
+}: {
+  onLeave: () => void;
+  /**
+   * Task 25: return the room to its waiting lobby for another match.
+   * Optional and forwarded verbatim to the result overlay — when it is
+   * absent the overlay offers leaving only.
+   */
+  onPlayAgain?: () => void;
+}) {
   const client = useNetworkClient();
   const state = useNetworkState();
 
@@ -252,6 +263,7 @@ export function MultiplayerGame({ onLeave }: { onLeave: () => void }) {
                 localPawnId={snapshot.localPawnId}
                 pawns={snapshot.pawns}
                 onLeave={onLeave}
+                onPlayAgain={onPlayAgain}
                 getRestoreFocusFallback={() => mainRef.current}
               />
             )}

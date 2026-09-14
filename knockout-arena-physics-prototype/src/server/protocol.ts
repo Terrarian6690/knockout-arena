@@ -38,6 +38,13 @@ export type ClientMessage =
   | { type: "join_public" }
   | { type: "leave_room" }
   | { type: "start_match" }
+  /**
+   * Return a FINISHED room to its waiting lobby so the same group can
+   * play again (Task 25). Distinct from start_match on purpose: any
+   * seated player may dismiss the result and land back in the lobby,
+   * while actually STARTING the next match stays the host's call.
+   */
+  | { type: "return_to_lobby" }
   | { type: "reconnect"; token: string }
   // The sender's OWN display name (cosmetic). There is deliberately no
   // playerId field: the server derives the seat from the authenticated
@@ -119,6 +126,12 @@ export function parseClientMessage(raw: string): ParsedClientMessage {
     case "start_match":
       if (hasOnly(envelope, "type", "protocolVersion")) {
         return { ok: true, message: { type: "start_match" } };
+      }
+      return { ok: false, code: "malformed-payload" };
+
+    case "return_to_lobby":
+      if (hasOnly(envelope, "type", "protocolVersion")) {
+        return { ok: true, message: { type: "return_to_lobby" } };
       }
       return { ok: false, code: "malformed-payload" };
 

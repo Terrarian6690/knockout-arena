@@ -7,8 +7,21 @@ import { handleTrapKeyDown, useDialogFocus } from "./focusTrap";
  * Match result overlay. The winner (or the absence of one) is entirely
  * the server's verdict — `winnerId` from the finished snapshot /
  * match_finished message; the client only decides which emoji to show.
- * The way out of a finished match is Leave Room (protocol v1 has no
- * rematch yet — resetMatch is server-side only).
+ *
+ * Two ways out of a finished match (Task 25), because they are genuinely
+ * different intentions and must not be one button:
+ *
+ *   - PLAY AGAIN (`onPlayAgain`) — stay. Keeps the seat, the room and the
+ *     room code; the server moves the room back to "waiting" and the
+ *     normal pre-match lobby returns, ready for the host to start the
+ *     next match. This is the primary action: after a match with friends
+ *     the overwhelmingly likely intent is another match.
+ *   - LEAVE ROOM (`onLeave`) — go. The original, unchanged path: release
+ *     the seat and return to the home screen.
+ *
+ * `onPlayAgain` is OPTIONAL. When it is absent the overlay renders
+ * exactly as it did before Task 25 (a single leave button), so a caller
+ * that has no room to return to never shows a dead affordance.
  *
  * Accessibility (Task 9): the visible result is three separate pieces of
  * text (emoji, headline, detail sentence), which is right for sighted
@@ -31,7 +44,14 @@ interface MatchResultOverlayProps {
   /** This viewer's pawn id (from the snapshot's localPawnId). */
   readonly localPawnId: string | null;
   readonly pawns: readonly PawnSnapshot[];
+  /** Release the seat and go back to the home screen. */
   onLeave: () => void;
+  /**
+   * Stay in the room and return it to its waiting lobby for another
+   * match. Optional: when omitted the overlay offers only `onLeave`,
+   * which is precisely its pre-Task-25 behaviour.
+   */
+  onPlayAgain?: () => void;
   /**
    * Where focus goes when the overlay closes, if whatever held focus
    * when the match ended is gone by then (the match controls unmount
@@ -46,6 +66,7 @@ export function MatchResultOverlay({
   localPawnId,
   pawns,
   onLeave,
+  onPlayAgain,
   getRestoreFocusFallback,
 }: MatchResultOverlayProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -93,11 +114,17 @@ export function MatchResultOverlay({
           leaves the live regions outside untouched.
 
           Escape (Task 16) is handled by that same keydown handler and
-          forwards to `onLeave` — the identical callback the button's
-          onClick uses, so there is one dismissal path, one navigation
-          and one focus restoration, not a parallel exit. Because the
-          handler is bound to the dialog, Escape can only fire while
-          focus is inside it. */}
+          forwards to a real button's callback — never a parallel exit,
+          so there is one dismissal path, one navigation and one focus
+          restoration. WHICH button changed in Task 25: Escape now means
+          "dismiss this dialog", and the least destructive reading of
+          that is Play Again (stop showing me the result, put me back in
+          my room) rather than Leave (give up the seat). Escape is a
+          reflex key; it must not be the one that throws away a seat and
+          a room code. With no `onPlayAgain` there is nothing to dismiss
+          to, so it falls back to `onLeave` — the exact pre-Task-25
+          behaviour. Because the handler is bound to the dialog, Escape
+          can only fire while focus is inside it. */}
       <div
         ref={dialogRef}
         data-testid="match-result"
@@ -106,7 +133,9 @@ export function MatchResultOverlay({
         aria-labelledby="match-result-title"
         aria-describedby="match-result-detail"
         tabIndex={-1}
-        onKeyDown={(event) => handleTrapKeyDown(event, dialogRef.current, onLeave)}
+        onKeyDown={(event) =>
+          handleTrapKeyDown(event, dialogRef.current, onPlayAgain ?? onLeave)
+        }
         className={cn(
           "pointer-events-auto flex flex-col items-center gap-4 rounded-2xl border bg-slate-900/90 px-8 py-7 text-center shadow-2xl outline-none",
           won ? "border-emerald-400/30" : "border-red-400/30"
@@ -133,14 +162,40 @@ export function MatchResultOverlay({
               ? "Every rival pawn left the arena. Flawless round."
               : `${winnerName} wins the match.`}
         </p>
-        <button
-          type="button"
-          onClick={onLeave}
-          data-testid="back-to-lobby"
-          className="rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 px-6 py-2.5 text-sm font-bold uppercase tracking-wide text-white shadow-lg shadow-emerald-900/40 transition-all hover:from-emerald-300 hover:to-teal-500 active:scale-95"
-        >
-          Back to lobby
-        </button>
+        {/* Actions, in intent order: staying is the likely choice and
+            comes first, so it is also the first Tab stop and the target
+            of the very first Tab out of the dialog container. Leaving
+            keeps its original `back-to-lobby` test id deliberately —
+            it is the same action on the same element, so the Task 11/16
+            focus, trap and Escape coverage keeps pointing at it. */}
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          {onPlayAgain !== undefined && (
+            <button
+              type="button"
+              onClick={onPlayAgain}
+              data-testid="play-again"
+              className="rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 px-6 py-2.5 text-sm font-bold uppercase tracking-wide text-white shadow-lg shadow-emerald-900/40 transition-all hover:from-emerald-300 hover:to-teal-500 active:scale-95"
+            >
+              Play again
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onLeave}
+            data-testid="back-to-lobby"
+            className={cn(
+              "rounded-xl px-6 py-2.5 text-sm font-bold uppercase tracking-wide transition-all active:scale-95",
+              onPlayAgain === undefined
+                ? // Sole action: keep the original prominent styling.
+                  "bg-gradient-to-br from-emerald-400 to-teal-600 text-white shadow-lg shadow-emerald-900/40 hover:from-emerald-300 hover:to-teal-500"
+                : // Secondary to Play again, but still a plain, fully
+                  // operable button — never a de-emphasised trap.
+                  "border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
+            )}
+          >
+            {onPlayAgain === undefined ? "Back to lobby" : "Leave room"}
+          </button>
+        </div>
       </div>
     </div>
   );
