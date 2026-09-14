@@ -308,7 +308,12 @@ describe("interpolated snapshot", () => {
     expect(remote.colorIndex).toBe(0);
   });
 
-  it("does not interpolate a pawn across its elimination", () => {
+  it("glides a dying pawn to its death point before showing it dead", () => {
+    // Task 24: a death is shown where the BODY is, not when the packet
+    // arrives. Mid-pair the pawn is still travelling toward the spot it
+    // died, so it must be drawn alive and in between. Previously it
+    // snapped to the death position and tinted instantly, which is what
+    // made a power-5 knockout look ~32 units (a full diameter) early.
     const buffer = new SnapshotBuffer();
     buffer.push(movingPair({ x: 0, y: 0 }, { x: 0, y: 0 }), 1000);
     buffer.push(
@@ -316,14 +321,32 @@ describe("interpolated snapshot", () => {
       1100
     );
     const latest = buffer.latest()!.snapshot;
-    const visual = interpolateSnapshot(buffer, 1050, latest);
-    const remote = visual.pawns.find((p) => p.id === "p1")!;
-    // Snapped to the authoritative eliminated state — no halfway smear.
-    expect(remote.eliminated).toBe(true);
-    expect(remote.position).toEqual({ x: 100, y: 0 });
+    // The authoritative state says dead the whole time…
+    expect(latest.pawns.find((p) => p.id === "p1")!.eliminated).toBe(true);
+
+    // …but halfway along the delayed timeline it is still flying.
+    const mid = interpolateSnapshot(buffer, 1050, latest);
+    const midPawn = mid.pawns.find((p) => p.id === "p1")!;
+    expect(midPawn.position).toEqual({ x: 50, y: 0 });
+    expect(midPawn.eliminated).toBe(false);
+
+    // Nearly there: still alive, still moving.
+    const late = interpolateSnapshot(buffer, 1090, latest);
+    const latePawn = late.pawns.find((p) => p.id === "p1")!;
+    expect(latePawn.position.x).toBeCloseTo(90, 6);
+    expect(latePawn.eliminated).toBe(false);
+
+    // Arrived at the authoritative death position: now it is shown dead.
+    const arrived = interpolateSnapshot(buffer, 1100, latest);
+    const arrivedPawn = arrived.pawns.find((p) => p.id === "p1")!;
+    expect(arrivedPawn.position).toEqual({ x: 100, y: 0 });
+    expect(arrivedPawn.eliminated).toBe(true);
   });
 
-  it("does not interpolate a pawn that was eliminated in the older member", () => {
+  it("keeps showing a pawn dead once the delayed clock is past its death", () => {
+    // Dead at the OLDER end: the knockout already happened on screen, so
+    // it stays dead regardless of what the newer member says. (Real
+    // authoritative motion still wins over the cosmetic coast.)
     const buffer = new SnapshotBuffer();
     buffer.push(
       movingPair({ x: 0, y: 0 }, { x: 0, y: 0 }, { eliminated: true }),
@@ -332,7 +355,9 @@ describe("interpolated snapshot", () => {
     buffer.push(movingPair({ x: 0, y: 0 }, { x: 100, y: 0 }), 1100);
     const latest = buffer.latest()!.snapshot;
     const visual = interpolateSnapshot(buffer, 1050, latest);
-    expect(visual.pawns.find((p) => p.id === "p1")!.position).toEqual({ x: 100, y: 0 });
+    const remote = visual.pawns.find((p) => p.id === "p1")!;
+    expect(remote.eliminated).toBe(true);
+    expect(remote.position).toEqual({ x: 50, y: 0 }); // follows real motion
   });
 
   it("snaps a pawn that is missing from either member of the pair", () => {

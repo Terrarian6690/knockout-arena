@@ -275,15 +275,40 @@ describe("arena render interpolation", () => {
     expect(drawn.winnerId).toBe("p1");
   });
 
-  it("an eliminated pawn is never interpolated across its knockout (5)", () => {
+  it("shows a knockout when the body reaches it, not when it is reported (5)", () => {
+    // Task 24. The sibling test below feeds the IDENTICAL timing with a
+    // live pawn and draws it at the halfway point (50,0) — the 50 ms
+    // interpolation delay. A dying pawn used to be the one exception:
+    // it snapped to (100,0) and tinted instantly, so at power 5 the red
+    // appeared ~32 units before the body arrived. Now it travels on the
+    // same delayed timeline as everyone else.
     at(1000);
     const arena = mountArena(round({ x: 300, y: 350 }, { x: 0, y: 0 }));
     at(1100);
-    // p1 is knocked out at (100,0): drawn exactly there, not halfway.
-    arena.feed(round({ x: 300, y: 350 }, { x: 100, y: 0 }, { eliminated: true }));
-    const p1 = drawnPawn("p1");
-    expect(p1.eliminated).toBe(true);
-    expect(p1.position).toEqual({ x: 100, y: 0 });
+    const authoritative = round(
+      { x: 300, y: 350 },
+      { x: 100, y: 0 },
+      { eliminated: true }
+    );
+    arena.feed(authoritative);
+
+    const midFlight = drawnPawn("p1");
+    expect(midFlight.position).toEqual({ x: 50, y: 0 }); // same as a live pawn
+    expect(midFlight.eliminated).toBe(false); // not yet — it is still flying
+
+    // The authoritative snapshot said "dead" the whole time; only the
+    // on-canvas presentation waited for the body.
+    expect(
+      authoritative.pawns.find((p) => p.id === "p1")!.eliminated
+    ).toBe(true);
+
+    // Let the delayed clock catch up: now it is drawn dead, at the exact
+    // authoritative death position.
+    at(1150);
+    runOneFrame();
+    const arrived = drawnPawn("p1");
+    expect(arrived.position).toEqual({ x: 100, y: 0 });
+    expect(arrived.eliminated).toBe(true);
   });
 
   it("a starved timeline snaps to the newest state — no freeze, no extrapolation (8)", () => {

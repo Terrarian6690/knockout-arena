@@ -44,6 +44,21 @@ export const MAX_BUFFERED_SNAPSHOTS = 8;
 export const MAX_SNAPSHOT_AGE_MS = 250;
 
 /**
+ * How far a knocked-out pawn coasts, as a fraction of its radius, while
+ * the death effects play (Task 24).
+ *
+ * The server freezes an eliminated body (physics.stop), so its
+ * authoritative position stops changing the instant it dies. Rendering
+ * that literally would stop a flying pawn dead in the air mid-knockout.
+ * A small cosmetic coast along the heading it died on keeps the knockout
+ * reading as "flung out" rather than "switched off". Deliberately small:
+ * the body never wanders anywhere meaningful from the spot the server
+ * recorded, and this drift is never fed back into any comparison against
+ * authoritative state.
+ */
+export const DEATH_DRIFT_FRACTION = 0.35;
+
+/**
  * Two distinct snapshots that arrive within the same millisecond (e.g. a
  * burst after a stall) are kept chronologically honest by nudging the newer
  * one this far ahead instead of collapsing both onto one timestamp.
@@ -217,12 +232,56 @@ function findPawn(snapshot: GameStateSnapshot, id: string): PawnSnapshot | null 
 }
 
 /**
- * Interpolate ONE pawn's position between the buffered pair — everything
- * else about the pawn (identity, elimination, launch, colors, names) comes
- * from `latest`. Snaps (no lerp) when the pawn is the local player's (no
- * added input/display delay for your own pawn), when it is eliminated in
- * either pair member (never smear across a knockout), or when it is missing
- * from either member (nothing to interpolate from).
+ * The cosmetic coast of an already-dead pawn (Task 24).
+ *
+ * An eliminated body is frozen server-side, so both ends of the pair
+ * hold the same point and a plain lerp renders a pawn stopped dead in
+ * mid-air. Instead it continues along the heading it died on, scaled by
+ * DEATH_DRIFT_FRACTION. If the engine ever DOES report real motion for a
+ * dead pawn, that motion wins and nothing is invented.
+ */
+function deathDrift(
+  pawn: PawnSnapshot,
+  from: PawnSnapshot,
+  to: PawnSnapshot,
+  alpha: number
+): Vec2 {
+  if (from.position.x !== to.position.x || from.position.y !== to.position.y) {
+    return lerpPosition(from.position, to.position, alpha);
+  }
+  // Frozen. The committed launch is the public reveal of the heading the
+  // pawn carried into its death; with no launch datum, stay put.
+  const heading = pawn.launch?.direction;
+  if (!heading) return pawn.position;
+  const step = pawn.radius * DEATH_DRIFT_FRACTION * alpha;
+  return {
+    x: pawn.position.x + heading.x * step,
+    y: pawn.position.y + heading.y * step,
+  };
+}
+
+/**
+ * Interpolate ONE pawn's position between the buffered pair.
+ *
+ * Identity, launch, colors and names always come from `latest`. Position
+ * AND the elimination flag come from the DELAYED timeline, so a remote
+ * pawn's death is shown when its rendered body reaches the place it
+ * died — not when the packet announcing it arrives.
+ *
+ * Why the flag must travel with the position (Task 24): they are one
+ * event. The body is drawn INTERPOLATION_DELAY_MS in the past, so
+ * reading `eliminated` from the newest push tinted the pawn while it was
+ * still drawn short of the boundary — ~32 units at power 5, a full pawn
+ * diameter, which reads as "it died before it got there".
+ *
+ * The cases:
+ *   - local pawn: never interpolated (own input must feel instant), so
+ *     it has NO display lag to compensate. Shown dead immediately.
+ *   - alive in `prev`, dead in `next`: the death is still in the FUTURE
+ *     of the delayed clock. Keep gliding toward the death point, still
+ *     alive; flip on arrival (alpha 1 — where the death position is).
+ *   - dead in `prev`: already past on the delayed timeline. Dead, with
+ *     the cosmetic coast above.
  */
 function interpolatePawn(
   pawn: PawnSnapshot,
@@ -230,16 +289,41 @@ function interpolatePawn(
   next: GameStateSnapshot,
   alpha: number
 ): PawnSnapshot {
-  if (pawn.isLocal || pawn.eliminated) return pawn;
+  // Never interpolated, so nothing about it lags, so nothing is delayed.
+  if (pawn.isLocal) return pawn;
   const from = findPawn(prev, pawn.id);
   const to = findPawn(next, pawn.id);
-  if (from === null || to === null || from.eliminated || to.eliminated) {
-    return pawn;
+  if (from === null || to === null) return pawn;
+
+  // Already dead at the older end: the delayed clock is past the death.
+  if (from.eliminated) {
+    return { ...pawn, position: deathDrift(pawn, from, to, alpha), eliminated: true };
   }
+
+  // Dies within this pair: still in flight as far as the screen knows.
+  // The authoritative death position is the pair's NEWER end, so the
+  // pawn crosses the boundary first and turns exactly on arrival.
+  if (to.eliminated) {
+    return {
+      ...pawn,
+      position: lerpPosition(from.position, to.position, alpha),
+      eliminated: alpha >= 1,
+    };
+  }
+
   if (from.position.x === to.position.x && from.position.y === to.position.y) {
-    return pawn; // no motion between the pair — reuse the object as-is
+    // No motion between the pair. `latest` may already report this pawn
+    // dead (a newer push), but on the delayed timeline it is still
+    // alive — correct the flag rather than reusing the object wholesale.
+    return pawn.eliminated ? { ...pawn, eliminated: false } : pawn;
   }
-  return { ...pawn, position: lerpPosition(from.position, to.position, alpha) };
+  return {
+    ...pawn,
+    position: lerpPosition(from.position, to.position, alpha),
+    // Alive at BOTH ends of the delayed window: whatever `latest` says,
+    // this pawn has not died yet as far as the rendered timeline knows.
+    eliminated: false,
+  };
 }
 
 /**
