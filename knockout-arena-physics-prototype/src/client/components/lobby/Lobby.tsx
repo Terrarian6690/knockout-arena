@@ -10,6 +10,7 @@ import { cn } from "../../utils/cn";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { ErrorBanner } from "./ErrorBanner";
 import { getPrefillJoinCode } from "./invite";
+import { LeaveRoomButton } from "./LeaveRoomButton";
 import { RoomPanel } from "./RoomPanel";
 import { MultiplayerGame } from "../game/MultiplayerGame";
 
@@ -263,10 +264,21 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
           above the fold, forcing a scroll right after creating/joining. */}
       <main
         className={cn(
-          "flex min-h-0 flex-1 justify-center overflow-y-auto px-4",
+          "relative flex min-h-0 flex-1 justify-center overflow-y-auto px-4",
           inRoom ? "items-start py-2" : "items-center py-3"
         )}
       >
+        {/* Task 27: the way out lives in the screen's top-left corner —
+            outside the room panel, in the margin between the panel and
+            the screen edge — rather than as a text button buried in the
+            panel footer. Absolutely positioned, so it never competes
+            with the panel for vertical space. */}
+        {inRoom && (
+          <LeaveRoomButton
+            onLeave={handleLeave}
+            className="absolute left-2 top-2 z-20 sm:left-4 sm:top-3"
+          />
+        )}
         {inRoom ? (
           <div className="w-full max-w-2xl">
             {state.lastError !== null && !dismissedError && (
@@ -302,7 +314,6 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
                 }
                 return sent;
               }}
-              onLeave={handleLeave}
             />
             {/* The seat is server-reserved while the client reconnects —
                 the room stays, the hint says what is happening. */}

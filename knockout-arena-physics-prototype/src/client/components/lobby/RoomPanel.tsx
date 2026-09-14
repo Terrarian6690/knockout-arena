@@ -45,6 +45,14 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+/**
+ * How long after the last keystroke a valid name applies itself
+ * (Task 27). Long enough not to send a frame per character, short
+ * enough that the name is saved before the player reaches for another
+ * control. Blur and Enter bypass it entirely.
+ */
+const NAME_AUTOSAVE_DEBOUNCE_MS = 400;
+
 /** The app's keyboard-focus ring (same as the game screen's controls). */
 const FOCUS_RING =
   "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70";
@@ -86,7 +94,6 @@ export interface RoomPanelProps {
    */
   onSetName: (name: string) => boolean;
   onStart: () => void;
-  onLeave: () => void;
   /**
    * "public" for a matchmade room, "private" for a code-shared one.
    * Presentation only: it changes the WORDING of the waiting hint, never
@@ -106,7 +113,6 @@ export function RoomPanel({
   connected,
   onSetName,
   onStart,
-  onLeave,
   roomVisibility,
 }: RoomPanelProps) {
   const isHost = hostPlayerId !== null && hostPlayerId === playerId;
@@ -161,25 +167,68 @@ export function RoomPanel({
   const [nameDraft, setNameDraft] = useState(ownSeat?.displayName ?? "");
   const [nameError, setNameError] = useState<string | null>(null);
 
-  // The own name only ever changes through our own Save (or a reconnect
-  // restoring the seat) — both arrive while the input is not being
-  // edited — so adopting the server's value keeps the input truthful
-  // without clobbering anyone's typing.
+  // The own name only ever changes through our own auto-save (or a
+  // reconnect restoring the seat) — both arrive while the input is not
+  // being edited — so adopting the server's value keeps the input
+  // truthful without clobbering anyone's typing.
   useEffect(() => {
     setNameDraft(ownSeat?.displayName ?? "");
   }, [ownSeat?.displayName]);
 
-  const saveName = () => {
-    const name = normalizeDisplayName(nameDraft);
+  /**
+   * Auto-save (Task 27). There is no Save button: a valid name is sent
+   * on its own, shortly after typing stops, and immediately on blur or
+   * Enter so a player who types-then-leaves never loses the edit.
+   *
+   * Validation is UNCHANGED and still gates every send: the draft goes
+   * through the same normalizeDisplayName the Save button used, and an
+   * invalid in-progress draft is simply never sent (the server, which
+   * validates again, remains the authority).
+   *
+   * `commit` is kept in a ref so the debounce effect can fire the latest
+   * version without re-arming the timer on every keystroke-driven
+   * re-render.
+   */
+  const lastSent = useRef<string | null>(ownSeat?.displayName ?? null);
+  useEffect(() => {
+    // A new seat (or a name applied elsewhere) resets what we consider
+    // already-sent, so the next valid draft is always delivered.
+    if (ownSeat?.displayName != null) lastSent.current = ownSeat.displayName;
+  }, [ownSeat?.displayName]);
+
+  const commitName = (draft: string, { silent }: { silent: boolean }) => {
+    const name = normalizeDisplayName(draft);
     if (name === null) {
-      setNameError(
-        "Names are 1\u201316 characters — letters, digits, punctuation; no line breaks."
-      );
+      // Nothing is sent. While the player is still typing we stay quiet
+      // (an empty box mid-edit is not an error worth shouting about);
+      // an explicit commit — blur or Enter — explains the refusal.
+      if (!silent) {
+        setNameError(
+          "Names are 1\u201316 characters — letters, digits, punctuation; no line breaks."
+        );
+      }
       return;
     }
     setNameError(null);
+    if (name === lastSent.current) return; // nothing changed: no traffic
+    lastSent.current = name;
     onSetName(name); // the server validates again and broadcasts
   };
+
+  const commitRef = useRef(commitName);
+  commitRef.current = commitName;
+
+  // Debounced typing: DEBOUNCE_MS after the last keystroke, a valid
+  // draft applies itself. Cleared on every change, so only the pause
+  // triggers a send.
+  useEffect(() => {
+    if (connected === false) return;
+    if (nameDraft === (ownSeat?.displayName ?? "")) return; // nothing new
+    const timer = setTimeout(() => {
+      commitRef.current(nameDraft, { silent: true });
+    }, NAME_AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [nameDraft, connected, ownSeat?.displayName]);
 
   const handleCopyCode = async () => {
     // The code stays on screen, big and selectable; only a real success
@@ -378,7 +427,7 @@ export function RoomPanel({
             <label htmlFor="display-name-input" className="sr-only">
               Your name
             </label>
-            <div className="flex gap-2">
+            <div>
               <input
                 id="display-name-input"
                 data-testid="display-name-input"
@@ -388,8 +437,14 @@ export function RoomPanel({
                   setNameError(null);
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") saveName();
+                  // Enter is an explicit commit: apply now rather than
+                  // waiting out the debounce.
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                    commitName(nameDraft, { silent: false });
+                  }
                 }}
+                onBlur={() => commitName(nameDraft, { silent: false })}
                 placeholder={seatLabel(playerId)}
                 // maxLength bounds the UTF-16 units, so 2× the code-point
                 // maximum still admits any valid name (surrogate pairs)
@@ -400,27 +455,13 @@ export function RoomPanel({
                 spellCheck={false}
                 aria-invalid={nameError !== null}
                 className={cn(
-                  "min-w-0 flex-1 rounded-xl border bg-white/5 px-4 py-1.5 text-sm text-white outline-none transition-colors",
+                  "w-full rounded-xl border bg-white/5 px-4 py-1.5 text-sm text-white outline-none transition-colors",
                   "placeholder:text-white/50 focus:border-amber-400/50",
                   "disabled:cursor-not-allowed disabled:opacity-40",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
                   nameError !== null ? "border-red-400/50" : "border-white/15"
                 )}
               />
-              <button
-                type="button"
-                onClick={saveName}
-                disabled={connected === false || nameDraft.trim().length === 0}
-                data-testid="save-name"
-                className={cn(
-                  "rounded-xl border border-white/15 bg-white/5 px-4 py-1.5 text-sm font-semibold text-white/80 transition-colors",
-                  "hover:bg-white/10 active:scale-95",
-                  "disabled:cursor-not-allowed disabled:opacity-40",
-                  FOCUS_RING
-                )}
-              >
-                Save Name
-              </button>
             </div>
             {nameError !== null && (
               <p data-testid="name-error" role="alert" className="mt-2 text-xs text-red-300">
@@ -526,18 +567,11 @@ export function RoomPanel({
             </p>
           )}
 
-          <button
-            type="button"
-            onClick={onLeave}
-            data-testid="leave-room"
-            className={cn(
-              "rounded-xl border border-white/15 bg-white/5 px-5 py-2 text-sm font-semibold text-white/80",
-              "transition-colors hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-300 active:scale-95",
-              FOCUS_RING
-            )}
-          >
-            Leave Room
-          </button>
+          {/* Task 27: the leave action is no longer a text button in the
+              panel footer — it is the red exit icon pinned to the screen's
+              top-left corner (see <LeaveRoomButton/>, rendered by Lobby
+              outside this panel). Same onLeave callback, same seat
+              release; only its presentation and position changed. */}
         </div>
       </div>
     </div>

@@ -445,7 +445,9 @@ describe("the result overlay stays accessible with two actions", () => {
     });
 
     expect(screen.queryByTestId("play-again")).not.toBeInTheDocument();
-    expect(screen.getByTestId("back-to-lobby")).toHaveTextContent(
+    // Task 27: the exit is an icon, so its name lives in aria-label
+    // rather than in text — the wording itself is unchanged.
+    expect(screen.getByTestId("back-to-lobby")).toHaveAccessibleName(
       "Back to lobby"
     );
     fireEvent.keyDown(dialog(), { key: "Escape" });

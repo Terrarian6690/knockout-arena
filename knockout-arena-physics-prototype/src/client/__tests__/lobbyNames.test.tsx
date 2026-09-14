@@ -67,7 +67,10 @@ describe("the display-name editor", () => {
     const input = screen.getAllByLabelText("Your name").at(-1)!;
     expect(input).toBeEnabled();
     expect(input).toHaveAttribute("maxlength", "32"); // 2× the code-point max
-    expect(screen.getByRole("button", { name: "Save Name" })).toBeInTheDocument();
+    // Task 27: the name auto-saves — there is deliberately no Save
+    // button to press (and nothing else took its place).
+    expect(screen.queryByRole("button", { name: "Save Name" })).toBeNull();
+    expect(screen.queryByTestId("save-name")).toBeNull();
     // The in-room box is a RENAME box: a name is now mandatory before
     // entering at all (Task 20), so it arrives pre-filled with the name
     // the player chose on the home screen — there is no "leave empty to
@@ -82,7 +85,8 @@ describe("the display-name editor", () => {
     fireEvent.change(screen.getByLabelText("Your name"), {
       target: { value: "  Szymon  " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save Name" }));
+    // Task 27: blur is an explicit commit — no button to click.
+    fireEvent.blur(screen.getByLabelText("Your name"));
 
     // Exactly one wire message: the trimmed name.
     expect(lastSent(pair)).toEqual({
@@ -104,11 +108,11 @@ describe("the display-name editor", () => {
     const { host } = await seatedHost();
     const sentBefore = host.pairs[0].clientSent.length;
 
-    // Whitespace-only: the Save button itself refuses (no wire traffic).
+    // Whitespace-only: committing it sends nothing (no wire traffic).
     fireEvent.change(screen.getByLabelText("Your name"), {
       target: { value: "   " },
     });
-    expect(screen.getByRole("button", { name: "Save Name" })).toBeDisabled();
+    fireEvent.blur(screen.getByLabelText("Your name"));
 
     // Non-empty but invalid shapes: an explicit, non-color-only error
     // (role=alert), and still nothing on the wire. (Newlines cannot even
@@ -118,7 +122,7 @@ describe("the display-name editor", () => {
       fireEvent.change(screen.getByLabelText("Your name"), {
         target: { value: bad },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Save Name" }));
+      fireEvent.blur(screen.getByLabelText("Your name"));
       expect(screen.getByTestId("name-error")).toHaveTextContent(/characters/);
     }
     // Nothing was sent — the server never had to reject anything.
@@ -129,7 +133,7 @@ describe("the display-name editor", () => {
       target: { value: "Alex" },
     });
     expect(screen.queryByTestId("name-error")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Save Name" }));
+    fireEvent.blur(screen.getByLabelText("Your name"));
     expect(
       await screen.findByText("Alex", { selector: '[data-testid="seat-p0"] *' })
     ).toBeInTheDocument();
@@ -218,7 +222,7 @@ describe("the display-name editor", () => {
     fireEvent.change(screen.getByLabelText("Your name"), {
       target: { value: "Szymon" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save Name" }));
+    fireEvent.blur(screen.getByLabelText("Your name"));
     expect(await screen.findByText("Szymon")).toBeInTheDocument();
 
     // Unexpected drop: the seat is reserved; the client retries.

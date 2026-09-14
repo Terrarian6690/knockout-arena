@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PawnSnapshot } from "../../../game";
 import { cn } from "../../utils/cn";
+import { LeaveRoomButton } from "../lobby/LeaveRoomButton";
 import { handleTrapKeyDown, useDialogFocus } from "./focusTrap";
 
 /**
@@ -179,22 +180,24 @@ export function MatchResultOverlay({
               Play again
             </button>
           )}
-          <button
-            type="button"
-            onClick={onLeave}
-            data-testid="back-to-lobby"
-            className={cn(
-              "rounded-xl px-6 py-2.5 text-sm font-bold uppercase tracking-wide transition-all active:scale-95",
-              onPlayAgain === undefined
-                ? // Sole action: keep the original prominent styling.
-                  "bg-gradient-to-br from-emerald-400 to-teal-600 text-white shadow-lg shadow-emerald-900/40 hover:from-emerald-300 hover:to-teal-500"
-                : // Secondary to Play again, but still a plain, fully
-                  // operable button — never a de-emphasised trap.
-                  "border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
-            )}
-          >
-            {onPlayAgain === undefined ? "Back to lobby" : "Leave room"}
-          </button>
+          {/* Task 27: the same exit affordance as the waiting room — the
+              red icon in the top-left corner, no text.
+
+              Two deliberate details:
+               - it stays a DOM CHILD OF THE DIALOG, because the Task 11
+                 trap walks the dialog's descendants: the exit must stay
+                 inside the trap and in the tab order, after "Play again";
+               - it is `absolute`, not `fixed`, so it anchors to the
+                 overlay root (the only positioned ancestor), which spans
+                 the match area. That lands it in the same corner as the
+                 waiting room's exit instead of on top of the match
+                 header's logo. */}
+          <LeaveRoomButton
+            onLeave={onLeave}
+            testId="back-to-lobby"
+            label={onPlayAgain === undefined ? "Back to lobby" : "Leave room"}
+            className="absolute left-2 top-2 z-30 sm:left-4 sm:top-3"
+          />
         </div>
       </div>
     </div>

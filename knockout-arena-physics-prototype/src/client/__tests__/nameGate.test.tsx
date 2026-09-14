@@ -279,8 +279,9 @@ describe("the name carries through the session", () => {
     fireEvent.change(screen.getByTestId("display-name-input"), {
       target: { value: "Grace" },
     });
+    // Task 27: the rename auto-saves on blur — no Save button exists.
     await act(async () => {
-      fireEvent.click(screen.getByTestId("save-name"));
+      fireEvent.blur(screen.getByTestId("display-name-input"));
     });
     await waitFor(() =>
       expect(screen.getByTestId("seat-p0")).toHaveTextContent("Grace")
