@@ -150,9 +150,13 @@ export interface RoomInfo {
   /** Occupied seats in seat order (vacated match seats stay listed). */
   readonly seats: readonly RoomSeatInfo[];
   /**
-   * Seat id of the room host (the creating session), or null once the
-   * creator is no longer seated. Used by transports to authorize
-   * match-level actions (e.g. only the host may start the match).
+   * Seat id of the room host. The creator starts as host; if their seat
+   * empties (leave, or an expired reconnect window) the room promotes
+   * the lowest occupied seat instead (Task 26), so an occupied room
+   * always has exactly one host. Null only for a room with no seats at
+   * all, which cannot be observed — such rooms are destroyed. Used by
+   * transports to authorize match-level actions (only the host may
+   * start the match).
    */
   readonly hostPlayerId: string | null;
 }
@@ -275,7 +279,10 @@ interface RoomEntry {
    * connected:false until the session reclaims it or the timer expires.
    */
   reserved: Map<number, { timer: ReturnType<typeof setTimeout>; onExpire?: () => void }>;
-  /** The creating session's token — the room host (see RoomInfo.hostPlayerId). */
+  /**
+   * The host session's token. Starts as the creator's and is reassigned
+   * by succession when that seat empties (see succeedHostIfVacant).
+   */
   hostToken: string;
   host: GameHost | null;
   detachHost: (() => void) | null;
@@ -457,9 +464,9 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
         });
       }
     }
-    // The host is whoever the creating session is seated as right now;
-    // null once the creator has left (the room then has no host until it
-    // is removed — transports document their policy on top of this).
+    // The host is whoever holds hostToken right now — the creator, or
+    // the player promoted when the creator's seat emptied (Task 26). An
+    // occupied room therefore always reports a host.
     const hostSeat = room.seats.indexOf(room.hostToken);
     return {
       id: room.id,
@@ -631,9 +638,46 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
   }
 
   /**
+   * Host succession (Task 26): hand the room to another seated player
+   * when the host's seat has emptied, so a room is never left unable to
+   * start a match.
+   *
+   * THE RULE: the LOWEST OCCUPIED SEAT INDEX. Seats are handed out in
+   * ascending order and never renumbered, so the lowest occupied index is
+   * the earliest-joined player still present — the natural successor, and
+   * a pure function of state that every caller and test can predict. No
+   * randomness, no join-order bookkeeping to keep in sync.
+   *
+   * A seat that is merely RESERVED (its player dropped and is inside the
+   * reconnect window, Tasks 13-15) is still occupied, so it is a valid
+   * successor and — crucially — a reserved HOST is not succeeded at all:
+   * their token is still in the seat, so `hostSeated` below is true and
+   * this returns immediately. Succession only fires once the seat is
+   * genuinely empty (a real leave, or a reservation that expired).
+   */
+  function succeedHostIfVacant(room: RoomEntry): void {
+    const hostSeated = room.seats.some((token) => token === room.hostToken);
+    if (hostSeated) return; // still here (or still reconnect-eligible)
+
+    for (let i = 0; i < MAX_PLAYERS; i++) {
+      const token = room.seats[i];
+      if (token !== null) {
+        room.hostToken = token;
+        return;
+      }
+    }
+    // No seats left at all: the caller destroys empty rooms, so there is
+    // deliberately nothing to promote to here.
+  }
+
+  /**
    * Release a seat with the normal leave semantics: drop the occupant and
    * its listeners; destroy an emptied room, else vacate the seat if the
    * match already started. Returns the room info, or null if destroyed.
+   *
+   * This is the ONE place a seat empties (both the explicit leave path and
+   * an expired reconnect reservation funnel through here), which is why
+   * host succession lives here rather than in each caller.
    */
   function detachSeat(room: RoomEntry, seat: number): RoomInfo | null {
     const occupant = room.seats[seat];
@@ -643,9 +687,12 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     }
 
     if (connectedCount(room) === 0) {
-      destroyRoom(room); // empty rooms do not linger
+      destroyRoom(room); // empty rooms do not linger (Task 18, unchanged)
       return null;
     }
+
+    // At least one player remains — make sure one of them is the host.
+    succeedHostIfVacant(room);
     if (room.state !== "waiting") {
       // The roster is frozen once the match started: the pawn stays in the
       // match, the seat is simply vacated.

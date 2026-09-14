@@ -34,9 +34,10 @@ import type { RoomInfo } from "./roomManager";
  * rejected indistinguishably. Deliberate shutdown (handle/core close) is
  * not a drop: it disconnects cleanly and revokes the credential.
  *
- * Authorization policy (v1, deliberately minimal): the room CREATOR is the
- * room host; only the host may start the match (RoomInfo.hostPlayerId,
- * maintained by the RoomManager). reset_match is NOT exposed over the wire
+ * Authorization policy (v1, deliberately minimal): only the room host may
+ * start the match (RoomInfo.hostPlayerId, maintained by the RoomManager —
+ * the creator to begin with, and after they leave whichever player
+ * succession promoted, so a room is never stuck without a host). reset_match is NOT exposed over the wire
  * at all — resetMatch() stays a server-side operation until rematch
  * authorization is designed.
  *

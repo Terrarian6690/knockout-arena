@@ -382,12 +382,12 @@ describe("edge cases around the rematch", () => {
     expect(server.getSeat(sessions[2]!)!.playerId).toBe("p2");
   }, 15000);
 
-  it("has no host once the creator leaves — the pre-existing rule, unchanged", async () => {
-    // Task 18 behaviour, restated here because it is the one thing that
-    // can block a rematch: hostPlayerId is derived from the creator's
-    // seat, so if the creator leaves, the room has no host and nobody
-    // may start. Reopening deliberately does NOT reassign the host —
-    // host identity is per-player, not per-match.
+  it("promotes a new host when the creator leaves after a match", async () => {
+    // UPDATED (Task 26). This previously asserted the room was left
+    // hostless — the exact "stuck room" bug, and the one thing that could
+    // block a rematch. Succession now fixes it: the group can play again
+    // without the creator. Host identity is still per-player rather than
+    // per-match; reopening does not reshuffle it (see the next test).
     const server = newServer();
     const { roomId, sessions } = makeRoom(server, 3);
     const states = statePipe(server, sessions[0]!);
@@ -396,12 +396,17 @@ describe("edge cases around the rematch", () => {
 
     expect(server.getRoom(roomId)!.hostPlayerId).toBe("p0");
     expect(server.leaveRoom(sessions[0]!).ok).toBe(true);
-    expect(server.returnToLobby(roomId).ok).toBe(true);
 
-    // The room reopens fine for the remaining players…
+    // Promoted immediately on leaving — not deferred to the reopen.
+    expect(server.getRoom(roomId)!.hostPlayerId).toBe("p1");
+
+    expect(server.returnToLobby(roomId).ok).toBe(true);
     expect(server.getRoom(roomId)!.state).toBe("waiting");
-    // …but it has no host, exactly as a waiting room whose creator left.
-    expect(server.getRoom(roomId)!.hostPlayerId).toBeNull();
+    expect(server.getRoom(roomId)!.hostPlayerId).toBe("p1");
+
+    // And the promotion is real authority: the rematch actually starts.
+    expect(server.startMatch(roomId).ok).toBe(true);
+    expect(server.getRoom(roomId)!.state).toBe("playing");
   }, 15000);
 
   it("keeps the host across a rematch while the creator stays", async () => {

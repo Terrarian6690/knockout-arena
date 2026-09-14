@@ -666,13 +666,42 @@ describe("start-match authorization (v1: creator is host)", () => {
     expect(socket.lastOf("error")).toMatchObject({ code: "not-in-room" });
   });
 
-  it("a room whose host left has no host — nobody may start", () => {
+  it("a room whose host left PROMOTES a new host, who may start", () => {
+    // UPDATED (Task 26). This test previously pinned the opposite — the
+    // room was left hostless and permanently unable to start a match.
+    // That was the bug; succession is the fix. The coverage is kept (and
+    // extended): the authorization check still runs, it now resolves to
+    // the promoted player.
     const { server, core } = newCore();
-    const { roomId, sockets } = makeRoom(core, 2);
+    const { roomId, sockets } = makeRoom(core, 3);
+    expect(server.getRoom(roomId)!.hostPlayerId).toBe("p0");
+
     sockets[0].receiveMsg(msg.leave); // the creator leaves the waiting room
-    expect(server.getRoom(roomId)!.hostPlayerId).toBeNull();
+
+    // Lowest occupied seat index wins: p1, not p2.
+    expect(server.getRoom(roomId)!.hostPlayerId).toBe("p1");
+
+    // Everyone still connected is told about the new host.
+    for (const socket of [sockets[1], sockets[2]]) {
+      expect(socket.lastOf("room_state")).toMatchObject({ hostPlayerId: "p1" });
+    }
+
+    // The promoted player has real authority…
     sockets[1].receiveMsg(msg.start);
-    expect(sockets[1].lastOf("error")).toMatchObject({ code: "unauthorized" });
+    expect(sockets[1].lastOf("error")).toBeUndefined();
+    expect(server.getRoom(roomId)!.state).toBe("playing");
+  });
+
+  it("a non-promoted player still may not start after succession", () => {
+    // Succession must move the authority, not dissolve it.
+    const { server, core } = newCore();
+    const { roomId, sockets } = makeRoom(core, 3);
+    sockets[0].receiveMsg(msg.leave);
+    expect(server.getRoom(roomId)!.hostPlayerId).toBe("p1");
+
+    sockets[2].receiveMsg(msg.start);
+    expect(sockets[2].lastOf("error")).toMatchObject({ code: "unauthorized" });
+    expect(server.getRoom(roomId)!.state).toBe("waiting");
   });
 
   it("starting twice is rejected", () => {
