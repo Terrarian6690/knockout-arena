@@ -113,6 +113,9 @@ describe("server→client message parsing", () => {
           { playerId: "p2", connected: true, displayName: null },
         ],
         hostPlayerId: "p0",
+        // Task 28: public rooms carry an auto-start deadline; absent
+        // here (and on every private room) it parses as null.
+        autoStartDeadline: null,
       },
     });
   });
@@ -141,6 +144,7 @@ describe("server→client message parsing", () => {
         roomVisibility: null,
         roster: [{ playerId: "p0", connected: true, displayName: null }],
         hostPlayerId: "p0",
+        autoStartDeadline: null,
         reconnectToken: "cred-abc",
       },
     });

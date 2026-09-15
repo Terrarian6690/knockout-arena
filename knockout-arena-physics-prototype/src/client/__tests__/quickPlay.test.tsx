@@ -135,9 +135,13 @@ describe("two players quick-playing meet in one room", () => {
       two.client.joinPublicRoom();
     });
 
-    // The ordinary room panel — same UI a private room shows.
+    // The ordinary room panel, in its PUBLIC form: Task 28 replaced the
+    // private room's manual "Start Match" button with the server-armed
+    // auto-start countdown, which appears as soon as two players are in.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /start match/i })).toBeInTheDocument();
+      expect(screen.getByTestId("auto-start-countdown")).toBeInTheDocument();
     });
+    expect(screen.getByTestId("room-panel")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /start match/i })).toBeNull();
   });
 });

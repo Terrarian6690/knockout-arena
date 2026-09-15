@@ -291,6 +291,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               roomCode={state.roomId as string}
               playerId={state.playerId as string}
               hostPlayerId={state.hostPlayerId}
+              autoStartDeadline={state.autoStartDeadline}
               roomState={state.roomState ?? "waiting"}
               roomVisibility={state.roomVisibility}
               roster={state.roster}

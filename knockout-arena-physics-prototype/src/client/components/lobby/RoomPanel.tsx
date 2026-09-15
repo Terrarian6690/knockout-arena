@@ -5,6 +5,7 @@ import {
 } from "../../network/displayName";
 import type { RoomState, RoomVisibility, RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
+import { AutoStartCountdown } from "./AutoStartCountdown";
 import { copyTextToClipboard, getInviteUrl } from "./invite";
 import { AnimatedEllipsis, WaitingIndicator } from "./WaitingIndicator";
 import { MAX_SEATS, MIN_PLAYERS, SeatList, seatLabel } from "./SeatList";
@@ -100,6 +101,12 @@ export interface RoomPanelProps {
    * who may start or join.
    */
   roomVisibility?: RoomVisibility | null;
+  /**
+   * PUBLIC ROOMS (Task 28): the server's absolute automatic-start
+   * timestamp, or null when no countdown is armed. Purely displayed —
+   * the panel derives no durations and starts nothing.
+   */
+  autoStartDeadline?: number | null;
 }
 
 export function RoomPanel({
@@ -114,6 +121,7 @@ export function RoomPanel({
   onSetName,
   onStart,
   roomVisibility,
+  autoStartDeadline,
 }: RoomPanelProps) {
   const isHost = hostPlayerId !== null && hostPlayerId === playerId;
   const badge = ROOM_STATE_BADGE[roomState];
@@ -305,7 +313,15 @@ export function RoomPanel({
           <span className="text-[11px] uppercase tracking-widest text-white/50">
             Room
           </span>
-          {isHost && (
+          {/* The HOST badge means exactly one thing to a player: "you are
+              the one who starts the match". In a PUBLIC room nobody
+              starts the match any more (Task 28) — the server does — so
+              the badge would advertise an authority that no longer
+              exists. Private rooms, where the host really does hold the
+              start button, are unchanged. (Host SUCCESSION still runs
+              server-side for both kinds of room; it is simply not
+              player-facing here.) */}
+          {isHost && !isPublic && (
             <span
               data-testid="host-badge"
               className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300"
@@ -488,7 +504,11 @@ export function RoomPanel({
           <SeatList
             roster={roster}
             selfPlayerId={playerId}
-            hostPlayerId={hostPlayerId}
+            /* Public rooms show no host marker at all (Task 28): with no
+               host-started match, "Host" would label an authority that
+               does not exist there. Passing null keeps SeatList itself
+               free of visibility rules. */
+            hostPlayerId={isPublic ? null : hostPlayerId}
           />
         </div>
 
@@ -510,7 +530,38 @@ export function RoomPanel({
         )}
 
         <div className="mt-3 flex flex-col gap-1.5">
-          {isHost && roomState === "waiting" && (
+          {/* PUBLIC rooms (Task 28): no player starts the match. The
+              server arms a countdown as soon as two players are seated
+              and starts the match itself when it expires, so the whole
+              waiting area is the countdown (or, below two players, the
+              existing "waiting for someone to join" copy). */}
+          {isPublic && roomState === "waiting" && (
+            <>
+              {autoStartDeadline != null ? (
+                <AutoStartCountdown deadline={autoStartDeadline} />
+              ) : (
+                <>
+                  <p
+                    data-testid="waiting-for-players"
+                    className="text-center text-xs leading-tight text-white/50"
+                  >
+                    Waiting for another player to join
+                    <span className="sr-only">…</span>
+                    <AnimatedEllipsis />
+                  </p>
+                  <p
+                    data-testid="public-waiting-hint"
+                    className="text-center text-xs leading-tight text-white/40"
+                  >
+                    You will be matched with the next player who picks Quick
+                    Play.
+                  </p>
+                </>
+              )}
+            </>
+          )}
+
+          {!isPublic && isHost && roomState === "waiting" && (
             <>
               <button
                 type="button"
@@ -534,29 +585,15 @@ export function RoomPanel({
                   data-testid="waiting-for-players"
                   className="text-center text-xs leading-tight text-white/50"
                 >
-                  {roomVisibility === "public"
-                    ? "Waiting for another player to join"
-                    : "Waiting for another player"}
+                  Waiting for another player
                   <span className="sr-only">…</span>
                   <AnimatedEllipsis />
-                </p>
-              )}
-              {/* Public rooms only: say how someone will arrive, since
-                  there is no code to share and nothing else to do. The
-                  wait is indefinite by design — no timeout, no bots — so
-                  the leave button below is the explicit way out. */}
-              {!enoughPlayers && roomVisibility === "public" && (
-                <p
-                  data-testid="public-waiting-hint"
-                  className="text-center text-xs leading-tight text-white/40"
-                >
-                  You will be matched with the next player who picks Quick Play.
                 </p>
               )}
             </>
           )}
 
-          {!isHost && roomState === "waiting" && (
+          {!isPublic && !isHost && roomState === "waiting" && (
             <p
               data-testid="waiting-for-host"
               className="py-0.5 text-center text-xs leading-tight text-white/50"

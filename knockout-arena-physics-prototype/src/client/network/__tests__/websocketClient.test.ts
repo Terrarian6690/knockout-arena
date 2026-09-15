@@ -166,6 +166,8 @@ describe("connection lifecycle", () => {
       roomVisibility: null,
       roster: [],
       hostPlayerId: null,
+      // Task 28: no room, so no public auto-start countdown.
+      autoStartDeadline: null,
       snapshot: null,
       winnerId: null,
       lastError: null,

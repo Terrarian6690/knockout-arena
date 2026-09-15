@@ -63,8 +63,21 @@ export interface NetworkClientState {
    */
   readonly roomVisibility: RoomVisibility | null;
   readonly roster: readonly RosterEntry[];
-  /** Seat id of the room host (only the host may start the match). */
+  /**
+   * Seat id of the room host. In PRIVATE rooms the host is the only
+   * player who may start the match. PUBLIC rooms have no player-started
+   * match at all (Task 28) — the server's countdown starts it — so there
+   * the host holds no start authority; the id is still tracked because
+   * succession keeps other room bookkeeping well-defined.
+   */
   readonly hostPlayerId: string | null;
+  /**
+   * PUBLIC ROOMS ONLY (Task 28): absolute server timestamp at which the
+   * match starts by itself, or null when no countdown is armed. The
+   * authoritative deadline — the client renders remaining time from it
+   * and owns no duration logic, exactly like the round deadline.
+   */
+  readonly autoStartDeadline: number | null;
   /** The latest authoritative snapshot, projected for THIS client. */
   readonly snapshot: GameStateSnapshot | null;
   readonly winnerId: string | null;

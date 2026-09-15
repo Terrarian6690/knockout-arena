@@ -128,6 +128,8 @@ export type ServerMessage =
       playerId: string;
       roomState: RoomState;
       roomVisibility: RoomVisibility | null;
+      /** Public auto-start deadline (Task 28); null when none is armed. */
+      autoStartDeadline: number | null;
       roster: RosterEntry[];
       hostPlayerId: string | null;
       /**
@@ -147,6 +149,8 @@ export type ServerMessage =
        * client degrades to generic copy rather than rejecting the frame.
        */
       roomVisibility: RoomVisibility | null;
+      /** Public auto-start deadline (Task 28); null when none is armed. */
+      autoStartDeadline: number | null;
       roster: RosterEntry[];
       hostPlayerId: string | null;
     }
@@ -184,6 +188,15 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
     );
   }
 
+  /**
+   * The public auto-start deadline (Task 28): an absolute server
+   * timestamp, or null. Presentation-only metadata — an absent or
+   * malformed value degrades to null (no countdown shown) rather than
+   * rejecting an otherwise good frame, exactly like the round deadline.
+   */
+  const asDeadline = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+
   switch (envelope.type) {
     case "welcome": {
       if (!isNonEmptyString(envelope.roomId) || !isNonEmptyString(envelope.playerId)) {
@@ -217,6 +230,7 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
           roomState,
           roster,
           hostPlayerId,
+          autoStartDeadline: asDeadline(envelope.autoStartDeadline),
           ...(reconnectToken !== null ? { reconnectToken } : {}),
         },
       };
@@ -246,6 +260,7 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
           roomVisibility,
           roster,
           hostPlayerId,
+          autoStartDeadline: asDeadline(envelope.autoStartDeadline),
         },
       };
     }

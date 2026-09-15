@@ -81,6 +81,13 @@ export interface GameServerOptions {
    * minutes). Server policy, forwarded to every match started here.
    */
   matchDurationMs?: number;
+  /**
+   * Called when a PUBLIC room's auto-start countdown started its match
+   * by itself (Task 28). The transport uses this to broadcast the new
+   * room state: nobody requested the start, so there is no request to
+   * answer — every seated client has to be told.
+   */
+  onAutoStart?: (room: RoomInfo) => void;
 }
 
 /** A seat result that carries the seat's reconnect credential. */
@@ -176,6 +183,18 @@ export interface GameServer {
   getSeat(session: unknown): { room: RoomInfo; playerId: string } | null;
   /** Start the room's match with its stable roster (creates the GameHost). */
   startMatch(roomId: unknown): StartResult;
+  /**
+   * A public room's automatic-start deadline (Task 28) as an absolute
+   * wall-clock timestamp, or null when no countdown is armed. Read-only
+   * observability — the countdown itself is server-owned.
+   */
+  autoStartDeadline(roomId: unknown): number | null;
+  /**
+   * Observe automatic match starts (Task 28). The transport subscribes
+   * here to broadcast the new room state: nobody requested an auto-start,
+   * so there is no reply to piggyback on. Returns an unsubscribe.
+   */
+  onAutoStart(listener: (room: RoomInfo) => void): () => void;
   /** Send a finished room back to its waiting lobby (Task 25). */
   returnToLobby(roomId: unknown): ReturnToLobbyResult;
   /**
@@ -218,9 +237,19 @@ export interface GameServer {
 }
 
 export function createGameServer(options?: GameServerOptions): GameServer {
+  /**
+   * Auto-start observers (Task 28). Held in a set rather than a single
+   * callback so the facade can be constructed before its transport and
+   * still notify it — the transport wraps an already-built game server.
+   */
+  const autoStartListeners = new Set<(room: RoomInfo) => void>();
   const manager: RoomManager = createRoomManager({
     roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
     matchDurationMs: options?.matchDurationMs,
+    onAutoStart: (room) => {
+      options?.onAutoStart?.(room);
+      for (const listener of autoStartListeners) listener(room);
+    },
   });
   const reservationMs = options?.reconnectReservationMs ?? DEFAULT_RESERVATION_MS;
   /** Live sessions by their opaque token (the registry's canonical objects). */
@@ -391,6 +420,16 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     return s ? manager.resolveSeat(s.token) : null;
   }
 
+  function onAutoStart(listener: (room: RoomInfo) => void): () => void {
+    autoStartListeners.add(listener);
+    return () => autoStartListeners.delete(listener);
+  }
+
+  function autoStartDeadline(roomId: unknown): number | null {
+    if (typeof roomId !== "string") return null;
+    return manager.autoStartDeadline(roomId);
+  }
+
   function startMatch(roomId: unknown): StartResult {
     const id = asRoomId(roomId);
     if (!id) return { ok: false, reason: "unknown-room" };
@@ -491,6 +530,8 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     getRoom,
     getSeat,
     startMatch,
+    autoStartDeadline,
+    onAutoStart,
     returnToLobby,
     resetMatch,
     resolveRound,

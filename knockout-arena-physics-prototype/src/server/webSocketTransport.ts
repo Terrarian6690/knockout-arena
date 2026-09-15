@@ -212,6 +212,15 @@ export function createTransportCore(
     }
   }
 
+  /**
+   * A public room started its match on its own (Task 28). No client
+   * asked for it, so nothing else would tell them: broadcast the new
+   * room state to everyone seated, exactly as a manual start does.
+   */
+  gameServer.onAutoStart((room) => {
+    broadcastRoomState(room);
+  });
+
   /** (Re)subscribe this connection to its room's viewer-projected states. */
   function subscribeView(state: ConnectionState): void {
     state.unsubscribeView?.();
@@ -402,7 +411,20 @@ export function createTransportCore(
           sendError(state, "not-in-room");
           return;
         }
-        // v1 policy: only the room host (the creator) may start the match.
+        // PUBLIC rooms have no player-initiated start at all (Task 28):
+        // the server's own countdown starts the match, so even the host
+        // cannot rush it. Rejecting here — rather than quietly ignoring
+        // it — keeps a stale or hand-rolled client from believing it
+        // started the game.
+        if (seat.room.visibility === "public") {
+          sendError(
+            state,
+            "unauthorized",
+            "public rooms start automatically — no player may start the match"
+          );
+          return;
+        }
+        // PRIVATE rooms are unchanged: only the room host may start.
         if (seat.playerId !== seat.room.hostPlayerId) {
           sendError(state, "unauthorized", "only the room host may start the match");
           return;

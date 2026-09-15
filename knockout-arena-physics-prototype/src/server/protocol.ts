@@ -236,6 +236,8 @@ export function welcomeMessage(
     roomVisibility: room.visibility,
     roster: room.seats.map(wireSeat),
     hostPlayerId: room.hostPlayerId,
+    /** See roomStateMessage: the public auto-start deadline (Task 28). */
+    autoStartDeadline: room.autoStartDeadline,
     reconnectToken,
   });
 }
@@ -259,6 +261,13 @@ export function roomStateMessage(room: RoomInfo): string {
     roomVisibility: room.visibility,
     roster: room.seats.map(wireSeat),
     hostPlayerId: room.hostPlayerId,
+    /**
+     * PUBLIC ROOMS ONLY (Task 28): absolute wall-clock timestamp of the
+     * automatic match start, or null when nothing is armed. The client
+     * renders a countdown from it and owns no duration logic — the same
+     * authoritative-deadline pattern as the round timer.
+     */
+    autoStartDeadline: room.autoStartDeadline,
   });
 }
 

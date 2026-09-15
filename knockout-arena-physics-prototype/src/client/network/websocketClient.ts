@@ -113,6 +113,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
     roomVisibility: null,
     roster: [],
     hostPlayerId: null,
+    autoStartDeadline: null,
     snapshot: null,
     winnerId: null,
     lastError: null,
@@ -152,6 +153,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
       roomVisibility: null,
       roster: [],
       hostPlayerId: null,
+      autoStartDeadline: null,
       snapshot: null,
       winnerId: null,
     });
@@ -227,6 +229,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
           roomVisibility: message.roomVisibility,
           roster: message.roster,
           hostPlayerId: message.hostPlayerId,
+          autoStartDeadline: message.autoStartDeadline,
         });
         return;
       case "room_state":
@@ -236,6 +239,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
           roomVisibility: message.roomVisibility,
           roster: message.roster,
           hostPlayerId: message.hostPlayerId,
+          autoStartDeadline: message.autoStartDeadline,
         });
         return;
       case "snapshot":

@@ -84,6 +84,25 @@ export const MAX_PLAYERS = CONFIG.match.maxPlayers;
  */
 export const DEFAULT_RESERVATION_MS = 30_000;
 
+/**
+ * AUTO-START (Task 28) — public rooms only.
+ *
+ * A public room has no host-controlled start: once it holds at least
+ * MIN_PLAYERS seated players, the server itself arms a countdown and
+ * starts the match when it reaches zero. The wait shortens sharply as
+ * the room fills, so a full room starts almost at once while a pair
+ * still gets several minutes for others to arrive.
+ *
+ * Indexed by seated-player count; counts below MIN_PLAYERS never arm.
+ */
+export const AUTO_START_MS_BY_PLAYERS: Readonly<Record<number, number>> = {
+  2: 300_000, // 5 min
+  3: 210_000, // 3.5 min
+  4: 60_000, // 1 min
+  5: 20_000, // 20 s
+  6: 3_000, // 3 s — still a visible countdown, not an instant start
+};
+
 /** Options for createRoomManager. */
 export interface RoomManagerOptions {
   /**
@@ -100,6 +119,17 @@ export interface RoomManagerOptions {
    * clients never influence it.
    */
   matchDurationMs?: number;
+  /**
+   * Wall-clock source for auto-start deadlines (Task 28). Injectable so
+   * tests can pin time deterministically. Defaults to Date.now.
+   */
+  clock?: () => number;
+  /**
+   * Called after a public room's countdown started a match on its own
+   * (Task 28). The transport uses it to broadcast the new room state —
+   * nothing else observes an auto-start, since no client asked for it.
+   */
+  onAutoStart?: (room: RoomInfo) => void;
   /**
    * Room-code generator, injectable so tests can drive collisions and
    * reuse deterministically. Must return a candidate 4-character code;
@@ -159,6 +189,19 @@ export interface RoomInfo {
    * start the match).
    */
   readonly hostPlayerId: string | null;
+  /**
+   * PUBLIC ROOMS ONLY (Task 28): the absolute wall-clock timestamp at
+   * which the server will start the match by itself, or null when no
+   * countdown is armed (a private room, fewer than MIN_PLAYERS seated,
+   * or a room that is already playing).
+   *
+   * Authoritative and server-owned, exactly like the round and match
+   * deadlines: the client renders the remaining time from this
+   * timestamp and holds no duration logic of its own. Public rooms have
+   * no host-controlled start at all — this is the only thing that
+   * starts their match.
+   */
+  readonly autoStartDeadline: number | null;
 }
 
 export type SeatResult =
@@ -286,6 +329,17 @@ interface RoomEntry {
   hostToken: string;
   host: GameHost | null;
   detachHost: (() => void) | null;
+  /**
+   * Public rooms only (Task 28): the armed auto-start countdown, or null
+   * when nothing is scheduled. `deadline` is an absolute wall-clock
+   * timestamp — the same shape the round/match deadlines use, so the
+   * client renders it with the existing deadline pattern and holds no
+   * duration logic of its own.
+   */
+  autoStart: {
+    timer: ReturnType<typeof setTimeout>;
+    deadline: number;
+  } | null;
   /** State listeners (the transport broadcast hook), per session token. */
   listeners: Array<{ token: string; cb: SerializedStateListener }>;
 }
@@ -328,6 +382,14 @@ export interface RoomManager {
    * Server-internal observability — used by the facade to stamp viewer
    * snapshots for countdown displays; deliberately NOT part of RoomInfo.
    */
+  /**
+   * The public room's AUTO-START deadline (Task 28) as an absolute
+   * wall-clock timestamp, or null when no countdown is armed (a private
+   * room, a room below MIN_PLAYERS, or a room already playing). Unlike
+   * the round/match deadlines this one IS surfaced to clients, through
+   * RoomInfo — a waiting room has no snapshot stream to carry it.
+   */
+  autoStartDeadline(roomId: string): number | null;
   roundDeadline(roomId: string): number | null;
   /**
    * The room match's hard TIME LIMIT as an absolute wall-clock
@@ -389,6 +451,8 @@ export interface RoomManager {
 }
 
 export function createRoomManager(options?: RoomManagerOptions): RoomManager {
+  const clock = options?.clock ?? Date.now;
+  const onAutoStart = options?.onAutoStart;
   const rooms = new Map<string, RoomEntry>();
   /** Player-facing room codes of ACTIVE rooms → their room (join lookup). */
   const roomsByCode = new Map<string, RoomEntry>();
@@ -443,6 +507,100 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     return n;
   }
 
+  // ── auto-start (Task 28): public rooms only ────────────────────────
+
+  /**
+   * Re-evaluate a public room's auto-start countdown after anything that
+   * could change its seated-player count or state.
+   *
+   * THE RULE (one place, applied everywhere):
+   *
+   *   - fewer than MIN_PLAYERS, or not a waiting public room → canceled.
+   *     A room that empties out never starts a match on one player.
+   *   - otherwise the table value for the CURRENT count is a CANDIDATE,
+   *     and the countdown only ever moves EARLIER: the new deadline is
+   *     min(existing, candidate).
+   *
+   * That single monotonic rule is doing two jobs at once, deliberately:
+   *
+   *   - an arriving player can only bring the match forward, never push
+   *     it back, which is what makes a filling room feel like it is
+   *     accelerating;
+   *   - and a FULL room's countdown is thereby committed for free. Once
+   *     six players have pulled the deadline in to three seconds, no
+   *     departure can lengthen it again (the 5-player candidate is
+   *     always later, so the minimum keeps the committed deadline). No
+   *     separate "locked" flag is needed to express that — it would be
+   *     unreachable code under this table, where the wait shortens
+   *     monotonically with every extra player.
+   *
+   * Dropping below MIN_PLAYERS still cancels outright: a committed
+   * deadline must not survive a room that has no opponents left.
+   */
+  function reconcileAutoStart(room: RoomEntry): void {
+    if (rooms.get(room.id) !== room) return; // destroyed: nothing to arm
+
+    const eligible =
+      room.visibility === "public" &&
+      room.state === "waiting" &&
+      connectedCount(room) >= MIN_PLAYERS;
+
+    if (!eligible) {
+      cancelAutoStart(room);
+      return;
+    }
+
+    const players = connectedCount(room);
+    const configured = AUTO_START_MS_BY_PLAYERS[players];
+    /* c8 ignore next */
+    if (configured === undefined) return; // unreachable: 2..MAX_PLAYERS are all mapped
+
+    const existing = room.autoStart;
+    const candidate = clock() + configured;
+    // Only ever earlier. A join shortens the wait; nothing lengthens it.
+    const deadline =
+      existing === null ? candidate : Math.min(existing.deadline, candidate);
+
+    // Unchanged deadline: keep the running timer rather than restarting
+    // an identical one on every roster event.
+    if (existing !== null && existing.deadline === deadline) return;
+
+    clearAutoStartTimer(room);
+    const delay = Math.max(0, deadline - clock());
+    room.autoStart = {
+      timer: setTimeout(() => fireAutoStart(room), delay),
+      deadline,
+    };
+  }
+
+  /** Drop a room's pending auto-start timer without touching anything else. */
+  function clearAutoStartTimer(room: RoomEntry): void {
+    if (room.autoStart === null) return;
+    clearTimeout(room.autoStart.timer);
+  }
+
+  function cancelAutoStart(room: RoomEntry): void {
+    clearAutoStartTimer(room);
+    room.autoStart = null;
+  }
+
+  /**
+   * The countdown reached zero: start the match, with no player action
+   * involved. Every precondition is re-checked at fire time, because the
+   * roster can change in the instant before the timer runs.
+   */
+  function fireAutoStart(room: RoomEntry): void {
+    room.autoStart = null;
+    if (rooms.get(room.id) !== room) return; // destroyed while pending
+    if (room.visibility !== "public" || room.state !== "waiting") return;
+    if (connectedCount(room) < MIN_PLAYERS) return; // emptied out at the last moment
+
+    const result = startMatch(room.id);
+    /* c8 ignore next */
+    if (!result.ok) return; // lost a race with a manual/raced start — nothing to do
+    onAutoStart?.(infoOf(room));
+  }
+
   function infoOf(room: RoomEntry): RoomInfo {
     const seats: RoomSeatInfo[] = [];
     for (let i = 0; i < MAX_PLAYERS; i++) {
@@ -475,11 +633,13 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       visibility: room.visibility,
       seats,
       hostPlayerId: hostSeat === -1 ? null : `p${hostSeat}`,
+      autoStartDeadline: room.autoStart?.deadline ?? null,
     };
   }
 
   function destroyRoom(room: RoomEntry): void {
     for (const { timer } of room.reserved.values()) clearTimeout(timer);
+    cancelAutoStart(room); // no timer may outlive its room (Task 28)
     room.reserved.clear();
     if (room.detachHost) room.detachHost();
     room.detachHost = null;
@@ -532,6 +692,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       hostToken: token, // the creator is the room host
       host: null,
       detachHost: null,
+      autoStart: null,
       listeners: [],
     };
     rooms.set(room.id, room);
@@ -563,6 +724,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     const seat = lowestFreeSeat(room);
     if (seat === -1) return { ok: false, reason: "room-full" };
     room.seats[seat] = token;
+    reconcileAutoStart(room); // a new arrival may shorten the wait (Task 28)
     return { ok: true, room: infoOf(room), playerId: `p${seat}` };
   }
 
@@ -600,6 +762,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     /* c8 ignore next */
     if (seat === -1) return { ok: false, reason: "room-full" }; // unreachable: findOpenPublicRoom filters full rooms
     open.seats[seat] = token;
+    reconcileAutoStart(open); // public: arm or shorten the countdown (Task 28)
     return { ok: true, room: infoOf(open), playerId: `p${seat}` };
   }
 
@@ -702,6 +865,9 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       // survive into the next occupant.
       room.names[seat] = null;
     }
+    // A departure can drop the room below MIN_PLAYERS (cancel) or simply
+    // leave a locked full-room countdown alone (Task 28).
+    reconcileAutoStart(room);
     return infoOf(room);
   }
 
@@ -755,6 +921,12 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     if (!validKey(roomId)) return null;
     const room = resolveRoom(roomId);
     return room ? infoOf(room) : null;
+  }
+
+  function autoStartDeadline(roomId: string): number | null {
+    if (!validKey(roomId)) return null;
+    const room = resolveRoom(roomId);
+    return room?.autoStart?.deadline ?? null;
   }
 
   function roundDeadline(roomId: string): number | null {
@@ -834,6 +1006,10 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     }
     room.vacated.clear();
     room.state = "waiting";
+    // Task 25 sent the room back to its lobby: a public room arms a
+    // fresh countdown for the next match, exactly as it did for the
+    // first one (Task 28).
+    reconcileAutoStart(room);
   }
 
   function startMatch(roomId: string): StartResult {
@@ -876,6 +1052,8 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     });
     room.host = host;
     room.state = "playing";
+    // Whatever armed it, the match is running now: no countdown pends.
+    cancelAutoStart(room);
     // One subscription drives both the room lifecycle (finished detection)
     // and the broadcast hook for every seated session.
     room.detachHost = host.onStateChange((serialized) => {
@@ -1040,6 +1218,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     roundDeadline,
     matchDeadline,
     resolveSeat,
+    autoStartDeadline,
     startMatch,
     returnToLobby,
     resetMatch,

@@ -69,10 +69,13 @@ describe("a lone player in a public room", () => {
     expect(leave).toBeEnabled();
   });
 
-  it("cannot start a match alone", async () => {
+  it("has no start control at all, and no countdown yet", async () => {
     await soloPublicPlayer();
-    // The existing MIN_PLAYERS mirror — unchanged by this task.
-    expect(screen.getByTestId("start-match")).toBeDisabled();
+    // TASK 28: a public room has no player-initiated start whatsoever —
+    // the button is gone rather than merely disabled. With one player
+    // the server has armed nothing, so no countdown shows either.
+    expect(screen.queryByTestId("start-match")).toBeNull();
+    expect(screen.queryByTestId("auto-start-countdown")).toBeNull();
   });
 
   it("knows the room is public from server data, not a guess", async () => {
@@ -121,13 +124,16 @@ describe("when a second player joins", () => {
     expect(screen.queryByTestId("public-waiting-hint")).toBeNull();
   });
 
-  it("the start control becomes usable", async () => {
+  it("the server arms an auto-start countdown instead of a start button", async () => {
+    // TASK 28: reaching two players no longer enables a control — it
+    // schedules the match. The countdown is what the player now sees.
     const { harness } = await soloPublicPlayer();
     await addSecondPlayer(harness);
 
     await waitFor(() => {
-      expect(screen.getByTestId("start-match")).toBeEnabled();
+      expect(screen.getByTestId("auto-start-countdown")).toBeInTheDocument();
     });
+    expect(screen.queryByTestId("start-match")).toBeNull();
   });
 
   it("the roster reflects both players", async () => {

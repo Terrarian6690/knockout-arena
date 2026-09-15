@@ -225,23 +225,42 @@ describe("public rooms are not reachable by code over the wire", () => {
 });
 
 describe("a matchmade room plays like any other", () => {
-  it("the host starts the match through the normal path", () => {
+  // TASK 28 — public rooms lost the player-initiated start entirely.
+  // These two cases used to assert "the host may start, a guest may
+  // not"; the rule is now "NOBODY may start, the server's countdown
+  // does". The coverage is kept (and strengthened): both the privileged
+  // and unprivileged request are still exercised, and both must be
+  // refused without starting anything.
+  it("the host can no longer start a matchmade room by hand", () => {
     const { core } = newCore();
     const [host, guest] = quickJoin(core, 2);
     host!.receiveMsg(START);
 
-    expect(host!.ofType("error")).toEqual([]);
-    expect(guest!.ofType("snapshot").length).toBeGreaterThan(0);
+    expect(host!.lastOf("error")?.code).toBe("unauthorized");
+    // Nothing started: no snapshot reached anyone.
+    expect(guest!.ofType("snapshot")).toEqual([]);
+    expect(host!.ofType("snapshot")).toEqual([]);
   });
 
-  it("a non-host still cannot start it", () => {
+  it("a non-host cannot start it either", () => {
     const { core } = newCore();
     const [, guest] = quickJoin(core, 2);
     guest!.receiveMsg(START);
 
-    // Same authorization rule as a private room — unchanged.
-    expect(guest!.lastOf("error")?.code).toBeDefined();
+    expect(guest!.lastOf("error")?.code).toBe("unauthorized");
     expect(guest!.ofType("snapshot")).toEqual([]);
+  });
+
+  it("the room instead carries a server-armed auto-start deadline", () => {
+    // The replacement for the manual start: two seated players are
+    // enough for the server to schedule the match by itself.
+    const { core, server } = newCore();
+    const [a] = quickJoin(core, 2);
+    const roomId = welcomeOf(a!).roomId;
+    const room = server.getRoom(roomId)!;
+
+    expect(room.state).toBe("waiting");
+    expect(room.autoStartDeadline).not.toBeNull();
   });
 
   it("leaving frees the seat for the next matchmade player", () => {
