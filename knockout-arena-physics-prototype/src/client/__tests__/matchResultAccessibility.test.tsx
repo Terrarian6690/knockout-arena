@@ -321,8 +321,11 @@ describe("the existing overlay behaviour is unchanged", () => {
       pawns: sixPawns(null),
     });
     const result = screen.getByTestId("match-result");
-    expect(result).toHaveTextContent("No Survivor!");
-    expect(result).toHaveTextContent("Every pawn left the arena — total knockout!");
+    // Task 29 renamed the verdict to a DRAW and aligned the detail line
+    // with the live region's sentence; the presentation is otherwise
+    // unchanged (same card, same testid, same structure).
+    expect(result).toHaveTextContent("Draw — No Survivors");
+    expect(result).toHaveTextContent("No survivor — every pawn left the arena.");
   });
 
   it("does not duplicate the visible text into the visible overlay", async () => {
@@ -445,7 +448,9 @@ describe("the announcement covers every end-of-match state", () => {
     }));
     await feed(sockets, { phase: "finished", winnerId: null, pawns });
     expect(liveRegion()).toHaveTextContent(/no survivor/i);
-    expect(screen.getByTestId("match-result")).toHaveTextContent("No Survivor!");
+    expect(screen.getByTestId("match-result")).toHaveTextContent(
+      "Draw — No Survivors"
+    );
   });
 
   it("announces once when arriving at an ALREADY finished match", async () => {

@@ -342,8 +342,8 @@ describe("multiplayer game: match completion", () => {
       sockets[0].serverMessage(wire.matchFinished(null));
     });
     const result = screen.getByTestId("match-result");
-    expect(result).toHaveTextContent("No Survivor!");
-    expect(result).toHaveTextContent("Every pawn left the arena");
+    expect(result).toHaveTextContent("Draw — No Survivors");
+    expect(result).toHaveTextContent("every pawn left the arena");
   });
 
   it("Back to lobby leaves the room (leave_room on the wire)", async () => {

@@ -139,7 +139,13 @@ export function MatchResultOverlay({
         }
         className={cn(
           "pointer-events-auto flex flex-col items-center gap-4 rounded-2xl border bg-slate-900/90 px-8 py-7 text-center shadow-2xl outline-none",
-          won ? "border-emerald-400/30" : "border-red-400/30"
+          // A draw is neither a win nor a personal defeat: it gets its
+          // own neutral frame rather than borrowing the loss styling.
+          winnerId === null
+            ? "border-white/20"
+            : won
+              ? "border-emerald-400/30"
+              : "border-red-400/30"
         )}
       >
         <div aria-hidden="true" className="text-5xl">{winnerId === null ? "💥" : won ? "🏆" : "💥"}</div>
@@ -147,18 +153,25 @@ export function MatchResultOverlay({
           id="match-result-title"
           className={cn(
             "text-2xl font-black tracking-tight",
-            won ? "text-emerald-300" : "text-red-300"
+            winnerId === null
+              ? "text-white/80"
+              : won
+                ? "text-emerald-300"
+                : "text-red-300"
           )}
         >
           {winnerId === null
-            ? "No Survivor!"
+            ? "Draw — No Survivors"
             : won
               ? "Victory!"
               : "Knocked Out!"}
         </h2>
         <p id="match-result-detail" className="max-w-xs text-sm text-white/60">
           {winnerId === null
-            ? "Every pawn left the arena — total knockout!"
+            ? // Deliberately the same sentence the live region announces
+              // (see `announcement` above), so a sighted player and a
+              // screen-reader user are told the same thing.
+              "No survivor — every pawn left the arena."
             : won
               ? "Every rival pawn left the arena. Flawless round."
               : `${winnerName} wins the match.`}

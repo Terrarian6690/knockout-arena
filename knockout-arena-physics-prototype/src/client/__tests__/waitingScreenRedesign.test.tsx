@@ -348,11 +348,12 @@ describe("the waiting hints keep their Task 18 behaviour", () => {
     expect(screen.getByTestId("leave-room")).toBeInTheDocument();
   });
 
-  it("the private lone-player hint is unchanged", async () => {
+  it("the private room shows no waiting hint (Task 29)", async () => {
+    // Removed deliberately: in a private room the host's own disabled
+    // Start button and the seat count already convey the wait. The
+    // PUBLIC equivalent is asserted above and is unchanged.
     await seatedPlayer("private");
-    expect(screen.getByTestId("waiting-for-players")).toHaveTextContent(
-      /waiting for another player/i
-    );
+    expect(screen.queryByTestId("waiting-for-players")).toBeNull();
     expect(screen.queryByTestId("public-waiting-hint")).toBeNull();
   });
 

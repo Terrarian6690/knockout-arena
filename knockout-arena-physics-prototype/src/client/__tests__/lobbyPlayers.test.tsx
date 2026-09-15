@@ -187,14 +187,14 @@ describe("start-match UX", () => {
   it("disables Start below the server's 2-player minimum, with a reason", async () => {
     const { harness, host } = await seatedHost();
 
-    // The host alone: the button is visible but disabled, and the room
-    // says WHY — a UX mirror of the server's not-enough-players rule.
+    // The host alone: the button is visible but disabled — the UX mirror
+    // of the server's not-enough-players rule. (Task 29 dropped the
+    // redundant "waiting for another player" sentence from PRIVATE
+    // rooms; the disabled button and the seat count already say it.)
     expect(screen.getByTestId("start-match")).toBeDisabled();
-    expect(screen.getByTestId("waiting-for-players")).toHaveTextContent(
-      "Waiting for another player"
-    );
+    expect(screen.queryByTestId("waiting-for-players")).toBeNull();
 
-    // A second player seats (live): the button arms, the hint disappears.
+    // A second player seats (live): the button arms.
     await seatGuest(harness, host.client);
     expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
     expect(screen.getByTestId("start-match")).toBeEnabled();

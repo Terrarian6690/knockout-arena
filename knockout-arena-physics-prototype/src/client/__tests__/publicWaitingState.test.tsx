@@ -275,7 +275,7 @@ describe("private rooms are unaffected", () => {
     expect(player.client.getState().roomVisibility).toBe("private");
   });
 
-  it("keep the original waiting wording, without the public hint", async () => {
+  it("show no waiting sentence at all — the disabled Start says it", async () => {
     const harness = createServerHarness();
     const player = harness.addPlayer();
     await connectPlayer(player);
@@ -285,10 +285,13 @@ describe("private rooms are unaffected", () => {
     });
     await waitFor(() => expect(player.client.getState().roomId).not.toBeNull());
 
-    expect(screen.getByTestId("waiting-for-players")).toHaveTextContent(
-      "Waiting for another player…"
-    );
+    // Task 29: the private room's waiting line was redundant next to
+    // its own disabled Start button, so it is gone. The public hint was
+    // never shown here and still is not.
+    expect(screen.queryByTestId("waiting-for-players")).toBeNull();
     expect(screen.queryByTestId("public-waiting-hint")).toBeNull();
+    // The control that carries the meaning is still present.
+    expect(screen.getByTestId("start-match")).toBeDisabled();
   });
 
   it("still leave through the same control", async () => {

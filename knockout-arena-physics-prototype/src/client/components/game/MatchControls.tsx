@@ -52,11 +52,12 @@ export function MatchControls({
         />
       </div>
 
-      {/* Current power readout */}
+      {/* Current power readout. The "Level" caption that used to sit
+          here was redundant next to the "Power" selector it reports on
+          (Task 29). Nothing accessible depended on it: the selector
+          carries its own role="group" + aria-label="Power" and each
+          button is labelled "Power N". */}
       <div className="text-center">
-        <div className="text-[11px] uppercase tracking-widest text-white/50">
-          Level
-        </div>
         <div
           data-testid="power-readout"
           className="text-3xl font-black tabular-nums text-amber-400"

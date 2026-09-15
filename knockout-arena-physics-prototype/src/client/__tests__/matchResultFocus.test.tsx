@@ -152,7 +152,7 @@ describe("focus moves into the overlay when the match ends", () => {
   it("focuses the no-survivor dialog too", async () => {
     await renderOverlay({ winnerId: null, localPawnId: "p0", pawns: sixPawns(null) });
     expect(dialog()).toHaveFocus();
-    expect(dialog()).toHaveAccessibleName("No Survivor!");
+    expect(dialog()).toHaveAccessibleName("Draw — No Survivors");
   });
 
   it("does not re-steal focus on later re-renders", async () => {

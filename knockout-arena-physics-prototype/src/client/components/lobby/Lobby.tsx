@@ -431,7 +431,10 @@ function HomeView({
             htmlFor="player-name-input"
             className="text-[11px] uppercase tracking-widest text-white/50"
           >
-            Your name <span className="text-amber-300">(required)</span>
+            {/* Task 29: the requirement reads as a requirement — the
+                design system's danger red (red-300, already used by the
+                error banner and the leave control), not amber. */}
+            Your name <span className="text-red-300">(required)</span>
           </label>
           <input
             id="player-name-input"
@@ -494,7 +497,7 @@ function HomeView({
           <p
             id="name-gate-hint"
             data-testid="name-gate-hint"
-            className="mt-1 text-center text-xs text-amber-300/80"
+            className="mt-1 text-center text-xs text-red-300/90"
           >
             Enter a name above to play.
           </p>

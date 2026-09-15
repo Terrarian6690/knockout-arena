@@ -513,18 +513,35 @@ export function RoomPanel({
         </div>
 
         {roomState === "finished" && (
+          /* A DRAW is not a victory (Task 29): with no winner this used
+             to render the trophy in the same emerald "someone won"
+             frame. The verdict is unchanged — only how it is dressed —
+             and the wording now matches the match overlay and its live
+             region exactly, so every surface says one thing. */
           <div
             data-testid="match-result"
-            className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-center"
+            className={cn(
+              "mt-3 rounded-xl border px-4 py-2 text-center",
+              winnerId
+                ? "border-emerald-400/30 bg-emerald-500/10"
+                : "border-white/20 bg-white/[0.04]"
+            )}
           >
-            <div className="text-3xl">🏆</div>
-            <p className="mt-1 text-lg font-black text-emerald-300">
+            <div className="text-3xl" aria-hidden="true">
+              {winnerId ? "🏆" : "💥"}
+            </div>
+            <p
+              className={cn(
+                "mt-1 text-lg font-black",
+                winnerId ? "text-emerald-300" : "text-white/80"
+              )}
+            >
               {winnerId
                 ? `${
                     roster.find((entry) => entry.playerId === winnerId)
                       ?.displayName ?? seatLabel(winnerId)
                   } wins!`
-                : "No survivor — total knockout!"}
+                : "Draw — no survivor, every pawn left the arena."}
             </p>
           </div>
         )}
@@ -580,16 +597,12 @@ export function RoomPanel({
               >
                 {startPending ? "Starting…" : "Start Match"}
               </button>
-              {!enoughPlayers && (
-                <p
-                  data-testid="waiting-for-players"
-                  className="text-center text-xs leading-tight text-white/50"
-                >
-                  Waiting for another player
-                  <span className="sr-only">…</span>
-                  <AnimatedEllipsis />
-                </p>
-              )}
+              {/* No "waiting for another player" line here (Task 29):
+                  in a PRIVATE room the host already sees the seat list
+                  and the disabled Start button, so the sentence only
+                  restated what the UI showed. Public rooms keep theirs
+                  — there the wait is the whole story until matchmaking
+                  or Task 28's countdown resolves it. */}
             </>
           )}
 
