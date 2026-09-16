@@ -376,8 +376,12 @@ describe("multiplayer aiming — the power control (19, 21, 5)", () => {
       { type: "setPower", power: 4 },
       { type: "setPower", power: 5 },
     ]);
-    // No fractional value exists to send: the readout shows the integer.
-    expect(screen.getByTestId("power-readout")).toHaveTextContent("5");
+    // No fractional value exists to send: the selector holds an integer
+    // level, and the last one clicked is the one left pressed.
+    expect(screen.getByTestId("power-level-5")).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
   });
 
   it("a power choice reaches the drawn arrow immediately (before the echo)", async () => {

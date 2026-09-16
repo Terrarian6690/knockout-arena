@@ -437,13 +437,20 @@ export function RoomPanel({
 
         {roomState === "waiting" && (
           <div className="mt-2">
-            {/* The label is visually hidden: the player already named
-                themselves on the home screen, so this is a rename box,
-                not a prompt. The accessible name is unchanged. */}
-            <label htmlFor="display-name-input" className="sr-only">
-              Your name
-            </label>
-            <div>
+            {/* Task 31: this label used to be sr-only (the player had
+                already named themselves on the home screen, so it read
+                as a rename box rather than a prompt). It is now VISIBLE
+                and sits to the left of the field, matching the home
+                screen. The element and its htmlFor are unchanged, so
+                the input still has exactly one accessible name — no
+                aria-label was added alongside it. */}
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="display-name-input"
+                className="shrink-0 whitespace-nowrap text-[11px] uppercase tracking-widest text-white/50"
+              >
+                Player name:
+              </label>
               <input
                 id="display-name-input"
                 data-testid="display-name-input"
@@ -471,7 +478,7 @@ export function RoomPanel({
                 spellCheck={false}
                 aria-invalid={nameError !== null}
                 className={cn(
-                  "w-full rounded-xl border bg-white/5 px-4 py-1.5 text-sm text-white outline-none transition-colors",
+                  "min-w-0 flex-1 rounded-xl border bg-white/5 px-4 py-1.5 text-sm text-white outline-none transition-colors",
                   "placeholder:text-white/50 focus:border-amber-400/50",
                   "disabled:cursor-not-allowed disabled:opacity-40",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",

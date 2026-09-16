@@ -64,7 +64,7 @@ describe("the display-name editor", () => {
   it("renders accessibly in the waiting room", async () => {
     await seatedHost();
 
-    const input = screen.getAllByLabelText("Your name").at(-1)!;
+    const input = screen.getAllByLabelText("Player name:").at(-1)!;
     expect(input).toBeEnabled();
     expect(input).toHaveAttribute("maxlength", "32"); // 2× the code-point max
     // Task 27: the name auto-saves — there is deliberately no Save
@@ -82,11 +82,11 @@ describe("the display-name editor", () => {
     const { host } = await seatedHost();
     const pair = host.pairs[0];
 
-    fireEvent.change(screen.getByLabelText("Your name"), {
+    fireEvent.change(screen.getByLabelText("Player name:"), {
       target: { value: "  Szymon  " },
     });
     // Task 27: blur is an explicit commit — no button to click.
-    fireEvent.blur(screen.getByLabelText("Your name"));
+    fireEvent.blur(screen.getByLabelText("Player name:"));
 
     // Exactly one wire message: the trimmed name.
     expect(lastSent(pair)).toEqual({
@@ -101,7 +101,7 @@ describe("the display-name editor", () => {
     expect(within(seat).getByText("You")).toBeInTheDocument();
     expect(within(seat).getByText("Host")).toBeInTheDocument();
     // The input adopts the server-confirmed name.
-    expect(screen.getByLabelText("Your name")).toHaveValue("Szymon");
+    expect(screen.getByLabelText("Player name:")).toHaveValue("Szymon");
   });
 
   it("validates locally: invalid names never reach the wire", async () => {
@@ -109,31 +109,31 @@ describe("the display-name editor", () => {
     const sentBefore = host.pairs[0].clientSent.length;
 
     // Whitespace-only: committing it sends nothing (no wire traffic).
-    fireEvent.change(screen.getByLabelText("Your name"), {
+    fireEvent.change(screen.getByLabelText("Player name:"), {
       target: { value: "   " },
     });
-    fireEvent.blur(screen.getByLabelText("Your name"));
+    fireEvent.blur(screen.getByLabelText("Player name:"));
 
     // Non-empty but invalid shapes: an explicit, non-color-only error
     // (role=alert), and still nothing on the wire. (Newlines cannot even
     // reach this point: the single-line input sanitizes them away — tab
     // and BEL survive the input and are rejected by the validator.)
     for (const bad of ["A".repeat(17), "A\tB", "A\u0007B"]) {
-      fireEvent.change(screen.getByLabelText("Your name"), {
+      fireEvent.change(screen.getByLabelText("Player name:"), {
         target: { value: bad },
       });
-      fireEvent.blur(screen.getByLabelText("Your name"));
+      fireEvent.blur(screen.getByLabelText("Player name:"));
       expect(screen.getByTestId("name-error")).toHaveTextContent(/characters/);
     }
     // Nothing was sent — the server never had to reject anything.
     expect(host.pairs[0].clientSent.length).toBe(sentBefore);
 
     // Typing clears the error; a valid save then works.
-    fireEvent.change(screen.getByLabelText("Your name"), {
+    fireEvent.change(screen.getByLabelText("Player name:"), {
       target: { value: "Alex" },
     });
     expect(screen.queryByTestId("name-error")).toBeNull();
-    fireEvent.blur(screen.getByLabelText("Your name"));
+    fireEvent.blur(screen.getByLabelText("Player name:"));
     expect(
       await screen.findByText("Alex", { selector: '[data-testid="seat-p0"] *' })
     ).toBeInTheDocument();
@@ -156,7 +156,7 @@ describe("the display-name editor", () => {
 
     // The name editor is a waiting-room affordance: it is gone with the
     // lobby (names are frozen into the match).
-    expect(screen.queryByLabelText("Your name")).toBeNull();
+    expect(screen.queryByLabelText("Player name:")).toBeNull();
     expect(screen.queryByTestId("save-name")).toBeNull();
   });
 
@@ -219,10 +219,10 @@ describe("the display-name editor", () => {
 
   it("the name survives an unexpected drop and reconnect (same seat)", async () => {
     const { host } = await seatedHost();
-    fireEvent.change(screen.getByLabelText("Your name"), {
+    fireEvent.change(screen.getByLabelText("Player name:"), {
       target: { value: "Szymon" },
     });
-    fireEvent.blur(screen.getByLabelText("Your name"));
+    fireEvent.blur(screen.getByLabelText("Player name:"));
     expect(await screen.findByText("Szymon")).toBeInTheDocument();
 
     // Unexpected drop: the seat is reserved; the client retries.
@@ -245,16 +245,16 @@ describe("the display-name editor", () => {
       return s.textContent?.includes("Szymon") ? s : null;
     });
     expect(seat).not.toBeNull();
-    expect(screen.getByLabelText("Your name")).toHaveValue("Szymon");
+    expect(screen.getByLabelText("Player name:")).toHaveValue("Szymon");
     expect(within(seat as HTMLElement).getByText("You")).toBeInTheDocument();
   });
 
   it("Enter in the input saves too (keyboard path)", async () => {
     const { host } = await seatedHost();
-    fireEvent.change(screen.getByLabelText("Your name"), {
+    fireEvent.change(screen.getByLabelText("Player name:"), {
       target: { value: "Zosia" },
     });
-    fireEvent.keyDown(screen.getByLabelText("Your name"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Player name:"), { key: "Enter" });
     expect(lastSent(host.pairs[0])).toEqual({
       protocolVersion: 1,
       type: "set_name",

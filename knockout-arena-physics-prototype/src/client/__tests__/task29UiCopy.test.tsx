@@ -141,9 +141,13 @@ describe("the match controls lost the redundant Level caption", () => {
   });
 
   it("still shows the current power value", () => {
-    // Removing the caption must not remove the readout it captioned.
+    // Task 31 removed the numeric readout this caption used to sit
+    // above, so the selector is now the only thing stating the level —
+    // it must still do so, visibly.
     renderControls();
-    expect(screen.getByTestId("power-readout")).toHaveTextContent("3");
+    const selected = screen.getByTestId("power-level-3");
+    expect(selected).toHaveAttribute("aria-pressed", "true");
+    expect(selected).toHaveTextContent("3");
   });
 
   it("keeps the power selector's accessible names intact", () => {

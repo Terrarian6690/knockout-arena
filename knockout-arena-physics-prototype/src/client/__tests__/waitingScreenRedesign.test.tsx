@@ -313,7 +313,7 @@ describe("the lobby fits on screen without scrolling", () => {
     expect(screen.getByTestId("start-match")).toBeInTheDocument();
     expect(screen.getByTestId("leave-room")).toBeInTheDocument();
     expect(screen.getByTestId("connection-status")).toBeInTheDocument();
-    expect(screen.getByLabelText("Your name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Player name:")).toBeInTheDocument();
     expect(screen.getByTestId("local-player-id")).toBeInTheDocument();
   });
 

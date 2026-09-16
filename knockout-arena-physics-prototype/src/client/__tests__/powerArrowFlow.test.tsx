@@ -45,7 +45,10 @@ describe("the arrow drives the real launch flow", () => {
     expect(onPowerChange.mock.calls.map(([p]) => p)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it("keeps the readout in step with the selected level", () => {
+  it("keeps the selection in step with the current level", () => {
+    // The numeric readout this used to check is gone (Task 31); the
+    // selector itself still states the level, in the two ways that
+    // matter — the pressed button and its visible digit.
     for (const level of [1, 2, 3, 4, 5]) {
       const view = render(
         <MatchControls
@@ -56,13 +59,16 @@ describe("the arrow drives the real launch flow", () => {
           onLaunch={noop}
         />
       );
-      expect(screen.getByTestId("power-readout")).toHaveTextContent(
-        String(level)
+      const selected = screen.getByTestId(`power-level-${level}`);
+      expect(selected).toHaveAttribute("aria-pressed", "true");
+      expect(selected).toHaveTextContent(String(level));
+      // Exactly one level is ever pressed.
+      const pressed = [1, 2, 3, 4, 5].filter(
+        (n) =>
+          screen.getByTestId(`power-level-${n}`).getAttribute("aria-pressed") ===
+          "true"
       );
-      expect(screen.getByTestId(`power-level-${level}`)).toHaveAttribute(
-        "aria-pressed",
-        "true"
-      );
+      expect(pressed).toEqual([level]);
       view.unmount();
     }
   });
@@ -102,7 +108,6 @@ describe("the arrow drives the real launch flow", () => {
       "aria-pressed",
       "true"
     );
-    expect(screen.getByTestId("power-readout")).toHaveTextContent("4");
   });
 });
 

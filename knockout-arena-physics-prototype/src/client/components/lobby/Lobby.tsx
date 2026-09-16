@@ -427,38 +427,44 @@ function HomeView({
             is asked for before any of them are offered. The buttons stay
             clickable without it and explain the requirement on use. */}
         <div className="mt-3">
-          <label
-            htmlFor="player-name-input"
-            className="text-[11px] uppercase tracking-widest text-white/50"
-          >
-            {/* Task 29: the requirement reads as a requirement — the
-                design system's danger red (red-300, already used by the
-                error banner and the leave control), not amber. */}
-            Your name <span className="text-red-300">(required)</span>
-          </label>
-          <input
-            id="player-name-input"
-            data-testid="player-name-input"
-            ref={nameInputRef}
-            value={playerName}
-            onChange={(event) => onPlayerNameChange(event.target.value)}
-            placeholder="e.g. Ada"
-            // Bounds the UTF-16 units at 2× the code-point maximum, so
-            // every valid name (including surrogate pairs) still fits.
-            maxLength={2 * MAX_DISPLAY_NAME_LENGTH}
-            autoComplete="nickname"
-            spellCheck={false}
-            required
-            aria-required="true"
-            aria-invalid={nameError !== null}
-            aria-describedby={nameError !== null ? "player-name-error" : undefined}
-            className={cn(
-              "mt-1 w-full rounded-xl border bg-white/5 px-4 py-2 text-sm text-white outline-none transition-colors",
-              "placeholder:text-white/50 focus:border-amber-400/50",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
-              nameError !== null ? "border-red-400/50" : "border-white/15"
-            )}
-          />
+          {/* Task 31: the label sits BESIDE the field, not above it. It
+              was already a real <label htmlFor>, so this is a layout
+              change — the input keeps exactly one accessible name and
+              gains no competing aria-label. */}
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="player-name-input"
+              className="shrink-0 whitespace-nowrap text-[11px] uppercase tracking-widest text-white/50"
+            >
+              {/* Task 29: the requirement reads as a requirement — the
+                  design system's danger red (red-300, already used by
+                  the error banner and the leave control), not amber. */}
+              Player name: <span className="text-red-300">(required)</span>
+            </label>
+            <input
+              id="player-name-input"
+              data-testid="player-name-input"
+              ref={nameInputRef}
+              value={playerName}
+              onChange={(event) => onPlayerNameChange(event.target.value)}
+              placeholder="e.g. Ada"
+              // Bounds the UTF-16 units at 2× the code-point maximum, so
+              // every valid name (including surrogate pairs) still fits.
+              maxLength={2 * MAX_DISPLAY_NAME_LENGTH}
+              autoComplete="nickname"
+              spellCheck={false}
+              required
+              aria-required="true"
+              aria-invalid={nameError !== null}
+              aria-describedby={nameError !== null ? "player-name-error" : undefined}
+              className={cn(
+                "min-w-0 flex-1 rounded-xl border bg-white/5 px-4 py-2 text-sm text-white outline-none transition-colors",
+                "placeholder:text-white/50 focus:border-amber-400/50",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+                nameError !== null ? "border-red-400/50" : "border-white/15"
+              )}
+            />
+          </div>
           {nameError !== null && (
             <p
               id="player-name-error"

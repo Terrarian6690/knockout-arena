@@ -183,7 +183,8 @@ describe("multiplayer game: round ownership", () => {
     const { sockets } = await renderGame();
     await feed(sockets, { phase: "finished", winnerId: "p0" });
     expect(screen.queryByTestId("launch")).toBeNull(); // bar hidden entirely
-    expect(screen.queryByTestId("power-readout")).toBeNull();
+    expect(screen.queryByTestId("match-controls")).toBeNull();
+    expect(screen.queryByTestId("power-meter")).toBeNull();
   });
 
   it("disables controls for an eliminated local pawn (guard)", async () => {
@@ -254,10 +255,26 @@ describe("multiplayer game: commands", () => {
     fireEvent.click(screen.getByRole("button", { name: "Power 5" }));
     expect(sentCommands(sockets)).toEqual([{ type: "setPower", power: 5 }]);
     // Local pending value for responsiveness (authoritative was 3)…
-    expect(screen.getByTestId("power-readout")).toHaveTextContent("5");
+    // The numeric readout is gone (Task 31), so the selector's own
+    // pressed state is what shows the pending choice.
+    expect(screen.getByTestId("power-level-5")).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getByTestId("power-level-3")).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
     // …and the next server snapshot replaces it authoritatively.
     await feed(sockets, { power: 4 });
-    expect(screen.getByTestId("power-readout")).toHaveTextContent("4");
+    expect(screen.getByTestId("power-level-4")).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getByTestId("power-level-5")).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
   });
 
   it("launch: sends confirmLaunch", async () => {

@@ -1,11 +1,9 @@
-import { CONFIG } from "../../../game";
 import { cn } from "../../utils/cn";
 import { PowerMeter } from "./PowerMeter";
 
 /**
  * The multiplayer control bar — the bottom strip of the match screen:
- * the power arrow (1..5), the numeric power readout, and the CONFIRM
- * control. Every control only SENDS AN INTENT: the displayed
+ * the power arrow (1..5) and the CONFIRM control. Every control only SENDS AN INTENT: the displayed
  * power is the authoritative one (optionally the local pending choice
  * until the next server snapshot replaces it), and Confirm locks in the
  * player's CURRENT aim + power for the CURRENT round (confirmLaunch) —
@@ -52,20 +50,19 @@ export function MatchControls({
         />
       </div>
 
-      {/* Current power readout. The "Level" caption that used to sit
-          here was redundant next to the "Power" selector it reports on
-          (Task 29). Nothing accessible depended on it: the selector
-          carries its own role="group" + aria-label="Power" and each
-          button is labelled "Power N". */}
-      <div className="text-center">
-        <div
-          data-testid="power-readout"
-          className="text-3xl font-black tabular-nums text-amber-400"
-        >
-          {power}
-        </div>
-        <div className="text-[11px] text-white/50">/ {CONFIG.power.max}</div>
-      </div>
+      {/* The numeric power readout ("3" over "/ 5") that used to sit
+          between the selector and Confirm is gone (Task 31), as is the
+          "Level" caption above it (Task 29). It described a value the
+          selector already states twice over: every level button renders
+          its own digit, and the selected one is an inverted white chip
+          with a ring — never colour alone.
+
+          Nothing accessible was lost with it. The readout was plain
+          text with no aria-live, no aria-label and no id anything
+          pointed at; the PowerMeter owns the whole accessibility
+          contract (role="group" + aria-label="Power", per-button
+          aria-label="Power N" and aria-pressed on the current level),
+          so a screen reader still hears which power is selected. */}
 
       <div className="flex flex-col items-center gap-1">
         {/* The commitment: CURRENT aim + CURRENT power → CONFIRM. The
