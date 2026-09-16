@@ -12,6 +12,24 @@ import { audio } from "../../audio";
 import { cn } from "../../utils/cn";
 import { ArenaStateDescription } from "./ArenaStateDescription";
 
+/** One full fade-out-and-back of the shrink preview ring, in ms. */
+export const SHRINK_PULSE_PERIOD_MS = 1_600;
+
+/**
+ * The shrink preview's intensity at a moment in time: a smooth 1 → 0 → 1
+ * oscillation (raised cosine).
+ *
+ * Pure function of the clock, so it is identical on every client and
+ * needs no stored phase — a reconnecting player picks it up mid-breath
+ * rather than restarting it. It varies OPACITY only; the ring's radius
+ * and dash pattern never move, which is what keeps the preview readable
+ * as a fixed target rather than something sweeping across the floor.
+ */
+export function shrinkPreviewPulse(nowMs: number): number {
+  const phase = (nowMs % SHRINK_PULSE_PERIOD_MS) / SHRINK_PULSE_PERIOD_MS;
+  return (1 + Math.cos(2 * Math.PI * phase)) / 2;
+}
+
 /** DOM id linking the canvas to its text alternative (Task 12). */
 const ARENA_DESCRIPTION_ID = "arena-state-description";
 
@@ -101,6 +119,9 @@ export function ArenaView({
   const vfxRef = useRef<Vfx>(
     new Vfx({ reducedMotion: prefersReducedMotion(), arena: arenaRef.current })
   );
+  // Read once, like the Vfx flag above: a ref so the draw loop never
+  // re-subscribes and never triggers a React update.
+  const reducedMotionRef = useRef(prefersReducedMotion());
   const prevSnapshotRef = useRef<GameStateSnapshot | null>(null);
   // Last painted frame, so identical frames (static scenes, no motion
   // between a pair) are skipped instead of repainted every display frame.
@@ -145,7 +166,15 @@ export function ArenaView({
 
     // Any effect still animating forces a repaint (fading trails, flying
     // particles, decaying shake) — static scenes stay at zero extra paints.
-    const effectsActive = vfxRef.current.hasActivity(now);
+    //
+    // The pulsing shrink preview is animation too: without this the
+    // frame-skip below would hold the ring at one opacity for the whole
+    // round, because the snapshot object never changes while aiming.
+    // Reduced motion draws a constant ring, so it deliberately does NOT
+    // force repaints — it stays at zero extra paints, as before.
+    const previewPulsing =
+      !reducedMotionRef.current && visual.arena?.shrinkWarning === true;
+    const effectsActive = vfxRef.current.hasActivity(now) || previewPulsing;
 
     // Skip the repaint when nothing observable changed since the last one
     // (same visual object AND same geometry). Resizing the backing store
@@ -186,10 +215,23 @@ export function ArenaView({
             offsetY: transform.offsetY + shake.y,
           }
         : transform;
-    // Draw the arena the AUTHORITATIVE snapshot describes — the visual
-    // ring follows the server's radius, so a shrink is visible the
-    // moment its snapshot arrives (and never before).
-    render(ctx, visual, arenaFromSnapshot(visual), shaken, effects);
+    // Draw the arena the AUTHORITATIVE snapshot describes — the floor
+    // follows the server's radius, so a shrink is visible the moment its
+    // snapshot arrives (and never before).
+    //
+    // The shrink preview ring pulses between full intensity and fully
+    // invisible. The oscillation is computed from the wall clock rather
+    // than stored, so it cannot drift or survive a reconnect, and under
+    // prefers-reduced-motion it is pinned to full strength: the same
+    // ring, at the same radius, simply not animating.
+    render(
+      ctx,
+      visual,
+      arenaFromSnapshot(visual),
+      shaken,
+      effects,
+      reducedMotionRef.current ? 1 : shrinkPreviewPulse(now)
+    );
   }, []);
 
   // Every authoritative push: stamp it into the buffer, diff it against

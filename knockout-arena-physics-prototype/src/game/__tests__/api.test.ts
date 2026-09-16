@@ -26,6 +26,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   // radius as geometry (arenaFromSnapshot) and the schedule's derived
   // helpers. They are exported because the client genuinely uses them —
   // and so that nothing has to re-implement the schedule locally.
+  "arenaEdgeRadius",
   "arenaFromSnapshot",
   "arenaShrinkView",
   "createArena",

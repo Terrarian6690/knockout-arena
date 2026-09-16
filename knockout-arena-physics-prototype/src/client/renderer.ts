@@ -1,4 +1,4 @@
-import { CONFIG, floorRadius, playerColor, playerStroke, indicatorLength, type Arena, type GameStateSnapshot } from "../game";
+import { CONFIG, arenaEdgeRadius, createArena, playerColor, playerStroke, indicatorLength, type Arena, type GameStateSnapshot } from "../game";
 import type { EffectFrame } from "./effects";
 
 /**
@@ -14,6 +14,11 @@ import type { EffectFrame } from "./effects";
  * guess). Callers that pass nothing (e.g. the solo screen) render exactly
  * as before.
  */
+/** Dash count around the preview ring — constant at every radius. */
+const PREVIEW_DASHES = 36;
+/** Preview ring stroke width, in world units. */
+const PREVIEW_LINE_WIDTH = 3;
+
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
   width: number;
@@ -44,7 +49,14 @@ export function render(
   snapshot: GameStateSnapshot,
   arena: Arena,
   transform: { scale: number; offsetX: number; offsetY: number },
-  effects?: EffectFrame
+  effects?: EffectFrame,
+  /**
+   * Shrink-preview intensity, 0..1 (default 1 = full strength). The
+   * caller owns the oscillation so the renderer stays a pure function of
+   * its arguments: same inputs, same pixels. Reduced-motion callers
+   * simply never vary it.
+   */
+  previewPulse = 1
 ) {
   const { scale, offsetX, offsetY } = transform;
 
@@ -59,6 +71,17 @@ export function render(
   ctx.scale(scale, scale);
 
   drawArena(ctx, arena);
+
+  // The shrink preview sits on the floor, under the effects and pawns:
+  // it is scenery being announced, never something that can hide a pawn.
+  // Both the decision and the radius come from the authoritative
+  // snapshot — see drawShrinkPreview.
+  if (snapshot.arena?.shrinkWarning === true) {
+    const next = snapshot.arena.nextRadius;
+    if (typeof next === "number" && Number.isFinite(next)) {
+      drawShrinkPreview(ctx, arena, next, previewPulse);
+    }
+  }
 
   // Visual effects sit between the arena floor and every gameplay element:
   // trails deepest, then rings, then particles — nothing may obscure the
@@ -157,52 +180,96 @@ function drawWinnerHalo(ctx: CanvasRenderingContext2D, x: number, y: number, r: 
  * one (callers derive it from the snapshot via arenaFromSnapshot). The
  * whole drawing is relative to `arena.radius`, so the shrinking arena
  * needs no special drawing path: a smaller radius simply paints a smaller
- * floor, ring and glow, centered exactly as before.
+ * floor, centered exactly as before.
+ *
+ * NO BOUNDARY RING (Task 30). The arena used to be finished with three
+ * separate edge marks: an opaque `arenaWall` band filled between the
+ * floor and `arena.radius`, a 2px `arenaWallGlow` stroke on the floor
+ * edge, and a faint outer line. All three are gone — outside a shrink
+ * preview the floor simply fades into the background.
+ *
+ * The floor is now painted out to `arena.radius` itself rather than to
+ * `radius - wallThickness`. That is deliberate and it is what makes the
+ * removal honest: the elimination rule kills a pawn when its CENTER
+ * passes `floorRadius + pawnRadius`, which is exactly `arena.radius`
+ * (the wall band was precisely one pawn radius wide). Drawing the floor
+ * to the smaller radius while removing the band that used to cover the
+ * difference would have left pawns visibly dying a pawn-width out over
+ * empty space. The visible edge and the lethal edge are now the same
+ * circle at every size: 330, 290, 250, 210, 180.
  */
 function drawArena(ctx: CanvasRenderingContext2D, arena: Arena) {
   const cx = arena.centerX;
   const cy = arena.centerY;
-  const outer = arena.radius;
-  const inner = floorRadius(arena);
+  const floor = arenaEdgeRadius(arena);
 
-  // Floor gradient.
-  const g = ctx.createRadialGradient(cx, cy, inner * 0.2, cx, cy, inner);
+  // Floor gradient, out to the lethal edge.
+  const g = ctx.createRadialGradient(cx, cy, floor * 0.2, cx, cy, floor);
   g.addColorStop(0, CONFIG.colors.arenaFloorInner);
   g.addColorStop(1, CONFIG.colors.arenaFloor);
   ctx.beginPath();
-  ctx.arc(cx, cy, inner, 0, Math.PI * 2);
+  ctx.arc(cx, cy, floor, 0, Math.PI * 2);
   ctx.fillStyle = g;
   ctx.fill();
 
-  // Subtle grid rings for depth.
+  // Subtle grid rings for depth. These were always drawn, but the opaque
+  // wall disc used to be filled straight over them; with it gone they
+  // are finally visible, and they read as the arena's surface.
   ctx.strokeStyle = "rgba(255,255,255,0.05)";
   ctx.lineWidth = 1;
-  for (let r = inner * 0.25; r < inner; r += inner * 0.25) {
+  for (let r = floor * 0.25; r < floor; r += floor * 0.25) {
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
   }
+}
 
-  // Boundary ring (VISUAL ONLY — there is no physical wall; the ring
-  // marks the floor edge whose crossing eliminates by geometry).
-  ctx.beginPath();
-  ctx.arc(cx, cy, outer, 0, Math.PI * 2);
-  ctx.fillStyle = CONFIG.colors.arenaWall;
-  ctx.fill();
+/**
+ * The shrink PREVIEW ring: where the floor is about to be.
+ *
+ * Drawn only while the authoritative snapshot says a shrink lands when
+ * this round resolves (`arena.shrinkWarning`) and names the radius it
+ * will land at (`arena.nextRadius`). Both come from the server's own
+ * schedule projection, so the client never counts rounds, never knows
+ * the shrink interval, and cannot preview at the wrong moment: when the
+ * shrink happens the flag clears in the very same snapshot that carries
+ * the new radius, and at the minimum radius it is never set at all.
+ *
+ * `pulse` is a 0..1 intensity supplied by the caller (1 = full strength).
+ * The ring's geometry never depends on it — only its opacity — so a
+ * reduced-motion client pinned at 1 sees the identical ring, just still.
+ */
+function drawShrinkPreview(
+  ctx: CanvasRenderingContext2D,
+  arena: Arena,
+  nextRadius: number,
+  pulse: number
+) {
+  // Same center and the same clamping the rest of the arena geometry
+  // uses — never a hardcoded circle.
+  const target = createArena(nextRadius);
+  const r = arenaEdgeRadius(target);
+  if (!(r > 0)) return;
 
-  // Boundary inner glow.
+  const alpha = Math.max(0, Math.min(1, pulse));
+  if (alpha <= 0) return;
+
+  ctx.save();
   ctx.beginPath();
-  ctx.arc(cx, cy, inner, 0, Math.PI * 2);
-  ctx.strokeStyle = CONFIG.colors.arenaWallGlow;
-  ctx.lineWidth = 2;
+  ctx.arc(arena.centerX, arena.centerY, r, 0, Math.PI * 2);
+  // Dash lengths scale with the circle so every preview radius gets the
+  // same dash COUNT — the pattern reads identically at 290 and at 180.
+  const dash = (2 * Math.PI * r) / PREVIEW_DASHES;
+  ctx.setLineDash([dash * 0.55, dash * 0.45]);
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = CONFIG.colors.outOfBounds;
+  ctx.lineWidth = PREVIEW_LINE_WIDTH;
   ctx.stroke();
-
-  // Outer border line.
-  ctx.beginPath();
-  ctx.arc(cx, cy, outer, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(126,168,209,0.4)";
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
+  ctx.restore();
+  // Proxy-based test contexts do not implement save/restore state, so
+  // reset the two properties that would otherwise leak into later draws.
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
 }
 
 function drawPawn(

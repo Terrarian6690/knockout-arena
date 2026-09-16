@@ -52,6 +52,32 @@ export function floorRadius(arena: Arena): number {
 }
 
 /**
+ * THE VISIBLE EDGE of the arena — the circle the renderer paints the
+ * floor out to, and the exact distance at which a pawn's CENTER is
+ * eliminated.
+ *
+ * These are the same number by construction, which is the whole point of
+ * this helper. The elimination rule (isPawnOutOfBounds) fires at
+ * `floorRadius + pawnRadius`; the wall band that used to be drawn
+ * between the floor and `arena.radius` was precisely `wallThickness`
+ * wide, and wallThickness === pawn.radius === 16. So:
+ *
+ *     floorRadius(a) + pawn.radius  ===  a.radius - 16 + 16  ===  a.radius
+ *
+ * Before Task 30 the game drew an opaque band over that gap, so the edge
+ * players saw happened to coincide with the lethal distance. With the
+ * band removed, anything that draws "the edge" must use THIS helper
+ * rather than floorRadius(), or pawns appear to die a pawn-width out
+ * over the void. Renderer and preview ring both go through it.
+ *
+ * It is deliberately derived from the arena it is handed — never from
+ * CONFIG's initial radius — so it shrinks with the authoritative state.
+ */
+export function arenaEdgeRadius(arena: Arena): number {
+  return floorRadius(arena) + CONFIG.pawn.radius;
+}
+
+/**
  * The single authoritative elimination rule: a pawn is out of bounds when it
  * has completely left the playable floor — the distance from the arena
  * center exceeds the floor radius by more than the pawn's own radius, i.e.

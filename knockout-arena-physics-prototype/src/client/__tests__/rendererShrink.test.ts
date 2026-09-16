@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   CONFIG,
+  arenaEdgeRadius,
   arenaFromSnapshot,
   createArena,
   floorRadius,
   type GameStateSnapshot,
   type PawnSnapshot,
 } from "../../game";
+// Not part of the engine's public surface (see game/__tests__/api.test.ts),
+// so the elimination rule is imported from the module that owns it.
+import { isPawnOutOfBounds } from "../../game/arena";
 import { render } from "../renderer";
 
 /**
@@ -17,9 +21,15 @@ import { render } from "../renderer";
  * against the pure renderer with a recording 2D context (no canvas, no
  * DOM): the arcs it emits are the arena, so their radii are the proof.
  *
- * Also pinned: the boundary ring stays a VISUAL marker (drawing is all
+ * Also pinned: the drawn edge stays a VISUAL marker (drawing is all
  * that changes — no collider is involved on this side of the wire), and
  * an older snapshot without the arena field still draws a full arena.
+ *
+ * Task 30 removed the boundary ring: the floor is now painted out to the
+ * arena's own radius (the lethal edge) instead of to radius −
+ * wallThickness with an opaque band covering the gap. The radius the
+ * renderer draws is unchanged — only the number of circles it takes to
+ * get there.
  */
 
 const CX = CONFIG.arena.centerX;
@@ -140,15 +150,15 @@ function draw(snapshot: GameStateSnapshot) {
 describe("the renderer draws the AUTHORITATIVE arena radius", () => {
   it("draws the full arena for a fresh match", () => {
     const radii = arenaArcRadii(draw(snap(INITIAL)));
-    expect(radii).toContain(INITIAL); // the boundary ring
-    expect(radii).toContain(INITIAL - RING); // the floor edge
+    expect(radii).toContain(INITIAL); // the floor, out to the lethal edge
+    // The separate boundary-ring circle is gone (Task 30).
+    expect(radii).not.toContain(INITIAL - RING);
   });
 
   it("draws a SMALLER arena once the server has shrunk it", () => {
     const shrunk = INITIAL - CONFIG.arena.shrink.amount;
     const radii = arenaArcRadii(draw(snap(shrunk)));
     expect(radii).toContain(shrunk);
-    expect(radii).toContain(shrunk - RING);
     // …and nothing is still drawn at the old size.
     expect(radii).not.toContain(INITIAL);
     expect(radii).not.toContain(INITIAL - RING);
@@ -182,12 +192,29 @@ describe("the renderer draws the AUTHORITATIVE arena radius", () => {
     expect(radii).toContain(INITIAL);
   });
 
-  it("matches the logical floor the engine eliminates against", () => {
-    // The drawn floor edge and the elimination geometry must be the same
+  it("matches the logical boundary the engine eliminates against", () => {
+    // The drawn edge and the elimination geometry must be the same
     // number at every radius — one source of truth, one visible edge.
+    // Since Task 30 that number is arenaEdgeRadius (floor + pawn
+    // radius), the distance at which a pawn's center is out of bounds.
+    const pawnRadius = CONFIG.pawn.radius;
     for (const radius of [INITIAL, 280, MIN]) {
-      const radii = arenaArcRadii(draw(snap(radius)));
-      expect(radii).toContain(floorRadius(createArena(radius)));
+      const arena = createArena(radius);
+      const lethal = arenaEdgeRadius(arena);
+      // The drawn edge IS the lethal distance…
+      expect(arenaArcRadii(draw(snap(radius)))).toContain(lethal);
+      // …proven against the elimination rule itself, not just arithmetic:
+      // a hair inside survives, a hair outside does not.
+      expect(
+        isPawnOutOfBounds(arena, CX + lethal - 0.5, CY, pawnRadius)
+      ).toBe(false);
+      expect(
+        isPawnOutOfBounds(arena, CX + lethal + 0.5, CY, pawnRadius)
+      ).toBe(true);
+      // The old floor circle is no longer drawn.
+      expect(arenaArcRadii(draw(snap(radius)))).not.toContain(
+        floorRadius(arena)
+      );
     }
   });
 });

@@ -334,9 +334,13 @@ describe("the drawn arena edge IS the authoritative radius", () => {
     for (const radius of SCHEDULE) {
       const calls = draw(snapshotOf(MAX, { arena: arenaSnapshot(radius) }));
       const radii = arenaArcRadii(calls);
-      // The outer boundary ring and the floor, both from the snapshot.
+      // ONE edge now (Task 30): the floor is painted out to the lethal
+      // radius itself, and the boundary ring that used to be stroked
+      // between floor and rim is gone. The drawn edge is still exactly
+      // the snapshot's radius — that contract is unchanged, and it is
+      // now the same circle the elimination rule measures against.
       expect(radii).toContain(radius);
-      expect(radii).toContain(radius - CONFIG.arena.wallThickness);
+      expect(radii).not.toContain(radius - CONFIG.arena.wallThickness);
       // Nothing is drawn at the INITIAL radius once it has shrunk.
       if (radius !== CONFIG.arena.radius) {
         expect(radii).not.toContain(CONFIG.arena.radius);

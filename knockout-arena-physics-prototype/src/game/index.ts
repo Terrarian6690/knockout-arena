@@ -63,6 +63,7 @@ export { projectSnapshot } from "./project";
 export {
   createArena,
   floorRadius,
+  arenaEdgeRadius,
   // The shrinking arena: the snapshot → geometry accessor clients draw
   // with, plus the schedule's derived helpers. All of it reads the
   // AUTHORITATIVE radius — no consumer re-implements the schedule.
