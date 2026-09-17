@@ -193,16 +193,20 @@ describe("the renderer draws the AUTHORITATIVE arena radius", () => {
   });
 
   it("matches the logical boundary the engine eliminates against", () => {
-    // The drawn edge and the elimination geometry must be the same
-    // number at every radius — one source of truth, one visible edge.
-    // Since Task 30 that number is arenaEdgeRadius (floor + pawn
-    // radius), the distance at which a pawn's center is out of bounds.
+    // The drawn edge is the ONE source of truth for the arena's size at
+    // every radius: the renderer draws it and the engine derives
+    // elimination from it. The pawn's own size is part of that rule —
+    // it dies once a whole diameter has cleared the edge, so the lethal
+    // distance is arenaEdgeRadius + pawnRadius. (Killing exactly AT the
+    // drawn edge would mean dying with half the pawn still on the
+    // platform, which is the bug this arithmetic guards against.)
     const pawnRadius = CONFIG.pawn.radius;
     for (const radius of [INITIAL, 280, MIN]) {
       const arena = createArena(radius);
-      const lethal = arenaEdgeRadius(arena);
-      // The drawn edge IS the lethal distance…
-      expect(arenaArcRadii(draw(snap(radius)))).toContain(lethal);
+      const edge = arenaEdgeRadius(arena);
+      const lethal = edge + pawnRadius;
+      // The drawn edge is the circle the rule is measured from…
+      expect(arenaArcRadii(draw(snap(radius)))).toContain(edge);
       // …proven against the elimination rule itself, not just arithmetic:
       // a hair inside survives, a hair outside does not.
       expect(
@@ -211,6 +215,8 @@ describe("the renderer draws the AUTHORITATIVE arena radius", () => {
       expect(
         isPawnOutOfBounds(arena, CX + lethal + 0.5, CY, pawnRadius)
       ).toBe(true);
+      // Resting ON the drawn edge — half the pawn over the void — lives.
+      expect(isPawnOutOfBounds(arena, CX + edge, CY, pawnRadius)).toBe(false);
       // The old floor circle is no longer drawn.
       expect(arenaArcRadii(draw(snap(radius)))).not.toContain(
         floorRadius(arena)

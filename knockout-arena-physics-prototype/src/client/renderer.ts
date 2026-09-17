@@ -201,27 +201,48 @@ function drawWinnerHalo(ctx: CanvasRenderingContext2D, x: number, y: number, r: 
 function drawArena(ctx: CanvasRenderingContext2D, arena: Arena) {
   const cx = arena.centerX;
   const cy = arena.centerY;
-  const floor = arenaEdgeRadius(arena);
+  const edge = arenaEdgeRadius(arena);
 
-  // Floor gradient, out to the lethal edge.
-  const g = ctx.createRadialGradient(cx, cy, floor * 0.2, cx, cy, floor);
+  // THE PLATFORM. A solid blue disc out to the visible edge, so the
+  // arena reads as a surface you stand on rather than a faint gradient
+  // in the dark. (Task 30 removed this fill along with the boundary
+  // ring, which went too far: the ring is what had to go, not the
+  // platform itself.) The grid rings below are drawn ON TOP of it for
+  // depth — the old code painted this disc over them, which is why they
+  // were never visible.
+  ctx.beginPath();
+  ctx.arc(cx, cy, edge, 0, Math.PI * 2);
+  ctx.fillStyle = CONFIG.colors.arenaWall;
+  ctx.fill();
+
+  // Floor gradient inside the platform: darker towards the rim, so the
+  // surface has some depth instead of reading as a flat sticker.
+  const g = ctx.createRadialGradient(cx, cy, edge * 0.2, cx, cy, edge);
   g.addColorStop(0, CONFIG.colors.arenaFloorInner);
   g.addColorStop(1, CONFIG.colors.arenaFloor);
   ctx.beginPath();
-  ctx.arc(cx, cy, floor, 0, Math.PI * 2);
+  ctx.arc(cx, cy, edge, 0, Math.PI * 2);
+  ctx.globalAlpha = 0.45;
   ctx.fillStyle = g;
   ctx.fill();
+  ctx.globalAlpha = 1;
 
-  // Subtle grid rings for depth. These were always drawn, but the opaque
-  // wall disc used to be filled straight over them; with it gone they
-  // are finally visible, and they read as the arena's surface.
+  // Subtle grid rings for depth, now genuinely visible on the platform.
   ctx.strokeStyle = "rgba(255,255,255,0.05)";
   ctx.lineWidth = 1;
-  for (let r = floor * 0.25; r < floor; r += floor * 0.25) {
+  for (let r = edge * 0.25; r < edge; r += edge * 0.25) {
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
   }
+
+  // A soft rim so the platform's edge is legible against the background
+  // WITHOUT reinstating the hard white boundary ring Task 30 removed.
+  ctx.beginPath();
+  ctx.arc(cx, cy, edge, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(126,168,209,0.22)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
 }
 
 /**

@@ -3,6 +3,7 @@ import { CONFIG } from "./config";
 import { createPhysicsWorld, type PhysicsWorld } from "./physics";
 import {
   spawnPositionForSlot,
+  isPawnDroppedByShrink,
   isPawnOutOfBounds,
   initialArenaRadius,
   clampArenaRadius,
@@ -444,7 +445,11 @@ export function createGame(options?: GameOptions): GameHandle {
       const body = bodies.get(p.id);
       if (!body) continue;
       const pos = physics.position(body);
-      if (isPawnOutOfBounds(arena, pos.x, pos.y, p.radius)) {
+      // The SHRINK rule, not the round rule: the floor was pulled out
+      // from under everyone at once, so a pawn whose CENTRE is past the
+      // new edge has nothing left to stand on and falls. A pawn merely
+      // straddling the edge survives, as the comment below promises.
+      if (isPawnDroppedByShrink(arena, pos.x, pos.y)) {
         eliminatePawn(p, body);
       }
     }

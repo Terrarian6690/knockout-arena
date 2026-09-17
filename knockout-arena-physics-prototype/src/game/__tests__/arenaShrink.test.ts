@@ -8,7 +8,9 @@ import {
   floorRadius,
   spawnRingRadius,
   initialArenaRadius,
+  arenaEdgeRadius,
   isMinArenaRadius,
+  isPawnDroppedByShrink,
   isPawnOutOfBounds,
   minArenaRadius,
   shrinkDueAfterRound,
@@ -397,7 +399,20 @@ describe("the shrink moves the LOGICAL boundary (no physical wall)", () => {
     expect(s.arena!.radius).toBe(INITIAL - STEP);
     const p1 = s.pawns.find((p) => p.id === "p1")!;
     expect(p1.eliminated).toBe(true); // the smaller arena caught it
-    // …and it is genuinely outside the NEW boundary, by the ordinary rule.
+    // …and it is genuinely outside the NEW platform: its centre has no
+    // floor under it any more, which is the rule a shrink applies.
+    expect(
+      isPawnDroppedByShrink(
+        createArena(s.arena!.radius),
+        p1.position.x,
+        p1.position.y
+      )
+    ).toBe(true);
+    // Worth stating plainly: the ordinary in-round rule would NOT have
+    // caught this pawn. That rule gives a full diameter of grace so a
+    // shoved pawn can teeter on the rim and live. A shrink is not a
+    // shove — the floor left, so the pawn falls. The two rules differ on
+    // purpose, and this pawn is exactly the case that separates them.
     expect(
       isPawnOutOfBounds(
         createArena(s.arena!.radius),
@@ -405,7 +420,7 @@ describe("the shrink moves the LOGICAL boundary (no physical wall)", () => {
         p1.position.y,
         p1.radius
       )
-    ).toBe(true);
+    ).toBe(false);
     g.destroy();
   });
 
@@ -476,9 +491,12 @@ describe("the shrink moves the LOGICAL boundary (no physical wall)", () => {
   it("uses the CURRENT radius for elimination — the same pawn survives at 330 and dies at 240", () => {
     // One position, two arenas: proof that shrinking is exactly a change
     // of the geometric rule's input.
-    const between = floorRadius(createArena(270)) - 2; // inside 270, outside 240
-    const big = createArena(330);
     const small = createArena(240);
+    const big = createArena(330);
+    // Just past the small arena's threshold (drawn edge + a whole pawn
+    // diameter = 256), but comfortably inside the big one's (346).
+    const between = arenaEdgeRadius(small) + PAWN_R + 2; // 258
+    expect(between).toBeLessThan(arenaEdgeRadius(big) + PAWN_R);
     expect(isPawnOutOfBounds(big, CX, CY + between, PAWN_R)).toBe(false);
     expect(isPawnOutOfBounds(small, CX, CY + between, PAWN_R)).toBe(true);
   });

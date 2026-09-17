@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { CONFIG, launchSpeedFor } from "../config";
-import { createArena, floorRadius, spawnPositionForSlot } from "../arena";
+import {
+  arenaEdgeRadius,
+  createArena,
+  floorRadius,
+  spawnPositionForSlot,
+} from "../arena";
 import { createGame, type GameHandle } from "../game";
 import { projectSnapshot } from "../project";
 import type { GameState } from "../state";
@@ -20,6 +25,14 @@ import type { GameStateSnapshot } from "../types";
 const DT = CONFIG.simulation.fixedTimestepMs; // 1000/60
 const FLOOR = floorRadius(createArena()); // playable floor radius (314)
 const PAWN_R = CONFIG.pawn.radius; // 16
+/**
+ * The VISIBLE platform edge (330) and the elimination distance (346).
+ * A pawn survives until its whole diameter has cleared the drawn edge,
+ * so there is a 16-unit band (330 → 346) in which the pawn hangs over
+ * the void and is still alive.
+ */
+const EDGE = arenaEdgeRadius(createArena());
+const DEATH = EDGE + PAWN_R;
 /**
  * Spawn of the single default pawn: slot 0 of the arena's fixed spawn
  * ring (arena.ts). Derived, never hard-coded, so the suite follows the
@@ -420,16 +433,19 @@ describe("elimination (geometric rule)", () => {
       g.update(DT);
       if (g.snapshot().phase === "finished") break;
     }
-    // While still "moving", the pawn never fully left the floor…
+    // While still "moving", the pawn had not yet cleared the platform…
     for (const entry of seen) {
       if (entry.phase === "moving") {
-        expect(entry.dist).toBeLessThanOrEqual(FLOOR + PAWN_R + 1e-9);
+        expect(entry.dist).toBeLessThanOrEqual(DEATH + 1e-9);
       }
     }
     // …and the eliminating frame is strictly outside it.
     const last = seen[seen.length - 1];
     expect(last.phase).toBe("finished");
-    expect(last.dist).toBeGreaterThan(FLOOR + PAWN_R);
+    expect(last.dist).toBeGreaterThan(DEATH);
+    // The pawn was allowed to hang over the void on the way out: it
+    // passed the DRAWN edge while still alive and moving.
+    expect(seen.some((e) => e.phase === "moving" && e.dist > EDGE)).toBe(true);
     g.destroy();
   });
 
@@ -453,13 +469,38 @@ describe("elimination (geometric rule)", () => {
 });
 
 describe("no wall: outward launches always leave", () => {
-  it("eliminates even a gentle outward launch (no threshold, no bounce)", () => {
+  it("eliminates a gentle outward launch (no threshold, no bounce)", () => {
+    // Power 2 is the weakest launch that clears the platform outright.
     const g = createGame();
-    launchAtRim(g, 1); // the weakest launch still exits — nothing stops it
+    launchAtRim(g, 2);
     pump(g, 700);
     const s = g.snapshot();
     expect(s.phase).toBe("finished");
     expect(pawnOf(s).eliminated).toBe(true);
+    g.destroy();
+  });
+
+  it("power 1 slides over the drawn edge and survives the grace band", () => {
+    // There is still NO WALL: the weakest launch glides clean past the
+    // visible edge, hanging over the void. It survives because the rule
+    // only kills once a whole diameter is off the platform, and friction
+    // stops it inside that 16-unit band. This is the behaviour that
+    // separates "no wall" from "dies at the edge".
+    const g = createGame();
+    let maxDist = 0;
+    g.subscribe((st) => {
+      maxDist = Math.max(maxDist, distFromCenter(pawnOf(st).position));
+    });
+    launchAtRim(g, 1);
+    pump(g, 700);
+    const s = g.snapshot();
+    expect(maxDist).toBeGreaterThan(EDGE); // past the platform: no wall
+    expect(maxDist).toBeLessThanOrEqual(DEATH); // but never a full diameter
+    expect(pawnOf(s).eliminated).toBe(false);
+    expect(s.phase).not.toBe("finished");
+    // It is pulled back onto the floor when it settles, never left
+    // straddling the edge.
+    expect(distFromCenter(pawnOf(s).position)).toBeLessThan(FLOOR);
     g.destroy();
   });
 
@@ -636,15 +677,25 @@ describe("identical trajectories at different render FPS", () => {
 });
 
 describe("open floor edge (no wall)", () => {
-  it("every outward launch leaves the arena — no wall at any power", () => {
-    // At every power level 1–5 a head-on outward launch exits: there is no
-    // wall to bounce off and no speed threshold to beat.
+  it("no wall at any power — every outward launch crosses the drawn edge", () => {
+    // At every power level 1–5 a head-on outward launch glides PAST the
+    // visible platform edge: there is nothing to bounce off and no speed
+    // threshold to beat. Power 2+ carries far enough to clear the full
+    // diameter and be eliminated; power 1 hangs over the void and is
+    // saved by the grace band (asserted in its own test above).
     for (const power of [1, 2, 3, 4, 5] as const) {
       const g = createGame();
+      let maxDist = 0;
+      g.subscribe((st) => {
+        maxDist = Math.max(maxDist, distFromCenter(pawnOf(st).position));
+      });
       launchAtRim(g, power);
       pump(g, 700);
-      expect(g.snapshot().phase).toBe("finished");
-      expect(pawnOf(g.snapshot()).eliminated).toBe(true);
+      expect(maxDist).toBeGreaterThan(EDGE); // no wall stopped it
+      if (power >= 2) {
+        expect(g.snapshot().phase).toBe("finished");
+        expect(pawnOf(g.snapshot()).eliminated).toBe(true);
+      }
       g.destroy();
     }
   });

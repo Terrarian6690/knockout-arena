@@ -201,19 +201,51 @@ describe("the white boundary ring is gone", () => {
     const calls = draw(snap(arenaSnapshotFor(INITIAL, 1)));
     expect(redDashedRingRadii(calls)).toEqual([]);
 
-    // The old ring was a #7ea8d1 stroke plus a faint rgba outer line.
+    // The hard boundary ring stays gone: no solid #7ea8d1 stroke.
     const strokeColors = calls
       .filter((c) => c.op === "set:strokeStyle")
       .map((c) => String(c.args[0]));
     expect(strokeColors).not.toContain(CONFIG.colors.arenaWallGlow);
-    expect(strokeColors.some((c) => c.includes("126,168,209"))).toBe(false);
+    // The platform's rim is allowed, but only as a SOFT glow — a
+    // translucent rgba wash, never the opaque ring Task 30 removed.
+    const rimStrokes = strokeColors.filter((c) => c.includes("126,168,209"));
+    for (const c of rimStrokes) {
+      expect(c.startsWith("rgba(")).toBe(true);
+      const alpha = Number(c.split(",").pop()!.replace(")", "").trim());
+      expect(alpha).toBeLessThanOrEqual(0.3);
+    }
   });
 
-  it("no longer fills the opaque boundary band", () => {
-    const fills = draw(snap(arenaSnapshotFor(INITIAL, 0)))
+  it("fills the platform as a solid disc out to the visible edge", () => {
+    // The PLATFORM is back. Task 30 removed the boundary ring and took
+    // the blue disc with it, leaving only faint gradient rings floating
+    // in the dark; the ring was what had to go, not the surface. The
+    // fill must reach the drawn edge exactly — same circle the shrink
+    // preview and the elimination rule are derived from.
+    const calls = draw(snap(arenaSnapshotFor(INITIAL, 0)));
+    const fills = calls
       .filter((c) => c.op === "set:fillStyle")
       .map((c) => c.args[0]);
-    expect(fills).not.toContain(CONFIG.colors.arenaWall);
+    expect(fills).toContain(CONFIG.colors.arenaWall);
+
+    // …and it is an actual filled disc at the edge radius, not a stroke.
+    const edge = arenaEdgeRadius(createArena(INITIAL));
+    let lastArc: [number, number, number] | null = null;
+    let color: unknown = null;
+    let filledAtEdge = false;
+    for (const c of calls) {
+      if (c.op === "arc") lastArc = c.args as [number, number, number];
+      else if (c.op === "set:fillStyle") color = c.args[0];
+      else if (
+        c.op === "fill" &&
+        lastArc &&
+        lastArc[2] === edge &&
+        color === CONFIG.colors.arenaWall
+      ) {
+        filledAtEdge = true;
+      }
+    }
+    expect(filledAtEdge).toBe(true);
   });
 
   it("draws the floor out to the LETHAL edge, not the old floor circle", () => {
@@ -226,20 +258,29 @@ describe("the white boundary ring is gone", () => {
     }
   });
 
-  it("puts the visible edge exactly where a pawn dies, at every radius", () => {
+  it("derives the death distance from the visible edge, at every radius", () => {
+    // The drawn edge is still the single reference for elimination, but
+    // the pawn's own size now counts: it dies once a WHOLE DIAMETER has
+    // cleared that edge, not when its centre touches it (which left half
+    // the pawn still on the platform). So death = drawn edge + radius.
     for (const radius of SCHEDULE) {
       const arena = createArena(radius);
       const edge = arenaEdgeRadius(arena);
+      const lethal = edge + CONFIG.pawn.radius;
       expect(arenaArcRadii(draw(snap(arenaSnapshotFor(radius, 0))))).toContain(
         edge
       );
-      // Straddle the drawn edge with the real elimination rule.
-      expect(isPawnOutOfBounds(arena, CX + edge - 0.5, CY, CONFIG.pawn.radius)).toBe(
-        false
-      );
-      expect(isPawnOutOfBounds(arena, CX + edge + 0.5, CY, CONFIG.pawn.radius)).toBe(
-        true
-      );
+      // Sitting exactly on the drawn edge — half out — is survivable.
+      expect(
+        isPawnOutOfBounds(arena, CX + edge, CY, CONFIG.pawn.radius)
+      ).toBe(false);
+      // Straddle the real boundary a diameter further out.
+      expect(
+        isPawnOutOfBounds(arena, CX + lethal - 0.5, CY, CONFIG.pawn.radius)
+      ).toBe(false);
+      expect(
+        isPawnOutOfBounds(arena, CX + lethal + 0.5, CY, CONFIG.pawn.radius)
+      ).toBe(true);
     }
   });
 });

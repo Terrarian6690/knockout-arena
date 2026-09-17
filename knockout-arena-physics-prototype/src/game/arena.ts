@@ -78,10 +78,23 @@ export function arenaEdgeRadius(arena: Arena): number {
 }
 
 /**
- * The single authoritative elimination rule: a pawn is out of bounds when it
- * has completely left the playable floor — the distance from the arena
- * center exceeds the floor radius by more than the pawn's own radius, i.e.
- * no part of the pawn touches the playfield anymore.
+ * The single authoritative elimination rule: a pawn is out of bounds once
+ * it has cleared the arena's VISIBLE edge by its whole diameter.
+ *
+ * The threshold is measured from the edge the player actually sees
+ * (arenaEdgeRadius — the circle the floor is painted out to), plus one
+ * pawn radius:
+ *
+ *     death when  distance(center, arenaCenter) > arenaEdgeRadius + pawnRadius
+ *
+ * At that distance the pawn's INNER rim sits exactly on the drawn edge,
+ * so the entire disc — a full diameter — has left the platform. It is
+ * generous on purpose: a pawn teetering half over the rim survives, and
+ * only something that has truly slid off dies.
+ *
+ * (Before this it read `floorRadius + pawnRadius`, which is the same as
+ * `arenaEdgeRadius` itself: the pawn died with its centre on the drawn
+ * edge, i.e. with half of it still over the platform.)
  *
  * Pure geometry (no velocity heuristics, no magic thresholds) against the
  * CURRENT radius: the same check works identically on client and server,
@@ -95,7 +108,37 @@ export function isPawnOutOfBounds(
 ): boolean {
   const dx = x - arena.centerX;
   const dy = y - arena.centerY;
-  return Math.hypot(dx, dy) > floorRadius(arena) + pawnRadius;
+  return Math.hypot(dx, dy) > arenaEdgeRadius(arena) + pawnRadius;
+}
+
+/**
+ * THE SHRINK rule: whether the arena that just got smaller left this pawn
+ * with nothing under it.
+ *
+ * Deliberately STRICTER than isPawnOutOfBounds. The ordinary rule is
+ * generous — a pawn survives until its whole diameter has cleared the
+ * visible edge — which is right for a pawn that was shoved: teetering on
+ * the rim is a survivable accident.
+ *
+ * A shrink is not an accident, though. The floor is pulled out from
+ * under everyone at once, and if the pawn's CENTRE ends up past the new
+ * edge it has no platform beneath it any more, so it falls. Without this
+ * the shrink would stop eliminating anyone at all: a pawn hugging the
+ * rim settles at floorRadius − pawnRadius − 1, which after a 40-unit
+ * shrink still sits inside the generous threshold — the mechanic that is
+ * supposed to close the space would quietly do nothing.
+ *
+ * A pawn merely STRADDLING the new edge (centre still over the floor)
+ * survives, exactly as the shrink comment in game.ts promises.
+ */
+export function isPawnDroppedByShrink(
+  arena: Arena,
+  x: number,
+  y: number
+): boolean {
+  const dx = x - arena.centerX;
+  const dy = y - arena.centerY;
+  return Math.hypot(dx, dy) > arenaEdgeRadius(arena);
 }
 
 /** A spawn point just inside the floor, given an angle in radians. */

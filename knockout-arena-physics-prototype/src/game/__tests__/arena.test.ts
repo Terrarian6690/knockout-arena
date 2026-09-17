@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CONFIG } from "../config";
 import {
+  arenaEdgeRadius,
   createArena,
   floorRadius,
   isPawnOutOfBounds,
@@ -47,21 +48,32 @@ describe("isPawnOutOfBounds (geometric elimination rule)", () => {
     expect(isPawnOutOfBounds(arena, centerX + dist, centerY, PAWN_R)).toBe(false);
   });
 
-  it("is true once the pawn has completely left the floor", () => {
-    const dist = floorRadius(arena) + PAWN_R + 0.001;
+  it("is true once the pawn has completely left the platform", () => {
+    // A whole diameter past the drawn edge (see arenaEdgeRadius).
+    const dist = arenaEdgeRadius(arena) + PAWN_R + 0.001;
     expect(isPawnOutOfBounds(arena, centerX + dist, centerY, PAWN_R)).toBe(true);
   });
 
+  it("still alive when only HALF the pawn is off the platform", () => {
+    // The centre sits exactly on the visible edge: half the disc hangs
+    // over the void, and that survives on purpose.
+    const dist = arenaEdgeRadius(arena);
+    expect(isPawnOutOfBounds(arena, centerX + dist, centerY, PAWN_R)).toBe(
+      false
+    );
+  });
+
   it("uses the pawn radius consistently", () => {
-    const dist = floorRadius(arena) + 10;
-    // A small pawn is already fully out at this distance; a big pawn still
-    // touches the floor (its center must travel farther to clear the edge).
+    // Just past the drawn edge: a SMALL pawn has already cleared it by
+    // its own diameter, a BIG one has not — its centre must travel
+    // farther before the whole disc is off.
+    const dist = arenaEdgeRadius(arena) + 10;
     expect(isPawnOutOfBounds(arena, centerX, centerY + dist, 8)).toBe(true);
     expect(isPawnOutOfBounds(arena, centerX, centerY + dist, 24)).toBe(false);
   });
 
   it("treats every direction equally (radial symmetry)", () => {
-    const dist = floorRadius(arena) + PAWN_R + 5;
+    const dist = arenaEdgeRadius(arena) + PAWN_R + 5;
     for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2, 2.5]) {
       const x = centerX + Math.cos(angle) * dist;
       const y = centerY + Math.sin(angle) * dist;
