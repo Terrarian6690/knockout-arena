@@ -1,6 +1,6 @@
 import Matter from "matter-js";
 import { CONFIG } from "./config";
-import { createArena, floorRadius, type Arena } from "./arena";
+import { createArena, type Arena } from "./arena";
 import type { Vec2 } from "./types";
 
 const { Engine, Bodies, Composite, Body, Events } = Matter;
@@ -77,13 +77,15 @@ export interface PhysicsWorld {
   setGhost(body: Matter.Body, ghosted: boolean): void;
   /**
    * Bring a pawn to its canonical resting state at the end of a turn: stop
-   * it (velocity + solver buffers zeroed) and, if its center ended up past
-   * the floor edge, project it back onto the floor. A settled pawn therefore
-   * never rests straddling the logical boundary — which is what makes
-   * "settled" a deterministic, serializable state boundary (Matter's
-   * warm-started contact corrections would otherwise keep nudging the body
-   * microscopically on every later step, invisibly in velocity but
-   * differently between a live engine and a reconstructed one).
+   * it: velocity and solver buffers zeroed. The pawn keeps the position
+   * it came to rest at — including out in the grace band past the drawn
+   * edge, where a pawn is allowed to hang over the void and live.
+   *
+   * What makes "settled" a deterministic, serializable state boundary is
+   * the zeroing, not any repositioning: Matter's warm-started contact
+   * corrections would otherwise keep nudging the body microscopically on
+   * every later step, invisibly in velocity but differently between a
+   * live engine and a reconstructed one.
    */
   settleOnFloor(body: Matter.Body, pawnRadius: number): void;
   /** Subscribe to collision events (fires for each colliding pair). */
@@ -221,20 +223,23 @@ export function createPhysicsWorld(): PhysicsWorld {
     }
   }
 
-  function settleOnFloor(body: Matter.Body, pawnRadius: number) {
-    // A settled pawn rests fully on the floor with a 1-unit deterministic
-    // margin inside the logical edge — never straddling the boundary.
-    const contactDist = floorRadius(arena) - pawnRadius - 1;
-    const dx = body.position.x - arena.centerX;
-    const dy = body.position.y - arena.centerY;
-    const dist = Math.hypot(dx, dy);
-    if (dist > contactDist) {
-      const scale = contactDist / dist;
-      Body.setPosition(body, {
-        x: arena.centerX + dx * scale,
-        y: arena.centerY + dy * scale,
-      });
-    }
+  function settleOnFloor(body: Matter.Body, _pawnRadius: number) {
+    // A pawn settles EXACTLY where it stopped. Nothing is repositioned.
+    //
+    // This used to drag any pawn past `floorRadius - pawnRadius - 1`
+    // back to that circle, so "settled" could never straddle the edge.
+    // That made sense when a pawn died the moment its centre reached the
+    // drawn edge — it could not survive out there anyway. It is wrong
+    // now: a pawn survives until its whole diameter clears the edge, so
+    // the 330→346 band is a legitimate resting place, and yanking the
+    // pawn 49 units inward was a visible teleport that erased exactly
+    // the tense "hanging over the void" moment the rule exists to allow.
+    //
+    // Determinism is unaffected: it comes from stop() zeroing velocity
+    // AND Matter's warm-start buffers (see clearSolverBuffers), not from
+    // the position. There are no boundary bodies in this world — the
+    // only colliders are pawns — so a pawn resting past the floor edge
+    // has no contact pair and nothing nudges it on later steps.
     stop(body);
   }
 

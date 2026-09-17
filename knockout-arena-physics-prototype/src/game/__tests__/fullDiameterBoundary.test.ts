@@ -7,6 +7,7 @@ import {
   isPawnDroppedByShrink,
   isPawnOutOfBounds,
 } from "../arena";
+import { createPhysicsWorld } from "../physics";
 
 /**
  * FOLLOW-UP TO TASK 30 — two boundaries, on purpose.
@@ -115,6 +116,41 @@ describe("the round rule: a full diameter of grace", () => {
       expect(at(lethal - 0.01)).toBe(false);
       expect(at(lethal + 0.01)).toBe(true);
     }
+  });
+});
+
+describe("settling never teleports the pawn", () => {
+  it("a pawn that stops in the grace band is left exactly there", () => {
+    // The grace band only means something if the pawn is allowed to
+    // REMAIN in it. settleOnFloor used to drag anything past
+    // floorRadius - pawnRadius - 1 (297) back to that circle, a jump of
+    // up to 49 units that deleted the whole "teetering on the brink"
+    // moment the round rule exists to allow.
+    const arena = createArena();
+    const edge = arenaEdgeRadius(arena);
+    const world = createPhysicsWorld();
+    for (const d of [297, 314, edge, edge + PAWN_R - 0.5]) {
+      const body = world.createPawnBody("x" + d, CX + d, CY, PAWN_R);
+      world.settleOnFloor(body, PAWN_R);
+      const p = world.position(body);
+      expect(Math.hypot(p.x - CX, p.y - CY)).toBeCloseTo(d, 9);
+      // Still alive out there — settling did not change its fate.
+      expect(isPawnOutOfBounds(arena, p.x, p.y, PAWN_R)).toBe(false);
+    }
+    world.destroy();
+  });
+
+  it("the shrink still catches a pawn that settled out on the brink", () => {
+    // Consequence worth pinning: because pawns now rest FURTHER out, the
+    // next shrink catches them at least as readily as before. A pawn
+    // resting on the 330 edge is well outside the 290 platform.
+    const world = createPhysicsWorld();
+    const edge = arenaEdgeRadius(createArena(330));
+    const body = world.createPawnBody("brink", CX + edge, CY, PAWN_R);
+    world.settleOnFloor(body, PAWN_R);
+    const p = world.position(body);
+    expect(isPawnDroppedByShrink(createArena(290), p.x, p.y)).toBe(true);
+    world.destroy();
   });
 });
 

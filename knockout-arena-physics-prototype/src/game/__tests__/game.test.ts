@@ -498,9 +498,11 @@ describe("no wall: outward launches always leave", () => {
     expect(maxDist).toBeLessThanOrEqual(DEATH); // but never a full diameter
     expect(pawnOf(s).eliminated).toBe(false);
     expect(s.phase).not.toBe("finished");
-    // It is pulled back onto the floor when it settles, never left
-    // straddling the edge.
-    expect(distFromCenter(pawnOf(s).position)).toBeLessThan(FLOOR);
+    // …and it STAYS where it stopped: settling no longer drags the pawn
+    // back onto the floor, so the tense "hanging over the void" pose is
+    // preserved instead of being teleported away.
+    expect(distFromCenter(pawnOf(s).position)).toBeGreaterThan(EDGE);
+    expect(distFromCenter(pawnOf(s).position)).toBeLessThanOrEqual(DEATH);
     g.destroy();
   });
 

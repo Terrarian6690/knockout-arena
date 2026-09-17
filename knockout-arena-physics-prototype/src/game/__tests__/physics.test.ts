@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import Matter from "matter-js";
 import { CONFIG } from "../config";
-import { createArena, floorRadius } from "../arena";
+import { arenaEdgeRadius, createArena, floorRadius } from "../arena";
 import { createPhysicsWorld } from "../physics";
 
 const DT = CONFIG.simulation.fixedTimestepMs;
@@ -242,15 +242,30 @@ describe("ghosts and canonical rest (N-player support)", () => {
     physics.destroy();
   });
 
-  it("settleOnFloor projects a rim-penetrating pawn back onto the floor", () => {
+  it("settleOnFloor never repositions a pawn — it rests where it stopped", () => {
     const physics = createPhysicsWorld();
-    // End the turn slightly inside the rim (a leftover penetration from the
-    // contact solver): center at floorRadius - radius + 0.2.
-    const y = CONFIG.arena.centerY + floorRadius(physics.arena) - PAWN_R + 0.2;
-    const body = physics.createPawnBody("p0", CONFIG.arena.centerX, y, PAWN_R);
-    physics.settleOnFloor(body, PAWN_R);
-    const d = dist(physics.position(body).x, physics.position(body).y);
-    expect(d).toBeLessThanOrEqual(floorRadius(physics.arena) - PAWN_R - 1 + 1e-9);
+    // A pawn that came to rest out past the floor edge, in the grace
+    // band where it hangs over the void and survives. settleOnFloor used
+    // to yank it back onto the floor, which teleported the pawn inward
+    // by as much as 49 units and erased that moment. It must not move.
+    const edge = arenaEdgeRadius(physics.arena);
+    for (const d of [
+      floorRadius(physics.arena) - PAWN_R + 0.2, // rim penetration
+      floorRadius(physics.arena), // past the floor
+      edge, // exactly on the drawn edge: half over the void
+      edge + PAWN_R - 0.5, // a hair short of elimination
+    ]) {
+      const y = CONFIG.arena.centerY + d;
+      const body = physics.createPawnBody("p" + d, CONFIG.arena.centerX, y, PAWN_R);
+      physics.settleOnFloor(body, PAWN_R);
+      const after = physics.position(body);
+      expect(after.x).toBe(CONFIG.arena.centerX);
+      expect(after.y).toBeCloseTo(y, 9);
+      expect(dist(after.x, after.y)).toBeCloseTo(d, 9);
+      // …and it is genuinely stopped, which is what makes rest
+      // deterministic — not the position.
+      expect(physics.velocity(body)).toEqual({ x: 0, y: 0 });
+    }
     physics.destroy();
   });
 
