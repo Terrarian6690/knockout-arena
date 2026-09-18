@@ -64,7 +64,10 @@ export function ShrinkWarning({
   return (
     <div
       // pointer-events-none: the warning must never swallow an aim click.
-      className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-4 pt-3"
+      // pt-14 clears the match clock, which floats at the top of the
+      // same overlay band (MultiplayerGame) — the two must stack, not
+      // sit on top of each other.
+      className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-4 pt-14"
     >
       <div
         data-testid="shrink-warning"

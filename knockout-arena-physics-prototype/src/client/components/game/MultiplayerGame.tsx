@@ -197,12 +197,6 @@ export function MultiplayerGame({
         <div className="flex items-center gap-2">
           <AudioControl />
           {snapshot !== null && (
-            <MatchTimer
-              phase={snapshot.phase}
-              deadline={snapshot.matchDeadline}
-            />
-          )}
-          {snapshot !== null && (
             <RoundCountdown
               phase={snapshot.phase}
               deadline={snapshot.roundDeadline}
@@ -219,8 +213,6 @@ export function MultiplayerGame({
         </main>
       ) : (
         <>
-          <MatchRail snapshot={snapshot} hostPlayerId={state.hostPlayerId} />
-
           {state.lastError !== null && !dismissedError && (
             <div className="px-4 pt-3 sm:px-6">
               <ErrorBanner
@@ -230,44 +222,62 @@ export function MultiplayerGame({
             </div>
           )}
 
-          <main ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 outline-none">
-            <ArenaView
-              snapshot={displaySnapshot ?? snapshot}
-              interactive={canAct && connected}
-              onAim={handleAim}
-              hostPlayerId={state.hostPlayerId}
-            />
+          {/* The roster is a column beside the arena, so six players
+              stack vertically instead of scrolling out of a strip. */}
+          <div className="flex min-h-0 flex-1">
+            <MatchRail snapshot={snapshot} hostPlayerId={state.hostPlayerId} />
 
-            {/* Authoritative shrink warning. Overlays the arena without
-                capturing pointer events, so aiming and Confirm are
-                unaffected; it reads the server's snapshot only. */}
-            <ShrinkWarning snapshot={snapshot} />
-
-            {!connected && (
-              <ConnectionBanner
-                status={state.status}
-                reconnectAttempt={state.reconnectAttempt}
-                onReconnect={handleReconnect}
+            <main ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 outline-none">
+              <ArenaView
+                snapshot={displaySnapshot ?? snapshot}
+                interactive={canAct && connected}
+                onAim={handleAim}
+                hostPlayerId={state.hostPlayerId}
               />
-            )}
 
-            {/* Mid-match accessible announcements (eliminations, round
-                transitions). Renders nothing visible and sits OUTSIDE the
-                finished branch so it speaks while the match is running;
-                the result overlay keeps its own separate live region. */}
-            <MatchProgressAnnouncer snapshot={snapshot} />
+              {/* The match clock sits just below the top bar, floating over
+                  the arena so it costs the board no height. z-20 keeps it
+                  above the shrink warning's z-10 band, and
+                  pointer-events-none guarantees it can never swallow an
+                  aim click. */}
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center px-4 pt-2">
+                <MatchTimer
+                  phase={snapshot.phase}
+                  deadline={snapshot.matchDeadline}
+                />
+              </div>
 
-            {snapshot.phase === "finished" && (
-              <MatchResultOverlay
-                winnerId={snapshot.winnerId}
-                localPawnId={snapshot.localPawnId}
-                pawns={snapshot.pawns}
-                onLeave={onLeave}
-                onPlayAgain={onPlayAgain}
-                getRestoreFocusFallback={() => mainRef.current}
-              />
-            )}
-          </main>
+              {/* Authoritative shrink warning. Overlays the arena without
+                  capturing pointer events, so aiming and Confirm are
+                  unaffected; it reads the server's snapshot only. */}
+              <ShrinkWarning snapshot={snapshot} />
+
+              {!connected && (
+                <ConnectionBanner
+                  status={state.status}
+                  reconnectAttempt={state.reconnectAttempt}
+                  onReconnect={handleReconnect}
+                />
+              )}
+
+              {/* Mid-match accessible announcements (eliminations, round
+                  transitions). Renders nothing visible and sits OUTSIDE the
+                  finished branch so it speaks while the match is running;
+                  the result overlay keeps its own separate live region. */}
+              <MatchProgressAnnouncer snapshot={snapshot} />
+
+              {snapshot.phase === "finished" && (
+                <MatchResultOverlay
+                  winnerId={snapshot.winnerId}
+                  localPawnId={snapshot.localPawnId}
+                  pawns={snapshot.pawns}
+                  onLeave={onLeave}
+                  onPlayAgain={onPlayAgain}
+                  getRestoreFocusFallback={() => mainRef.current}
+                />
+              )}
+            </main>
+          </div>
 
           {snapshot.phase !== "finished" && (
             <MatchControls
