@@ -7,6 +7,7 @@ import { useNetworkClient, useNetworkState } from "../../network/react";
 import { normalizeRoomCode } from "../../network/roomCode";
 import type { ConnectionStatus } from "../../network/types";
 import { cn } from "../../utils/cn";
+import { BrandLogo } from "../BrandLogo";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { ErrorBanner } from "./ErrorBanner";
 import { getPrefillJoinCode } from "./invite";
@@ -247,12 +248,11 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased">
       <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 sm:px-6">
         <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-sm font-black text-white shadow-lg shadow-orange-900/40">
-            KA
-          </div>
           <div className="leading-tight">
-            <h1 className="text-base font-bold tracking-tight text-white">
-              Knockout Arena
+            {/* Decorative logo inside the heading: one announcement. */}
+            <h1 className="flex items-center">
+              <BrandLogo height={26} decorative />
+              <span className="sr-only">Knockout Arena</span>
             </h1>
           </div>
         </div>

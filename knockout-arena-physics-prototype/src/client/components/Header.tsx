@@ -1,4 +1,5 @@
 import type { GamePhase } from "../../game";
+import { BrandLogo } from "./BrandLogo";
 
 /**
  * Minimal top bar with the game title and a phase badge. Once a match is
@@ -35,12 +36,11 @@ export function Header({ phase, winnerName }: HeaderProps) {
   return (
     <header className="flex items-center justify-between px-4 py-3 sm:px-6">
       <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-lg font-black text-white shadow-lg shadow-orange-900/40">
-          KA
-        </div>
         <div className="leading-tight">
-          <h1 className="text-lg font-bold tracking-tight text-white">
-            Knockout Arena
+          {/* Decorative logo inside the heading: one announcement. */}
+          <h1 className="flex items-center">
+            <BrandLogo height={30} decorative />
+            <span className="sr-only">Knockout Arena</span>
           </h1>
           <p className="text-[11px] text-white/40">Single-player prototype</p>
         </div>
