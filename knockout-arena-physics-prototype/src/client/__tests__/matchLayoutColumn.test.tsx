@@ -13,9 +13,14 @@ import { MatchRail } from "../components/game/MatchRail";
  * Two requested changes, pinned here:
  *
  *   1. The roster is a vertical COLUMN, not the horizontal strip it used
- *      to be, and each row reads name → pawn look → Host/You → status.
- *   2. An eliminated player's WHOLE ROW is struck through, so being out
- *      is visible at a glance instead of inferred from a dimmed swatch.
+ *      to be, and each row is a SINGLE LINE reading name → pawn look →
+ *      You. The Host chip, the p0/p1 seat ids and the per-round status
+ *      word were all removed on request: the rail answers "who is in
+ *      this game, which colour are they, and are they still alive",
+ *      and nothing else.
+ *   2. An eliminated player's WHOLE ROW is struck through in red, so
+ *      being out is visible at a glance instead of inferred from a
+ *      dimmed swatch. A living row is bordered green.
  *
  * The match clock's move (header → floating just under the top bar, over
  * the arena) is covered in matchLayoutTimer.test.tsx, which renders the
@@ -104,7 +109,7 @@ describe("the roster is a vertical column", () => {
   });
 });
 
-describe("each row reads name → pawn look → badge → status", () => {
+describe("each row reads name → pawn look → You, on one line", () => {
   it("puts the name before the swatch in document order", () => {
     render(<MatchRail snapshot={roster()} hostPlayerId="p1" />);
     const row = screen.getByTestId("rail-p0");
@@ -116,18 +121,23 @@ describe("each row reads name → pawn look → badge → status", () => {
     );
   });
 
-  it("puts the You/Host badge after the swatch", () => {
+  it("puts the You badge after the swatch", () => {
     render(<MatchRail snapshot={roster()} hostPlayerId="p0" />);
     const row = screen.getByTestId("rail-p0");
     const swatch = screen.getByTestId("rail-swatch-p0");
     const you = within(row).getByText("You");
-    const host = within(row).getByText("Host");
     expect(swatch.compareDocumentPosition(you)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     );
-    expect(swatch.compareDocumentPosition(host)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
+  });
+
+  it("carries no Host chip and no seat id", () => {
+    // Both were dropped: who hosts is a lobby concern, and "p0" is an
+    // internal id that meant nothing to players.
+    render(<MatchRail snapshot={roster()} hostPlayerId="p0" />);
+    const rail = screen.getByTestId("match-rail");
+    expect(within(rail).queryByText("Host")).toBeNull();
+    expect(rail.textContent).not.toMatch(/\bp[0-9]\b/);
   });
 
   it("shows the pawn's own colour in its swatch", () => {
@@ -143,20 +153,31 @@ describe("each row reads name → pawn look → badge → status", () => {
     expect(a.style.backgroundColor).not.toBe(b.style.backgroundColor);
   });
 
-  it("keeps the status word in the row", () => {
+  it("carries no per-round status word", () => {
+    // Removed on request. Aliveness is the border colour and the strike;
+    // per-round readiness is not the rail's job any more.
     render(<MatchRail snapshot={roster()} hostPlayerId="p0" />);
-    expect(screen.getByTestId("rail-p0")).toHaveTextContent("Choosing…");
-    expect(screen.getByTestId("rail-p1")).toHaveTextContent("Ready");
-    expect(screen.getByTestId("rail-p2")).toHaveTextContent("Out");
+    const rail = screen.getByTestId("match-rail");
+    for (const word of ["Choosing…", "Ready", "Out", "Moving"]) {
+      expect(within(rail).queryByText(word)).toBeNull();
+    }
   });
 
-  it("marks exactly one You and one Host", () => {
+  it("keeps a row to a single line", () => {
+    // One line per player: the row must not wrap its children onto a
+    // second line, which is what made the old four-part row tall.
+    render(<MatchRail snapshot={roster()} hostPlayerId="p0" />);
+    const row = screen.getByTestId("rail-p0");
+    expect(row.className).not.toContain("flex-wrap");
+    expect(row.className).not.toContain("flex-col");
+    expect(row.className).toContain("items-center");
+  });
+
+  it("marks exactly one You", () => {
     render(<MatchRail snapshot={roster()} hostPlayerId="p1" />);
     const rail = screen.getByTestId("match-rail");
     expect(within(rail).getAllByText("You")).toHaveLength(1);
-    expect(within(rail).getAllByText("Host")).toHaveLength(1);
     expect(within(rail).getByTestId("rail-p0")).toHaveTextContent("You");
-    expect(within(rail).getByTestId("rail-p1")).toHaveTextContent("Host");
   });
 });
 
@@ -177,13 +198,29 @@ describe("an eliminated player's row is struck through", () => {
     }
   });
 
-  it("keeps the strike and the dimming together", () => {
-    // Two independent signals for the same fact: the line for sighted
-    // players, the dimming for anyone who cannot make out a thin rule.
+  it("keeps the strike, the dimming and the red border together", () => {
+    // Three independent signals for the same fact: the line for sighted
+    // players, the greyed name for anyone who cannot make out a thin
+    // rule, and the border colour that carries across the whole tile.
     render(<MatchRail snapshot={roster()} hostPlayerId="p0" />);
     const out = screen.getByTestId("rail-p2");
     expect(out.className).toContain("line-through");
-    expect(out.className).toContain("opacity-45");
+    expect(out.className).toContain("border-red-500/70");
+    const name = within(out).getByText("Cyd");
+    expect(name.className).toContain("text-white/40");
+  });
+
+  it("borders a living player green and an eliminated one red", () => {
+    render(<MatchRail snapshot={roster()} hostPlayerId="p0" />);
+    expect(screen.getByTestId("rail-p0").className).toContain(
+      "border-emerald-500/60"
+    );
+    expect(screen.getByTestId("rail-p1").className).toContain(
+      "border-emerald-500/60"
+    );
+    const out = screen.getByTestId("rail-p2");
+    expect(out.className).toContain("border-red-500/70");
+    expect(out.className).not.toContain("border-emerald-500/60");
   });
 
   it("strikes every eliminated player when several are out", () => {
@@ -208,6 +245,8 @@ describe("an eliminated player's row is struck through", () => {
     render(<MatchRail snapshot={roster()} hostPlayerId="p0" />);
     const out = screen.getByTestId("rail-p2");
     expect(out).toHaveTextContent("Cyd");
-    expect(out).toHaveTextContent("Out");
+    // The swatch stays too — greyed, so the colour no longer competes
+    // with the living players' pawns.
+    expect(screen.getByTestId("rail-swatch-p2")).toBeInTheDocument();
   });
 });

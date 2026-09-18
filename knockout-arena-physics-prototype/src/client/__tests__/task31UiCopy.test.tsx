@@ -196,7 +196,9 @@ describe("the home-screen name box is labelled", () => {
 
   it("keeps the (required) marker and the Task 20 gate intact", async () => {
     const player = await renderHome();
-    expect(screen.getByText("(required)")).toBeInTheDocument();
+    // The marker is now a RESPONSE to a refused attempt, not a standing
+    // decoration, so it is absent until the gate actually fires.
+    expect(screen.queryByText("(required)")).toBeNull();
     const quickPlay = screen.getByRole("button", { name: /quick play/i });
     await act(async () => {
       fireEvent.click(quickPlay);
@@ -204,6 +206,8 @@ describe("the home-screen name box is labelled", () => {
     });
     // Still gated: no name, no room.
     expect(player.client.getState().roomId).toBeNull();
+    // ...and now the label explains why the click did nothing.
+    expect(screen.getByText("(required)")).toBeInTheDocument();
   });
 });
 

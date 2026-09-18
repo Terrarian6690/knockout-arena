@@ -211,7 +211,7 @@ describe("start-match UX", () => {
     // and the lobby hands the screen to the game view — while the guest's
     // store flips to playing too (one authoritative room, two views).
     expect(
-      await screen.findByText("Multiplayer match", {}, { timeout: 5000 })
+      await screen.findByTestId("multiplayer-game", {}, { timeout: 5000 })
     ).toBeInTheDocument();
     expect(screen.queryByTestId("room-panel")).toBeNull();
     expect(screen.queryByTestId("start-match")).toBeNull();

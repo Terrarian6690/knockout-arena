@@ -203,7 +203,7 @@ describe("lobby room screen", () => {
         )
       );
     });
-    expect(screen.getByText("Multiplayer match")).toBeInTheDocument();
+    expect(screen.getByTestId("multiplayer-game")).toBeInTheDocument();
     expect(screen.queryByTestId("start-match")).toBeNull();
   });
 
@@ -215,7 +215,7 @@ describe("lobby room screen", () => {
 
     // The lobby hands the screen to the multiplayer game once the server
     // reports playing — and the first authoritative snapshot arrives.
-    expect(await screen.findByText("Multiplayer match")).toBeInTheDocument();
+    expect(await screen.findByTestId("multiplayer-game")).toBeInTheDocument();
     expect(
       await screen.findByTestId("turn-badge")
     ).toHaveTextContent("Choose your move — aim!");

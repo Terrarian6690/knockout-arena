@@ -234,7 +234,17 @@ describe("the name requirement is styled as a requirement", () => {
   };
 
   it("the (required) marker beside the label is red", async () => {
+    // The marker is no longer shown on arrival (an empty box you have
+    // not acted on yet is not a mistake) — it appears once a play
+    // attempt is refused. Task 29's subject is its COLOUR, so raise it
+    // first, then assert the colour is still the danger red.
     await renderHome();
+    expect(screen.queryByText("(required)")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /quick play/i }));
+      await new Promise((r) => setTimeout(r, 20));
+    });
     const marker = screen.getByText("(required)");
 
     expect(marker.className).toContain("text-red-300");

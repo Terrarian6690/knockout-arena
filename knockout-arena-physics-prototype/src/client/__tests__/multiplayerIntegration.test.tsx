@@ -80,7 +80,7 @@ describe("two clients play one authoritative match (full stack)", () => {
     fireEvent.click(screen.getByTestId("start-match"));
 
     // The game screen takes over; the first authoritative snapshot arrives.
-    expect(await screen.findByText("Multiplayer match", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByTestId("multiplayer-game", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(await screen.findByTestId("arena-canvas", {}, { timeout: 5000 })).toBeInTheDocument();
     await waitFor(() => host.client.getState().snapshot !== null, 5000);
 
@@ -263,7 +263,10 @@ describe("two clients play one authoritative match (full stack)", () => {
     expect(guest.client.getState().winnerId).toBe("p0"); // identical verdict
 
     // The host's UI shows the elimination and the authoritative result.
-    expect(screen.getByTestId("rail-p1").textContent).toContain("Out");
+    expect(screen.getByTestId("rail-p1")).toHaveAttribute(
+      "data-eliminated",
+      "true"
+    );
     const result = await screen.findByTestId("match-result", {}, { timeout: 5000 });
     expect(result).toHaveTextContent("Victory!"); // local pawn p0 won
 
@@ -312,7 +315,7 @@ describe("two clients play one authoritative match (full stack)", () => {
     expect(screen.queryByTestId("round-countdown")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("start-match"));
 
-    expect(await screen.findByText("Multiplayer match", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByTestId("multiplayer-game", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(await screen.findByTestId("arena-canvas", {}, { timeout: 5000 })).toBeInTheDocument();
     await waitFor(() => host.client.getState().snapshot !== null, 5000);
 

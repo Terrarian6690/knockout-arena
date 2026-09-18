@@ -152,7 +152,7 @@ describe("the display-name editor", () => {
     // hard to stage honestly — instead drive the REAL server rule: names
     // freeze once playing. Start the match, then try to save a name.
     fireEvent.click(screen.getByTestId("start-match"));
-    await screen.findByText("Multiplayer match", {}, { timeout: 5000 });
+    await screen.findByTestId("multiplayer-game", {}, { timeout: 5000 });
 
     // The name editor is a waiting-room affordance: it is gone with the
     // lobby (names are frozen into the match).

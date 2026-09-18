@@ -404,6 +404,12 @@ function HomeView({
 }: HomeViewProps) {
   const connected = status === "connected";
   const joinDisabled = !connected || joinCode.trim().length === 0;
+  /**
+   * Whether what has been typed is a COMPLETE, well-formed room code —
+   * the same check the join handler runs (normalizeRoomCode), so the
+   * button turns green exactly when pressing it would actually work.
+   */
+  const codeReady = connected && normalizeRoomCode(joinCode) !== null;
   // The gate is advisory in the UI and enforced in the handlers: the
   // buttons stay ENABLED without a name so clicking one explains the
   // requirement (a disabled button with no reason is a dead end).
@@ -436,10 +442,19 @@ function HomeView({
               htmlFor="player-name-input"
               className="shrink-0 whitespace-nowrap text-[11px] uppercase tracking-widest text-white/50"
             >
-              {/* Task 29: the requirement reads as a requirement — the
-                  design system's danger red (red-300, already used by
-                  the error banner and the leave control), not amber. */}
-              Player name: <span className="text-red-300">(required)</span>
+              {/* The "(required)" tag is NOT shown up front: an empty
+                  box on arrival is the normal state, not a mistake. It
+                  appears only once the player has actually tried to
+                  enter a game without a name — the same signal that
+                  raises nameError — so it reads as an answer to what
+                  they just did. Colour is the design system's danger red
+                  (red-300), as the error banner and leave control use. */}
+              Player name:{" "}
+              {nameError !== null && (
+                <span data-testid="name-required-tag" className="text-red-300">
+                  (required)
+                </span>
+              )}
             </label>
             <input
               id="player-name-input"
@@ -563,11 +578,18 @@ function HomeView({
             type="button"
             onClick={onJoin}
             disabled={joinDisabled}
+            data-testid="join-room"
+            data-code-ready={codeReady ? "true" : "false"}
             className={cn(
-              "rounded-xl border border-white/15 bg-white/5 px-5 py-2 text-sm font-semibold text-white/80 transition-colors",
-              "hover:bg-white/10 active:scale-95",
+              "rounded-xl border px-5 py-2 text-sm font-semibold transition-colors",
+              "active:scale-95",
               "disabled:cursor-not-allowed disabled:opacity-40",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+              // Green the moment a full, valid code is in the box: the
+              // button is telling you it will work.
+              codeReady
+                ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30"
+                : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
             )}
           >
             Join Room

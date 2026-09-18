@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNetworkClient, useNetworkState } from "../../network/react";
 import { aimAt, type GameStateSnapshot, type Vec2 } from "../../../game";
 import { cn } from "../../utils/cn";
-import { ConnectionStatusBadge } from "../lobby/ConnectionStatusBadge";
 import { ErrorBanner } from "../lobby/ErrorBanner";
 import { ArenaView } from "./ArenaView";
 import { AudioControl } from "./AudioControl";
@@ -182,7 +181,10 @@ export function MultiplayerGame({
   const mainRef = useRef<HTMLElement>(null);
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased">
+    <div
+      data-testid="multiplayer-game"
+      className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased"
+    >
       <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
         <div className="flex items-center gap-3">
           <div className="leading-tight">
@@ -191,10 +193,9 @@ export function MultiplayerGame({
                 "Knockout Arena" once — from the heading — instead of
                 once for the heading and again for the image. */}
             <h1 className="flex items-center">
-              <BrandLogo height={42} decorative />
+              <BrandLogo height={52} decorative />
               <span className="sr-only">Knockout Arena</span>
             </h1>
-            <p className="text-[11px] text-white/50">Multiplayer match</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -206,7 +207,6 @@ export function MultiplayerGame({
             />
           )}
           {snapshot !== null && <RoundBadge snapshot={snapshot} />}
-          <ConnectionStatusBadge status={state.status} />
         </div>
       </header>
 
@@ -228,7 +228,10 @@ export function MultiplayerGame({
           {/* The roster is a column beside the arena, so six players
               stack vertically instead of scrolling out of a strip. */}
           <div className="flex min-h-0 flex-1">
-            <MatchRail snapshot={snapshot} hostPlayerId={state.hostPlayerId} />
+            <MatchRail
+              snapshot={snapshot}
+              roomVisibility={state.roomVisibility}
+            />
 
             <main ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 outline-none">
               <ArenaView

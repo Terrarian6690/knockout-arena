@@ -197,7 +197,10 @@ describe("authoritative consumers stay immediate", () => {
   it("the roster shows the knockout at once (not delayed)", () => {
     render(<MatchRail snapshot={authoritative} hostPlayerId="p0" />);
     const row = screen.getByTestId("rail-p1");
-    expect(row.className).toContain("opacity-45"); // the eliminated styling
+    // The eliminated treatment: flagged for behaviour, and visibly
+    // struck through in red for the player.
+    expect(row).toHaveAttribute("data-eliminated", "true");
+    expect(row.className).toContain("line-through");
   });
 
   it("announcements fire from the authoritative state (Task 10 intact)", () => {
@@ -236,7 +239,9 @@ describe("authoritative consumers stay immediate", () => {
     // …and that disagreement must never reach the roster, which renders
     // from the authoritative snapshot it is handed.
     render(<MatchRail snapshot={authoritative} hostPlayerId="p0" />);
-    expect(screen.getByTestId("rail-p1").className).toContain("opacity-45");
+    const row = screen.getByTestId("rail-p1");
+    expect(row).toHaveAttribute("data-eliminated", "true");
+    expect(row.className).toContain("line-through");
   });
 });
 

@@ -111,8 +111,13 @@ describe("multiplayer game: rendering", () => {
     const { sockets } = await renderGame();
     await feed(sockets, {}, { p1: { eliminated: true } });
     const rail = screen.getByTestId("rail-p1");
-    expect(rail.textContent).toContain("Out");
-    expect(rail).toHaveClass("opacity-45");
+    // "Out" is no longer spelled out — elimination now reads as the red
+    // struck-through tile, and stays machine-checkable via the flag.
+    expect(rail).toHaveAttribute("data-eliminated", "true");
+    expect(rail.className).toContain("line-through");
+    expect(rail.className).toContain("border-red-500/70");
+    // The player is still named, not hidden.
+    expect(rail.textContent).toContain("Player 2");
   });
 
   it("a new authoritative snapshot replaces the picture; without one, nothing changes", async () => {
@@ -432,7 +437,7 @@ describe("lobby → game screen transition", () => {
         { playerId: "p0", connected: true },
       ]));
     });
-    expect(await screen.findByText("Multiplayer match")).toBeInTheDocument();
+    expect(await screen.findByTestId("multiplayer-game")).toBeInTheDocument();
     expect(screen.queryByTestId("room-panel")).toBeNull();
 
     // Snapshot arrives → the game renders it.

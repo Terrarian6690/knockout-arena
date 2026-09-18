@@ -64,7 +64,7 @@ describe("seat recovery through the real UI", () => {
     await connectPlayer(guest);
     await playerAct(() => guest.client.joinRoom(roomId));
     fireEvent.click(screen.getByTestId("start-match"));
-    expect(await screen.findByText("Multiplayer match", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByTestId("multiplayer-game", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(
       await waitFor(() => host.client.getState().snapshot !== null, 5000)
     ).toBe(true);
@@ -105,7 +105,7 @@ describe("seat recovery through the real UI", () => {
 
     // The banner is gone, the match view is intact…
     expect(screen.queryByText(/Connection lost — retrying/)).not.toBeInTheDocument();
-    expect(screen.getByText("Multiplayer match")).toBeInTheDocument();
+    expect(screen.getByTestId("multiplayer-game")).toBeInTheDocument();
     expect(screen.getByTestId("turn-badge")).toHaveTextContent("Choose your move — aim!");
 
     // …the guest sees the host connected again…
@@ -253,7 +253,7 @@ describe("seat recovery through the real UI", () => {
     await playerAct(() => guest.client.joinRoom(roomId));
     fireEvent.click(screen.getByTestId("start-match"));
     expect(
-      await screen.findByText("Multiplayer match", {}, { timeout: 5000 })
+      await screen.findByTestId("multiplayer-game", {}, { timeout: 5000 })
     ).toBeInTheDocument();
     expect(
       await waitFor(() => host.client.getState().snapshot !== null, 5000)

@@ -353,9 +353,13 @@ describe("multiplayer aiming — changing the choice (6, 7, 8)", () => {
     await feed(sockets, {}, { p1: { confirmed: true } });
     expect(screen.getByTestId("launch")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Power 3" })).toBeEnabled();
-    // The rail shows the other player's readiness — no direction of
-    // theirs exists anywhere to show.
-    expect(screen.getByTestId("rail-p1").textContent).toContain("Ready");
+    // The rail no longer carries per-round status (it was reduced to
+    // name + colour + YOU), so readiness is not shown there. What must
+    // still hold is the privacy rule this test guards: a confirmed
+    // opponent leaks no aim of theirs into the roster.
+    const row = screen.getByTestId("rail-p1").textContent ?? "";
+    expect(row).toContain("Player 2");
+    expect(row).not.toMatch(/\d+\s*°|angle|aim|power/i);
   });
 });
 

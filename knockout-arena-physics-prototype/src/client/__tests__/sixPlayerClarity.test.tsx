@@ -67,39 +67,49 @@ describe("the match rail identifies all six players", () => {
     expect(within(rail).getAllByTestId(/^rail-p/)).toHaveLength(MAX);
   });
 
-  it("marks exactly one You and one Host among six", () => {
+  it("marks exactly one You among six", () => {
+    // The Host chip was removed from the rail: with six names to scan,
+    // the only marker that helps you play is the one finding YOURSELF.
     render(<MatchRail snapshot={snapshot()} hostPlayerId="p3" />);
     const rail = screen.getByTestId("match-rail");
     expect(within(rail).getAllByText("You")).toHaveLength(1);
-    expect(within(rail).getAllByText("Host")).toHaveLength(1);
     expect(within(rail).getByTestId("rail-p0")).toHaveTextContent("You");
-    expect(within(rail).getByTestId("rail-p3")).toHaveTextContent("Host");
+    expect(within(rail).queryByText("Host")).toBeNull();
   });
 
   it("shows who is out and who is still in", () => {
+    // Told by colour and strike now, not the word "Out" — still the
+    // same question, answered for all six at a glance.
     const pawns = Array.from({ length: MAX }, (_, i) =>
       pawn(i, { eliminated: i >= 4 })
     );
     render(<MatchRail snapshot={snapshot({ pawns })} hostPlayerId="p0" />);
     const rail = screen.getByTestId("match-rail");
-    expect(within(rail).getAllByText("Out")).toHaveLength(2);
     for (const i of [4, 5]) {
-      expect(within(rail).getByTestId(`rail-p${i}`)).toHaveTextContent("Out");
+      const row = within(rail).getByTestId(`rail-p${i}`);
+      expect(row).toHaveAttribute("data-eliminated", "true");
+      expect(row.className).toContain("border-red-500/70");
+      expect(row.className).toContain("line-through");
     }
     for (const i of [0, 1, 2, 3]) {
-      expect(within(rail).getByTestId(`rail-p${i}`)).not.toHaveTextContent("Out");
+      const row = within(rail).getByTestId(`rail-p${i}`);
+      expect(row).toHaveAttribute("data-eliminated", "false");
+      expect(row.className).toContain("border-emerald-500/60");
+      expect(row.className).not.toContain("line-through");
     }
   });
 
-  it("shows readiness for six without showing anyone's choice", () => {
+  it("reveals nobody's choice, confirmed or not, across six players", () => {
+    // Readiness is no longer reported at all, so the rail must look the
+    // same whoever has locked in — and in particular must never carry a
+    // direction or a power for anyone.
     const pawns = Array.from({ length: MAX }, (_, i) =>
       pawn(i, { confirmed: i % 2 === 0 })
     );
     render(<MatchRail snapshot={snapshot({ pawns })} hostPlayerId="p0" />);
     const rail = screen.getByTestId("match-rail");
-    expect(within(rail).getAllByText("Ready")).toHaveLength(3);
-    expect(within(rail).getAllByText("Choosing…")).toHaveLength(3);
-    // Readiness is all it reveals: no direction, no power, anywhere.
+    expect(within(rail).queryByText("Ready")).toBeNull();
+    expect(within(rail).queryByText("Choosing…")).toBeNull();
     expect(rail.textContent).not.toMatch(/power/i);
     expect(rail.textContent).not.toMatch(/aim/i);
   });
@@ -117,10 +127,11 @@ describe("the match rail identifies all six players", () => {
     a.unmount();
     const b = render(<MatchRail snapshot={snapshot({ pawns: chosen })} hostPlayerId="p0" />);
     const chosenHtml = b.container.innerHTML;
-    // They differ only by the readiness word — never by a number that
-    // could encode power, nor by any direction.
-    expect(quietHtml).toContain("Choosing…");
-    expect(chosenHtml).toContain("Ready");
+    // Now that readiness is not reported, the two renders must be
+    // BYTE-IDENTICAL: five players secretly locking in changes nothing
+    // an opponent can see. That is a stricter privacy guarantee than
+    // the old "differs only by the readiness word".
+    expect(chosenHtml).toBe(quietHtml);
     for (const html of [quietHtml, chosenHtml]) {
       expect(html).not.toMatch(/aimDirection|"power"|data-power/);
     }
@@ -172,8 +183,14 @@ describe("the winner is unmistakable with six players", () => {
     );
     const rail = screen.getByTestId("match-rail");
     // Five struck through, the champion untouched.
-    expect(within(rail).getAllByText("Out")).toHaveLength(5);
-    expect(within(rail).getByTestId("rail-p5")).not.toHaveTextContent("Out");
+    const struck = within(rail)
+      .getAllByTestId(/^rail-p/)
+      .filter((row) => row.className.includes("line-through"));
+    expect(struck).toHaveLength(5);
+    const champion = within(rail).getByTestId("rail-p5");
+    expect(champion).toHaveAttribute("data-eliminated", "false");
+    expect(champion.className).toContain("border-emerald-500/60");
+    expect(champion.className).not.toContain("line-through");
   });
 });
 
