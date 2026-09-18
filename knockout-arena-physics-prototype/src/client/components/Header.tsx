@@ -39,7 +39,7 @@ export function Header({ phase, winnerName }: HeaderProps) {
         <div className="leading-tight">
           {/* Decorative logo inside the heading: one announcement. */}
           <h1 className="flex items-center">
-            <BrandLogo height={30} decorative />
+            <BrandLogo height={42} decorative />
             <span className="sr-only">Knockout Arena</span>
           </h1>
           <p className="text-[11px] text-white/40">Single-player prototype</p>

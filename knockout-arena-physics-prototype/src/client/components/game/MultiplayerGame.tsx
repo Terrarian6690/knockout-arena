@@ -191,7 +191,7 @@ export function MultiplayerGame({
                 "Knockout Arena" once — from the heading — instead of
                 once for the heading and again for the image. */}
             <h1 className="flex items-center">
-              <BrandLogo height={30} decorative />
+              <BrandLogo height={42} decorative />
               <span className="sr-only">Knockout Arena</span>
             </h1>
             <p className="text-[11px] text-white/50">Multiplayer match</p>

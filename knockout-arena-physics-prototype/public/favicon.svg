@@ -5,8 +5,10 @@
     </marker>
   </defs>
   <rect x="0" y="0" width="90" height="90" rx="18" fill="#ffffff"/>
-  <circle cx="34.2" cy="31.5" r="14.4" fill="#e53935" stroke="#111111" stroke-width="3.6"/>
-  <circle cx="34.2" cy="56.7" r="14.4" fill="#1e88e5" stroke="#111111" stroke-width="3.6"/>
-  <line x1="44.4" y1="41.7" x2="73.8" y2="73.8" stroke="#111111" stroke-width="3.6" stroke-linecap="round" marker-end="url(#koArrowB)"/>
-  <line x1="44.4" y1="46.5" x2="73.8" y2="16.2" stroke="#111111" stroke-width="3.6" stroke-linecap="round" marker-end="url(#koArrowB)"/>
+  <g transform="translate(-2.171 0.074) translate(45 45) scale(1.2408) translate(-45 -45)">
+    <circle cx="34.2" cy="31.5" r="14.4" fill="#e53935" stroke="#111111" stroke-width="3.6"/>
+    <circle cx="34.2" cy="56.7" r="14.4" fill="#1e88e5" stroke="#111111" stroke-width="3.6"/>
+    <line x1="44.4" y1="41.7" x2="73.8" y2="73.8" stroke="#111111" stroke-width="3.6" stroke-linecap="round" marker-end="url(#koArrowB)"/>
+    <line x1="44.4" y1="46.5" x2="73.8" y2="16.2" stroke="#111111" stroke-width="3.6" stroke-linecap="round" marker-end="url(#koArrowB)"/>
+  </g>
 </svg>

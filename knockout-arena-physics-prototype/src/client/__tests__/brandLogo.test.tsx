@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { inflateSync } from "node:zlib";
 import { resolve } from "node:path";
 import { BrandLogo } from "../components/BrandLogo";
 import { Header } from "../components/Header";
@@ -141,6 +142,81 @@ describe("the logo's accessibility", () => {
 });
 
 describe("the favicon", () => {
+  it("centres the artwork in the tile with an even margin", () => {
+    // The follow-up fix: the drawing used to sit off-centre (left margin
+    // 18 vs 14.4 elsewhere) and filled only ~64% of the tile. It is now
+    // scaled up and re-centred with a <g transform>, so the icon reads
+    // at small sizes instead of floating in white space.
+    //
+    // The geometry itself is untouched — the circles and lines still
+    // carry their original coordinates — so this asserts the WRAPPER
+    // does the work.
+    const svg = readText("public/favicon.svg");
+    const g = /<g transform="([^"]+)"/.exec(svg);
+    expect(g).not.toBeNull();
+    const transform = g![1];
+    // Scaled up about the tile centre…
+    const scale = /scale\(([\d.]+)\)/.exec(transform);
+    expect(scale).not.toBeNull();
+    expect(Number(scale![1])).toBeGreaterThan(1.15);
+    // …and the original coordinates survive inside the group.
+    expect(svg).toContain('cx="34.2" cy="31.5" r="14.4"');
+    expect(svg).toContain('cx="34.2" cy="56.7" r="14.4"');
+    // The tile itself must stay full-bleed: the white square is NOT
+    // inside the scaled group, or the rounded corners would grow too.
+    const gStart = svg.indexOf("<g transform");
+    expect(svg.indexOf('<rect')).toBeLessThan(gStart);
+  });
+
+  it("proves the centring on the rendered pixels, not just the markup", () => {
+    // A transform attribute can be present and still be wrong, so this
+    // decodes the real 192px PNG and measures the drawing's bounding box
+    // against the tile. Everything that is not near-white counts as ink.
+    const { width, height, pixels } = decodePng(read("public/icon-192.png"));
+    expect(width).toBe(192);
+    expect(height).toBe(192);
+
+    let minX = width, minY = height, maxX = -1, maxY = -1;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        const [r, g, b, a] = [
+          pixels[i],
+          pixels[i + 1],
+          pixels[i + 2],
+          pixels[i + 3],
+        ];
+        if (a < 20) continue; // outside the rounded tile
+        if (r > 235 && g > 235 && b > 235) continue; // the white tile
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+    expect(maxX).toBeGreaterThan(0); // something was actually drawn
+
+    const left = minX;
+    const right = width - 1 - maxX;
+    const top = minY;
+    const bottom = height - 1 - maxY;
+
+    // CENTRED: opposite margins match within a pixel of rounding.
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(2);
+    expect(Math.abs(top - bottom)).toBeLessThanOrEqual(2);
+
+    // SMALL, EVEN GAPS: the drawing fills most of the tile but never
+    // touches the rounded corners. Before the fix it filled ~64% of the
+    // height and sat off-centre (left margin 18 vs 14.4 elsewhere).
+    const fillH = (maxY - minY + 1) / height;
+    expect(fillH).toBeGreaterThan(0.8);
+    expect(fillH).toBeLessThan(0.92);
+    for (const m of [left, right, top, bottom]) {
+      expect(m).toBeGreaterThan(0.04 * width); // a real gap remains
+      expect(m).toBeLessThan(0.13 * width); // but only a small one
+    }
+  });
+
   it("ships the source artwork in public/", () => {
     const svg = readText("public/favicon.svg");
     expect(svg).toContain("<svg");
@@ -213,3 +289,82 @@ describe("the favicon", () => {
     }
   });
 });
+
+/**
+ * A minimal PNG reader: enough to get RGBA pixels out of the 8-bit
+ * truecolour-with-alpha files sharp writes, so a test can measure the
+ * artwork instead of trusting the markup. Handles the five PNG filter
+ * types; no interlacing (sharp does not emit it here).
+ */
+function decodePng(buf: Buffer): {
+  width: number;
+  height: number;
+  pixels: Buffer;
+} {
+  expect(buf.subarray(0, 8).toString("binary")).toBe("\x89PNG\r\n\x1a\n");
+  let pos = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  const idat: Buffer[] = [];
+  while (pos < buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.subarray(pos + 4, pos + 8).toString("ascii");
+    const data = buf.subarray(pos + 8, pos + 8 + len);
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data.readUInt8(8);
+      colorType = data.readUInt8(9);
+      expect(data.readUInt8(12)).toBe(0); // not interlaced
+    } else if (type === "IDAT") {
+      idat.push(Buffer.from(data));
+    } else if (type === "IEND") {
+      break;
+    }
+    pos += 12 + len;
+  }
+  expect(bitDepth).toBe(8);
+  const channels = colorType === 6 ? 4 : colorType === 2 ? 3 : 0;
+  expect(channels).toBeGreaterThan(0); // RGB or RGBA only
+
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * channels;
+  const out = Buffer.alloc(width * height * 4);
+  let prev = Buffer.alloc(stride);
+  let o = 0;
+  for (let y = 0; y < height; y++) {
+    const filter = raw[o];
+    o += 1;
+    const line = Buffer.from(raw.subarray(o, o + stride));
+    o += stride;
+    for (let i = 0; i < stride; i++) {
+      const a = i >= channels ? line[i - channels] : 0;
+      const b = prev[i];
+      const c = i >= channels ? prev[i - channels] : 0;
+      let v = line[i];
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      line[i] = v & 0xff;
+    }
+    for (let x = 0; x < width; x++) {
+      const s = x * channels;
+      const d = (y * width + x) * 4;
+      out[d] = line[s];
+      out[d + 1] = line[s + 1];
+      out[d + 2] = line[s + 2];
+      out[d + 3] = channels === 4 ? line[s + 3] : 255;
+    }
+    prev = line;
+  }
+  return { width, height, pixels: out };
+}

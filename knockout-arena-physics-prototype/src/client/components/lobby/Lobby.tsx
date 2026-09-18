@@ -251,7 +251,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
           <div className="leading-tight">
             {/* Decorative logo inside the heading: one announcement. */}
             <h1 className="flex items-center">
-              <BrandLogo height={26} decorative />
+              <BrandLogo height={36} decorative />
               <span className="sr-only">Knockout Arena</span>
             </h1>
           </div>
