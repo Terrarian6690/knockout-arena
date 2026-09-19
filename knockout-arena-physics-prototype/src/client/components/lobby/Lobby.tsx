@@ -301,22 +301,6 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               startPending={startPending}
               connected={state.status === "connected"}
               onStart={handleStart}
-              onSetName={(name) => {
-                // A rename in the room updates the gate's name too, so
-                // the two boxes never disagree (and a later room entry
-                // reuses the latest name).
-                const sent = client.setName(name);
-                if (sent) {
-                  setPlayerName(name);
-                  if (state.roomId !== null && state.playerId !== null) {
-                    appliedName.current = {
-                      seat: `${state.roomId}:${state.playerId}`,
-                      name,
-                    };
-                  }
-                }
-                return sent;
-              }}
             />
             {/* The seat is server-reserved while the client reconnects —
                 the room stays, the hint says what is happening. */}

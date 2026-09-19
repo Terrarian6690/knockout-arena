@@ -314,7 +314,10 @@ describe("the lobby fits on screen without scrolling", () => {
     expect(screen.getByTestId("start-match")).toBeInTheDocument();
     expect(screen.getByTestId("leave-room")).toBeInTheDocument();
     expect(screen.queryByTestId("connection-status")).toBeNull();
-    expect(screen.getByLabelText("Player name:")).toBeInTheDocument();
+    // The in-room rename box was removed on request: names are set on
+    // the home screen, never in the waiting room.
+    expect(screen.queryByLabelText("Player name:")).toBeNull();
+    expect(screen.queryByTestId("display-name-input")).toBeNull();
     // The "You are pN" line was removed on purpose (the seat's You badge
     // already marks the local player) — it must not creep back in.
     expect(screen.queryByTestId("local-player-id")).toBeNull();
@@ -391,10 +394,12 @@ describe("the name gate does not disturb the Quick Play / Create layout", () => 
     ).toBeTruthy();
   });
 
-  it("the name box does not appear once seated (it becomes a rename box)", async () => {
+  it("no name box exists once seated (no rename box either)", async () => {
     await seatedPlayer("public");
+    // Neither the home-screen box (left behind) nor a rename box (the
+    // in-room editor was removed on request) may appear once seated.
     expect(screen.queryByTestId("player-name-input")).toBeNull();
-    expect(screen.getByTestId("display-name-input")).toHaveValue("Tester");
+    expect(screen.queryByTestId("display-name-input")).toBeNull();
   });
 
   it("renders the name box for an un-named player", async () => {

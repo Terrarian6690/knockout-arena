@@ -350,7 +350,7 @@ interface IndicatorStyle {
 }
 
 /**
- * The viewer's OWN live aim indicator: dashed shaft + power chevrons +
+ * The viewer's OWN live aim indicator: a single dashed shaft +
  * arrowhead, length ∝ power. Pure presentation of the projection's
  * aimDirection/power — no trajectory prediction.
  */
@@ -393,7 +393,7 @@ function drawLaunchIndicator(
   );
 }
 
-/** Shared indicator geometry: dashed shaft, power chevrons, arrowhead. */
+/** Shared indicator geometry: one dashed shaft, one arrowhead. */
 function drawIndicator(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -421,26 +421,9 @@ function drawIndicator(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Power chevrons along the shaft: evenly spaced, so a stronger power
-  // (longer indicator) shows more chevrons — "more power, harder launch"
-  // is readable at a glance without predicting the landing spot.
-  for (let d = CONFIG.pawn.radius + 14; d < len - 14; d += 14) {
-    const cx = x + direction.x * d;
-    const cy = y + direction.y * d;
-    ctx.beginPath();
-    ctx.moveTo(
-      cx - 7 * Math.cos(angle - 0.45),
-      cy - 7 * Math.sin(angle - 0.45)
-    );
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(
-      cx - 7 * Math.cos(angle + 0.45),
-      cy - 7 * Math.sin(angle + 0.45)
-    );
-    ctx.strokeStyle = style.arrowColor;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  }
+  // (The small chevrons that used to repeat along the shaft were removed
+  // on request: the indicator is ONE arrow now — a single shaft and a
+  // single head. Power still reads from the arrow's LENGTH.)
 
   // Arrowhead (grows slightly with power).
   const head = 9 + power;

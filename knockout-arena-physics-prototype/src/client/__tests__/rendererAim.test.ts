@@ -298,4 +298,32 @@ describe("renderer — the revealed launch arrows", () => {
     expect(tips).toHaveLength(1);
     expect(tips[0].color).toBe(playerColor(0));
   });
+
+  it("is ONE arrow — no chevrons repeat along the shaft", () => {
+    const calls = draw(
+      snap({
+        pawns: [pawnView("p0", { position: { x: 400, y: 350 } }), pawnView("p1")],
+        aimDirection: { x: 1, y: 0 },
+        isAiming: true,
+        power: 5,
+      })
+    );
+
+    // The shaft ends where the dash pattern is cleared; the arrowhead's
+    // fill is the next styled draw. The small chevrons that used to
+    // repeat between those two points are gone: nothing styles a stroke
+    // there, and exactly ONE new path (the head) begins.
+    const dashEnd = calls.findIndex(
+      (c) => c.op === "setLineDash" && (c.args[0] as number[]).length === 0
+    );
+    const headFill = calls.findIndex(
+      (c) => c.op === "set:fillStyle" && c.args[0] === CONFIG.colors.aimArrow
+    );
+    expect(dashEnd).toBeGreaterThanOrEqual(0);
+    expect(headFill).toBeGreaterThan(dashEnd);
+
+    const between = calls.slice(dashEnd + 1, headFill);
+    expect(between.filter((c) => c.op === "set:strokeStyle")).toEqual([]);
+    expect(between.filter((c) => c.op === "beginPath")).toHaveLength(1);
+  });
 });
