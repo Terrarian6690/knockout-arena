@@ -350,7 +350,7 @@ interface IndicatorStyle {
 }
 
 /**
- * The viewer's OWN live aim indicator: a single dashed shaft +
+ * The viewer's OWN live aim indicator: a single solid shaft +
  * arrowhead, length ∝ power. Pure presentation of the projection's
  * aimDirection/power — no trajectory prediction.
  */
@@ -393,7 +393,7 @@ function drawLaunchIndicator(
   );
 }
 
-/** Shared indicator geometry: one dashed shaft, one arrowhead. */
+/** Shared indicator geometry: one solid shaft, one arrowhead. */
 function drawIndicator(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -410,8 +410,8 @@ function drawIndicator(
   ctx.save();
   ctx.globalAlpha = style.alpha;
 
-  // Dashed line.
-  ctx.setLineDash([8, 7]);
+  // SOLID line (the old dash pattern was removed on request): one
+  // continuous shaft from the pawn's rim to the arrowhead.
   ctx.beginPath();
   ctx.moveTo(x + direction.x * (CONFIG.pawn.radius + 2), y + direction.y * (CONFIG.pawn.radius + 2));
   ctx.lineTo(tipX, tipY);
@@ -419,7 +419,6 @@ function drawIndicator(
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
   ctx.stroke();
-  ctx.setLineDash([]);
 
   // (The small chevrons that used to repeat along the shaft were removed
   // on request: the indicator is ONE arrow now — a single shaft and a

@@ -44,6 +44,12 @@ export interface RosterEntry {
    * back to the seat-derived "Player N". Purely cosmetic.
    */
   readonly displayName: string | null;
+  /**
+   * The seat's disc skin (palette index), or undefined when the seat
+   * carries the default (orange) — the server omits defaults on the
+   * wire, exactly like an absent displayName. Purely cosmetic.
+   */
+  readonly skin?: number;
 }
 
 /**

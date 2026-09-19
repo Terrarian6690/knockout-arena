@@ -4,6 +4,7 @@ import {
   DEFAULT_RESERVATION_MS,
   type LeaveResult,
   type NameResult,
+  type SkinResult,
   type ResetResult,
   type ResolveRoundResult,
   type RoomInfo,
@@ -177,6 +178,8 @@ export interface GameServer {
    * another player, and the server validates the name for real.
    */
   setName(session: unknown, name: unknown): NameResult;
+  /** Set the session's OWN disc skin (cosmetic; see roomManager). */
+  setSkin(session: unknown, skin: unknown): SkinResult;
   /** Room snapshot by id (null if unknown/malformed). */
   getRoom(roomId: unknown): RoomInfo | null;
   /** Resolve the identity chain: session → { room, assigned playerId }. */
@@ -399,6 +402,13 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     return manager.setName(s.token, name);
   }
 
+  function setSkin(session: unknown, skin: unknown): SkinResult {
+    const s = resolve(session);
+    if (!s) return { ok: false, reason: "unknown-session" };
+    if (typeof skin !== "number") return { ok: false, reason: "invalid-skin" };
+    return manager.setSkin(s.token, skin);
+  }
+
   function leaveRoom(session: unknown): LeaveResult {
     const s = resolve(session);
     if (!s) return { ok: false, reason: "unknown-session" };
@@ -527,6 +537,7 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     joinPublicRoom,
     leaveRoom,
     setName,
+    setSkin,
     getRoom,
     getSeat,
     startMatch,

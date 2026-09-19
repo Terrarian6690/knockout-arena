@@ -166,6 +166,7 @@ describe("with a valid name, every entrance works", () => {
     expect(allSent(pair).map((m) => m.type)).toEqual([
       "join_public",
       "set_name",
+      "set_skin",
     ]);
     // The chosen name is what the server now holds for the seat.
     await waitFor(() =>
@@ -186,6 +187,7 @@ describe("with a valid name, every entrance works", () => {
     expect(allSent(pair).map((m) => m.type)).toEqual([
       "create_room",
       "set_name",
+      "set_skin",
     ]);
     await waitFor(() =>
       expect(screen.getByTestId("seat-p0")).toHaveTextContent("Grace")
@@ -210,7 +212,7 @@ describe("with a valid name, every entrance works", () => {
     });
     await waitFor(() => expect(player.client.getState().roomId).not.toBeNull());
 
-    expect(allSent(pair).map((m) => m.type)).toEqual(["join_room", "set_name"]);
+    expect(allSent(pair).map((m) => m.type)).toEqual(["join_room", "set_name", "set_skin"]);
     await waitFor(() =>
       expect(screen.getByTestId("seat-p1")).toHaveTextContent("Linus")
     );
@@ -288,9 +290,11 @@ describe("the name carries through the session", () => {
     expect(allSent(pair).map((m) => m.type)).toEqual([
       "join_public",
       "set_name",
+      "set_skin",
       "leave_room",
       "join_public",
       "set_name",
+      "set_skin",
     ]);
   });
 

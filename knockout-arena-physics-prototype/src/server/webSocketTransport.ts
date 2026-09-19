@@ -485,6 +485,28 @@ export function createTransportCore(
         return;
       }
 
+      case "set_skin": {
+        // Cosmetic disc skin for the sender's OWN seat. Identity comes
+        // from the session — there is no playerId in the payload to
+        // forge, and the server validates the palette index for real.
+        const result = gameServer.setSkin(state.session, message.skin);
+        if (!result.ok) {
+          const note =
+            result.reason === "invalid-skin"
+              ? "pick one of the available disc skins"
+              : result.reason === "room-playing"
+                ? "skins can only be changed while the room is in the lobby"
+                : undefined;
+          sendError(state, result.reason, note);
+          return;
+        }
+        // No change → same room info; the broadcast is harmless but
+        // skip it when nothing actually differed, mirroring the
+        // "nothing changed: no traffic" spirit of set_name's client.
+        broadcastRoomState(result.room); // everyone sees the new skin
+        return;
+      }
+
       case "command": {
         // Identity comes from the session; the server stamps it and
         // strips whatever the payload claimed.

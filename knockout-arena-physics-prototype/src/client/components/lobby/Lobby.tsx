@@ -11,6 +11,11 @@ import { BrandLogo } from "../BrandLogo";
 import { ErrorBanner } from "./ErrorBanner";
 import { getPrefillJoinCode } from "./invite";
 import { LeaveRoomButton } from "./LeaveRoomButton";
+import {
+  loadSkinPreference,
+  saveSkinPreference,
+} from "./skins";
+import { SkinPicker } from "./SkinPicker";
 import { RoomPanel } from "./RoomPanel";
 import { MultiplayerGame } from "../game/MultiplayerGame";
 
@@ -138,6 +143,32 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     }
     if (client.setName(validName)) appliedName.current = { seat, name: validName };
   }, [client, state.roomId, state.playerId, validName]);
+
+  // ── the disc skin ──────────────────────────────────────────────────
+  // The cosmetic look of this player's pawn, chosen in the main menu
+  // (right of the name box), persisted locally, and applied to the seat
+  // exactly like the name is: the server only accepts set_skin from a
+  // SEATED session, so the choice rides down on the first roster after
+  // joining. One send per skin per seat (the same ref discipline as the
+  // name gate), so re-renders never spam the wire.
+  const [skin, setSkinState] = useState<number>(() => loadSkinPreference());
+  const onSkinChange = (next: number) => {
+    setSkinState(next);
+    saveSkinPreference(next);
+  };
+  const appliedSkin = useRef<{ seat: string; skin: number } | null>(null);
+  useEffect(() => {
+    if (state.roomId === null || state.playerId === null) {
+      appliedSkin.current = null; // a new seat must be skinned again
+      return;
+    }
+    const seat = `${state.roomId}:${state.playerId}`;
+    const applied = appliedSkin.current;
+    if (applied !== null && applied.seat === seat && applied.skin === skin) {
+      return;
+    }
+    if (client.setSkin(skin)) appliedSkin.current = { seat, skin };
+  }, [client, state.roomId, state.playerId, skin]);
 
   // The server moved the room into the match → the game screen takes over.
   useEffect(() => {
@@ -324,6 +355,8 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               setPlayerName(value);
               setNameError(null);
             }}
+            skin={skin}
+            onSkinChange={onSkinChange}
             onJoinCodeChange={handleJoinCodeChange}
             onCreate={handleCreate}
             onJoin={handleJoin}
@@ -359,6 +392,9 @@ interface HomeViewProps {
   readonly nameReady: boolean;
   readonly nameInputRef: React.RefObject<HTMLInputElement | null>;
   onPlayerNameChange: (value: string) => void;
+  /** The currently chosen disc skin (palette index; default orange). */
+  readonly skin: number;
+  onSkinChange: (skin: number) => void;
   onJoinCodeChange: (value: string) => void;
   onCreate: () => void;
   onJoin: () => void;
@@ -379,6 +415,8 @@ function HomeView({
   nameReady,
   nameInputRef,
   onPlayerNameChange,
+  skin,
+  onSkinChange,
   onJoinCodeChange,
   onCreate,
   onJoin,
@@ -465,6 +503,10 @@ function HomeView({
                 nameError !== null ? "border-red-400/50" : "border-white/15"
               )}
             />
+            {/* The disc-skin picker lives RIGHT OF the name box (the
+                input is flex-1, so the picker takes exactly its own
+                width). The button itself previews the chosen skin. */}
+            <SkinPicker value={skin} onChange={onSkinChange} />
           </div>
           {nameError !== null && (
             <p

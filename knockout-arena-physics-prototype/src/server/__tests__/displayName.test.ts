@@ -136,6 +136,7 @@ describe("setName at the facade", () => {
       playerId: "p0",
       connected: true,
       displayName: "Szymon", // trimmed server-side
+      skin: 0,
     });
     // getRoom agrees (by code and by internal id — the dual lookup).
     expect(server.getRoom(room.code)!.seats[0].displayName).toBe("Szymon");

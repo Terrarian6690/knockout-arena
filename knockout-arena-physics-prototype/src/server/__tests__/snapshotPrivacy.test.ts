@@ -229,6 +229,7 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
       playerId: "p0",
       connected: false,
       displayName: null,
+      skin: 0,
     });
 
     // The round resolves while p0 is gone. The committed launch lives in

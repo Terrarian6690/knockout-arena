@@ -1,4 +1,4 @@
-import { CONFIG } from "../../../game";
+import { CONFIG, playerColor } from "../../../game";
 import type { RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
 
@@ -75,6 +75,17 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
                 "h-2 w-2 shrink-0 rounded-full",
                 seat.connected ? "bg-emerald-400" : "bg-red-400/70"
               )}
+            />
+            {/* The player's chosen DISC SKIN (default orange): the same
+                palette index the arena renderer paints their pawn with,
+                so every player list shows the real look. Absent field =
+                the default (the server omits defaults on the wire). */}
+            <span
+              aria-hidden
+              data-testid={`skin-swatch-${seat.playerId}`}
+              title="Disc skin"
+              className="h-3 w-3 shrink-0 rounded-full ring-1 ring-white/25"
+              style={{ backgroundColor: playerColor(seat.skin ?? 0) }}
             />
             <span className="truncate text-sm font-bold leading-tight text-white">
               {seat.displayName ?? seatLabel(seat.playerId)}

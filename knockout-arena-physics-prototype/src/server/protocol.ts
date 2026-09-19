@@ -23,7 +23,12 @@
  * match_finished.
  */
 
-import { MAX_PLAYERS, type RoomInfo, type RoomSeatInfo } from "./roomManager";
+import {
+  DEFAULT_SKIN,
+  MAX_PLAYERS,
+  type RoomInfo,
+  type RoomSeatInfo,
+} from "./roomManager";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -52,6 +57,7 @@ export type ClientMessage =
   // another player. Validated server-side (1..16 code points, trimmed,
   // no control characters).
   | { type: "set_name"; name: string }
+  | { type: "set_skin"; skin: number }
   | { type: "command"; command: unknown };
 
 export type ClientMessageRejection =
@@ -146,6 +152,17 @@ export function parseClientMessage(raw: string): ParsedClientMessage {
       }
       return { ok: false, code: "malformed-payload" };
 
+    case "set_skin":
+      // Shape only: a number. Whether it is a valid palette index is the
+      // room manager's semantic call (clean "invalid-skin" error).
+      if (
+        hasOnly(envelope, "type", "protocolVersion", "skin") &&
+        typeof envelope.skin === "number"
+      ) {
+        return { ok: true, message: { type: "set_skin", skin: envelope.skin } };
+      }
+      return { ok: false, code: "malformed-payload" };
+
     case "reconnect":
       // The seat-recovery credential. Opaque server-issued value; the
       // server resolves it to exactly one seat — a credential is never
@@ -210,14 +227,19 @@ function hasOnly(
  * Clients fall back to the seat-derived "Player N" when it is absent.
  */
 function wireSeat(seat: RoomSeatInfo): Record<string, unknown> {
-  if (seat.displayName === null) {
-    return { playerId: seat.playerId, connected: seat.connected };
-  }
-  return {
-    playerId: seat.playerId,
-    connected: seat.connected,
-    displayName: seat.displayName,
-  };
+  // `skin` is ADDITIVE (protocol v1): it is emitted ONLY when the seat
+  // differs from the default (orange), so older payloads and payload
+  // assertions stay byte-identical while nobody has customized. Clients
+  // treat an absent skin as the default.
+  const base: Record<string, unknown> =
+    seat.displayName === null
+      ? { playerId: seat.playerId, connected: seat.connected }
+      : {
+          playerId: seat.playerId,
+          connected: seat.connected,
+          displayName: seat.displayName,
+        };
+  return seat.skin === DEFAULT_SKIN ? base : { ...base, skin: seat.skin };
 }
 
 export function welcomeMessage(
@@ -333,6 +355,7 @@ export const ERROR_DESCRIPTIONS: Record<string, string> = {
   "invalid-command": "the command is malformed",
   "wrong-player": "the player is eliminated",
   "wrong-phase": "the command is not allowed in the current phase",
+  "invalid-skin": "that disc skin is not available",
   "already-confirmed": "the move is locked in for this round — wait for the next one",
 };
 
