@@ -424,16 +424,10 @@ export function RoomPanel({
         )}
 
         {/* The HOST indicator is NOT repeated here: it sits in the
-            panel's top-right corner (and on your own seat row). */}
-        <div className="mt-2 flex items-center justify-center gap-2 text-xs leading-tight">
-          <span className="text-white/50">You are</span>
-          <span
-            data-testid="local-player-id"
-            className="text-sm font-bold text-white"
-          >
-            {seatLabel(playerId)}
-          </span>
-        </div>
+            panel's top-right corner (and on your own seat row). The
+            "You are pN" line that used to sit here was removed on
+            request — your own row in the seat list is already marked
+            with the You badge, which says the same thing once. */}
 
         {roomState === "waiting" && (
           <div className="mt-2">

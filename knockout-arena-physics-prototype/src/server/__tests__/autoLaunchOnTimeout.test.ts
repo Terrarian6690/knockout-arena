@@ -90,12 +90,12 @@ function phaseLog(h: GameHost): () => GameState["phase"][] {
 // 1 — the duration itself
 // ──────────────────────────────────────────────────────────────────────
 
-describe("the aiming phase lasts 20 seconds, authoritatively", () => {
-  it("arms a 20 s deadline from the server's own clock", () => {
+describe("the aiming phase lasts 30 seconds, authoritatively", () => {
+  it("arms a 30 s deadline from the server's own clock", () => {
     let now = 7_000;
     const h = host({ players: specs(2), clock: () => now });
-    expect(DEFAULT_ROUND_DECISION_TIMEOUT_MS).toBe(20_000);
-    expect(h.roundDeadline()).toBe(27_000);
+    expect(DEFAULT_ROUND_DECISION_TIMEOUT_MS).toBe(30_000);
+    expect(h.roundDeadline()).toBe(37_000);
   });
 
   it("does not resolve at the old 10 s mark — the window really is longer", () => {
@@ -107,11 +107,11 @@ describe("the aiming phase lasts 20 seconds, authoritatively", () => {
     h.tick();
     expect(stateOf(h).phase).toBe("aiming"); // still deciding
 
-    now = 19_999;
+    now = 29_999;
     h.tick();
     expect(stateOf(h).phase).toBe("aiming"); // not a millisecond early
 
-    now = 20_000;
+    now = 30_000;
     h.tick();
     expect(stateOf(h).phase).toBe("moving"); // exactly on time
   });
@@ -142,7 +142,7 @@ describe("a locked aim is honoured when the timer expires", () => {
     h.submitCommand({ type: "setPower", playerId: "p0", power: 4 });
     expect(pawn(h, "p0").confirmed).toBe(false);
 
-    now = 20_000;
+    now = 30_000;
     h.tick();
 
     // The reveal carries the aim they locked and the power they chose.
@@ -164,7 +164,7 @@ describe("a locked aim is honoured when the timer expires", () => {
     const h = host({ players: specs(2), clock: () => now });
     h.submitCommand({ type: "aim", playerId: "p0", x: CX, y: CY }); // aim only
 
-    now = 20_000;
+    now = 30_000;
     h.tick();
 
     const launch = pawn(h, "p0").lastLaunch!;
@@ -181,7 +181,7 @@ describe("a locked aim is honoured when the timer expires", () => {
     h.submitCommand({ type: "aim", playerId: "p0", x: CX, y: CY });
     h.submitCommand({ type: "setPower", playerId: "p0", power: 2 });
     h.submitCommand({ type: "confirmLaunch", playerId: "p0" });
-    now = 20_000;
+    now = 30_000;
     h.tick();
     pumpUntilSettled(h);
     expect(stateOf(h).phase).toBe("aiming"); // round 2 is open
@@ -201,7 +201,7 @@ describe("a locked aim is honoured when the timer expires", () => {
     const h = host({ players: specs(2), clock: () => now });
     h.submitCommand({ type: "aim", playerId: "p0", x: CX, y: CY });
 
-    now = 20_000;
+    now = 30_000;
     h.tick();
     pumpUntilSettled(h);
 
@@ -225,7 +225,7 @@ describe("a locked aim is honoured when the timer expires", () => {
     manual.submitCommand({ type: "aim", playerId: "p0", x: CX, y: CY });
     manual.submitCommand({ type: "setPower", playerId: "p0", power: 4 });
     manual.submitCommand({ type: "confirmLaunch", playerId: "p0" });
-    nowA = 20_000;
+    nowA = 30_000;
     manual.tick();
     pumpUntilSettled(manual);
 
@@ -233,7 +233,7 @@ describe("a locked aim is honoured when the timer expires", () => {
     const auto = host({ players: specs(2), clock: () => nowB });
     auto.submitCommand({ type: "aim", playerId: "p0", x: CX, y: CY });
     auto.submitCommand({ type: "setPower", playerId: "p0", power: 4 });
-    nowB = 20_000; // no confirm — the deadline does it
+    nowB = 30_000; // no confirm — the deadline does it
     auto.tick();
     pumpUntilSettled(auto);
 
@@ -255,7 +255,7 @@ describe("a player who locked nothing is unaffected (regression pin)", () => {
     const h = host({ players: specs(3), clock: () => now });
     const before = stateOf(h).pawns.map((p) => ({ ...p.position }));
 
-    now = 20_000; // nobody did anything at all
+    now = 30_000; // nobody did anything at all
     h.tick();
     expect(stateOf(h).phase).toBe("moving"); // the round still resolves
     pumpUntilSettled(h);
@@ -275,7 +275,7 @@ describe("a player who locked nothing is unaffected (regression pin)", () => {
     const before = { ...pawn(h, "p0").position };
     h.submitCommand({ type: "setPower", playerId: "p0", power: 5 });
 
-    now = 20_000;
+    now = 30_000;
     h.tick();
     pumpUntilSettled(h);
 
@@ -310,7 +310,7 @@ describe("everyone still resolves together", () => {
     // One player confirming must NOT start the round early.
     expect(stateOf(h).phase).toBe("aiming");
 
-    now = 20_000;
+    now = 30_000;
     h.tick();
 
     // Both launches are revealed in the same snapshot — not staggered.
@@ -361,7 +361,7 @@ describe("everyone still resolves together", () => {
     h.submitCommand({ type: "aim", playerId: "p0", x: CX, y: CY });
     h.submitCommand({ type: "aim", playerId: "p1", x: CX, y: CY });
 
-    now = 20_000;
+    now = 30_000;
     h.submitCommand({ type: "confirmLaunch", playerId: "p0" });
     h.submitCommand({ type: "confirmLaunch", playerId: "p1" }); // resolves here
     h.tick(); // the deadline finds the round already gone
@@ -400,7 +400,7 @@ describe("an auto-launched choice is as private as a confirmed one", () => {
     expect(own.aimDirection).not.toBeNull();
 
     // After the deadline, the auto-launch is public fact for everyone.
-    now = 20_000;
+    now = 30_000;
     h.tick();
     const revealed = projectSnapshot(stateOf(h), "p1");
     expect(revealed.pawns.find((p) => p.id === "p0")!.launch).not.toBeNull();
@@ -428,7 +428,7 @@ describe("an auto-launched choice is as private as a confirmed one", () => {
     expect(during.pawns.every((p) => p.lastLaunch === null)).toBe(true);
 
     // It appears only at the reveal…
-    now = 20_000;
+    now = 30_000;
     h.tick();
     expect(pawn(h, "p0").lastLaunch).not.toBeNull();
 

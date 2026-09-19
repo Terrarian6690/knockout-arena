@@ -241,16 +241,16 @@ function launchInwardSession(server: GameServer, session: Session, power = 2): v
 // ────────────────────────────────────────────────────────────────────────
 
 describe("round decision deadline — configuration", () => {
-  it("[A] defaults to a 20 000 ms round decision deadline", () => {
-    // Task 22 raised this from 10 s. It is SERVER-AUTHORITATIVE: the
+  it("[A] defaults to a 30 000 ms round decision deadline", () => {
+    // Raised over time (10 s -> 20 s -> 30 s). It is SERVER-AUTHORITATIVE: the
     // number lives here, and the client only ever receives the absolute
     // timestamp computed from it.
-    expect(DEFAULT_ROUND_DECISION_TIMEOUT_MS).toBe(20_000);
+    expect(DEFAULT_ROUND_DECISION_TIMEOUT_MS).toBe(30_000);
     let fakeNow = 1_000;
     const h = host({ players: specs(2), clock: () => fakeNow });
     // Round 1's deadline is armed the moment the aiming phase exists
     // (host creation — startMatch creates and starts the host at once).
-    expect(h.roundDeadline()).toBe(1_000 + 20_000);
+    expect(h.roundDeadline()).toBe(1_000 + 30_000);
   });
 
   it("[B] accepts a custom roundDecisionTimeoutMs", () => {

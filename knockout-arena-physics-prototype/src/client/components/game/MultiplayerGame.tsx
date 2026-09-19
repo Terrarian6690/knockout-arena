@@ -54,8 +54,9 @@ import { canLocalPlayerAct } from "./localControl";
  * server-stamped `snapshot.roundDeadline` only — the server remains the
  * sole authority for when a round ends. The match clock (MatchTimer) is
  * the same arrangement for the 6-minute match time limit: it renders
- * `snapshot.matchDeadline` and never ends a match itself. Both are shown
- * only during a match — a lobby has neither deadline.
+ * `snapshot.matchDeadline` and never ends a match itself. Both live in
+ * the clock bar above the arena and are shown only during a match — a
+ * lobby has neither deadline.
  */
 export function MultiplayerGame({
   onLeave,
@@ -228,23 +229,16 @@ export function MultiplayerGame({
               roomVisibility={state.roomVisibility}
             />
 
-            <main ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 outline-none">
-              <ArenaView
-                snapshot={displaySnapshot ?? snapshot}
-                interactive={canAct && connected}
-                onAim={handleAim}
-                hostPlayerId={state.hostPlayerId}
-              />
-
-              {/* The match clock and, beside it, the round decision
-                  countdown float over the ARENA — centered on the arena
-                  column itself (this <main>, which the canvas fills), not
-                  on the whole window — so the pair reads as part of the
-                  board. The countdown lives here too, right next to the
-                  clock it belongs with. z-20 keeps both above the shrink
-                  warning's z-10 band, and pointer-events-none guarantees
-                  neither can swallow an aim click. */}
-              <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-center gap-2 px-4 pt-2">
+            <main ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 flex-col outline-none">
+              {/* The clocks' own BAR above the arena: match clock and,
+                  beside it, the round decision countdown, centered on the
+                  arena column. A real strip (in normal flow, not an
+                  overlay), so the timers never cover the board and are
+                  always in the same place. */}
+              <div
+                data-testid="clock-bar"
+                className="flex items-start justify-center gap-2 border-b border-white/5 bg-white/[0.02] px-4 py-2"
+              >
                 <MatchTimer
                   phase={snapshot.phase}
                   deadline={snapshot.matchDeadline}
@@ -255,6 +249,13 @@ export function MultiplayerGame({
                 />
               </div>
 
+              <ArenaView
+                snapshot={displaySnapshot ?? snapshot}
+                interactive={canAct && connected}
+                onAim={handleAim}
+                hostPlayerId={state.hostPlayerId}
+              />
+
               {/* Authoritative shrink warning. Overlays the arena without
                   capturing pointer events, so aiming and Confirm are
                   unaffected; it reads the server's snapshot only. */}
@@ -263,9 +264,7 @@ export function MultiplayerGame({
               {/* The eliminated player's death notice: prominent but
                   non-blocking (see EliminatedNotice) — the match goes on
                   and the player keeps watching the board. */}
-              <EliminatedNotice snapshot={snapshot} />
-
-              {!connected && (
+              <EliminatedNotice snapshot={snapshot} />              {!connected && (
                 <ConnectionBanner
                   status={state.status}
                   reconnectAttempt={state.reconnectAttempt}

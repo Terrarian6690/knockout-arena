@@ -94,7 +94,7 @@ describe("lobby room screen", () => {
     const p1 = screen.getByTestId("seat-p1");
     expect(within(p1).getByText("You")).toBeInTheDocument();
     expect(within(p1).queryByText("Host")).toBeNull();
-    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 2");
+    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed: the seat's You badge says it
   });
 
   it("shows the Start Match button only to the server-reported host", async () => {

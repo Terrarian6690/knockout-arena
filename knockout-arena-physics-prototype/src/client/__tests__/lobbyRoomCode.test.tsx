@@ -213,7 +213,7 @@ describe("lobby room code UX", () => {
     });
     // The guest lands in the room, seeing the same code.
     expect(await screen.findByTestId("room-code")).toHaveTextContent(code);
-    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 2");
+    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed: the seat's You badge says it
   });
 
   it("Enter submits a lowercase code too (normalized before sending)", async () => {

@@ -87,13 +87,13 @@ describe("the HOST indicator sits in the panel's top-right corner", () => {
 
   it("does not duplicate the Host marker beside the seat label", async () => {
     await seatedPlayer("private");
-    // The corner badge and the one on the player's own seat row — the
-    // "You are Player 1" line no longer repeats it a third time.
+    // The corner badge and the one on the player's own seat row. The
+    // "You are Player 1" line that once made a third spot is GONE
+    // (removed on request), so the count stays at two and no removed
+    // element can ever resurrect it.
     const panel = screen.getByTestId("room-panel");
     expect(within(panel).getAllByText("Host")).toHaveLength(2);
-    expect(
-      within(screen.getByTestId("local-player-id").parentElement!).queryByText("Host")
-    ).toBeNull();
+    expect(screen.queryByTestId("local-player-id")).toBeNull();
   });
 });
 
@@ -315,7 +315,9 @@ describe("the lobby fits on screen without scrolling", () => {
     expect(screen.getByTestId("leave-room")).toBeInTheDocument();
     expect(screen.queryByTestId("connection-status")).toBeNull();
     expect(screen.getByLabelText("Player name:")).toBeInTheDocument();
-    expect(screen.getByTestId("local-player-id")).toBeInTheDocument();
+    // The "You are pN" line was removed on purpose (the seat's You badge
+    // already marks the local player) — it must not creep back in.
+    expect(screen.queryByTestId("local-player-id")).toBeNull();
   });
 
   it("is measurably shorter than the pre-redesign layout", async () => {

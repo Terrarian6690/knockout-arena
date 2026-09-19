@@ -135,7 +135,7 @@ describe("GameHost: the arena shrinks inside the authoritative match state", () 
     let now = 1_000;
     const host = newHost(() => now);
     const first = host.roundDeadline();
-    expect(first).toBe(now + 20_000); // the 20 s aiming deadline, preserved
+    expect(first).toBe(now + 30_000); // the 30 s aiming deadline, preserved
 
     expect(host.submitCommand({ type: "resolveRound" }).ok).toBe(true);
     expect(host.roundDeadline()).toBeNull(); // no deadline while resolving

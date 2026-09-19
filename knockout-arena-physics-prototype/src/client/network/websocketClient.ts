@@ -261,6 +261,14 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
         setState({ winnerId: message.winnerId, roomState: "finished" });
         return;
       case "error":
+        // Expected command races are information, not faults: an intent
+        // sent while the player could act can arrive just after the
+        // server resolved the round (deadline or the last confirm), and
+        // the engine answers wrong-phase. The very next snapshot moves
+        // the UI to the new phase anyway, so showing a "Server error"
+        // banner would only mislead — skip it. (A rejected reconnect
+        // below stays a real error: the seat was lost.)
+        if (message.code === "wrong-phase") return;
         if (reconnectToken !== null && state.status !== "connected") {
           // A recovery handshake was pending and the server rejected it
           // (invalid or expired credential — indistinguishable by
