@@ -1,4 +1,5 @@
 import { cn } from "../../utils/cn";
+import { useMatchKeyboard } from "../../useMatchKeyboard";
 import { PowerMeter } from "./PowerMeter";
 
 /**
@@ -33,6 +34,15 @@ export function MatchControls({
   onPowerChange,
   onLaunch,
 }: MatchControlsProps) {
+  // Keyboard shortcuts: digits 1..5 pick the power level, Space presses
+  // Confirm. Same commands as the on-screen controls — and only while the
+  // player may actually act (the hook attaches no listener otherwise).
+  useMatchKeyboard({
+    active: canAct,
+    onPower: onPowerChange,
+    onConfirm: onLaunch,
+  });
+
   return (
     <div
       data-testid="match-controls"

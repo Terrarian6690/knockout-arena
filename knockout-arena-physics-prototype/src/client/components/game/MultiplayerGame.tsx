@@ -52,7 +52,7 @@ import { canLocalPlayerAct } from "./localControl";
  * The round decision countdown (RoundCountdown) is presentation of the
  * server-stamped `snapshot.roundDeadline` only — the server remains the
  * sole authority for when a round ends. The match clock (MatchTimer) is
- * the same arrangement for the 4-minute match time limit: it renders
+ * the same arrangement for the 6-minute match time limit: it renders
  * `snapshot.matchDeadline` and never ends a match itself. Both are shown
  * only during a match — a lobby has neither deadline.
  */
@@ -200,12 +200,6 @@ export function MultiplayerGame({
         </div>
         <div className="flex items-center gap-2">
           <AudioControl />
-          {snapshot !== null && (
-            <RoundCountdown
-              phase={snapshot.phase}
-              deadline={snapshot.roundDeadline}
-            />
-          )}
           {snapshot !== null && <RoundBadge snapshot={snapshot} />}
         </div>
       </header>
@@ -241,15 +235,22 @@ export function MultiplayerGame({
                 hostPlayerId={state.hostPlayerId}
               />
 
-              {/* The match clock sits just below the top bar, floating over
-                  the arena so it costs the board no height. z-20 keeps it
-                  above the shrink warning's z-10 band, and
-                  pointer-events-none guarantees it can never swallow an
-                  aim click. */}
-              <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center px-4 pt-2">
+              {/* The match clock and, beside it, the round decision
+                  countdown float over the ARENA — centered on the arena
+                  column itself (this <main>, which the canvas fills), not
+                  on the whole window — so the pair reads as part of the
+                  board. The countdown lives here too, right next to the
+                  clock it belongs with. z-20 keeps both above the shrink
+                  warning's z-10 band, and pointer-events-none guarantees
+                  neither can swallow an aim click. */}
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-center gap-2 px-4 pt-2">
                 <MatchTimer
                   phase={snapshot.phase}
                   deadline={snapshot.matchDeadline}
+                />
+                <RoundCountdown
+                  phase={snapshot.phase}
+                  deadline={snapshot.roundDeadline}
                 />
               </div>
 

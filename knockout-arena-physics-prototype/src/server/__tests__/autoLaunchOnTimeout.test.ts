@@ -118,8 +118,8 @@ describe("the aiming phase lasts 20 seconds, authoritatively", () => {
 
   it("leaves the match limit and the shrink schedule alone", () => {
     // Task 22 changes ONE duration. These are the neighbours it must not
-    // have touched.
-    expect(CONFIG.match.durationMs).toBe(240_000);
+    // have touched. (The match limit itself is now 6 minutes.)
+    expect(CONFIG.match.durationMs).toBe(360_000);
     expect(CONFIG.arena.shrink.everyRounds).toBe(3);
     expect(CONFIG.power.default).toBe(3);
     expect(CONFIG.power.min).toBe(1);

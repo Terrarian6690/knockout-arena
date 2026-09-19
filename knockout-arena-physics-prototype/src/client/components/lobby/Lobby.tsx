@@ -8,7 +8,6 @@ import { normalizeRoomCode } from "../../network/roomCode";
 import type { ConnectionStatus } from "../../network/types";
 import { cn } from "../../utils/cn";
 import { BrandLogo } from "../BrandLogo";
-import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { ErrorBanner } from "./ErrorBanner";
 import { getPrefillJoinCode } from "./invite";
 import { LeaveRoomButton } from "./LeaveRoomButton";
@@ -256,7 +255,10 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
             </h1>
           </div>
         </div>
-        <ConnectionStatusBadge status={state.status} />
+        {/* The connection-status badge that used to sit here was removed
+            on request: the lobby stays clean, and connection problems
+            still surface through the error banner and the reconnect
+            affordance instead of an always-on indicator. */}
       </header>
 
       {/* The room view top-aligns (the home screen stays centered): with

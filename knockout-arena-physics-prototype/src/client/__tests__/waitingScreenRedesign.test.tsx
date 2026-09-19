@@ -303,8 +303,9 @@ describe("the lobby fits on screen without scrolling", () => {
 
   it("keeps every functional element that had to survive the resize", async () => {
     await seatedPlayer("private");
-    // Nothing was cut to make it fit: seats, counts, code, actions,
-    // connection status and the way out are all still here.
+    // Nothing was cut to make it fit: seats, counts, code, actions and
+    // the way out are all still here. The connection badge is gone on
+    // purpose (removed from the header), not squeezed out by space.
     expect(screen.getByTestId("seat-list").children).toHaveLength(6);
     expect(screen.getByTestId("player-count")).toBeInTheDocument();
     expect(screen.getByTestId("room-code")).toBeInTheDocument();
@@ -312,7 +313,7 @@ describe("the lobby fits on screen without scrolling", () => {
     expect(screen.getByTestId("invite-button")).toBeInTheDocument();
     expect(screen.getByTestId("start-match")).toBeInTheDocument();
     expect(screen.getByTestId("leave-room")).toBeInTheDocument();
-    expect(screen.getByTestId("connection-status")).toBeInTheDocument();
+    expect(screen.queryByTestId("connection-status")).toBeNull();
     expect(screen.getByLabelText("Player name:")).toBeInTheDocument();
     expect(screen.getByTestId("local-player-id")).toBeInTheDocument();
   });

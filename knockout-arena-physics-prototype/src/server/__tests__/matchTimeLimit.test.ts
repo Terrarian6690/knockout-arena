@@ -159,10 +159,10 @@ const last = (views: GameStateSnapshot[]): GameStateSnapshot => {
   return v;
 };
 
-describe("the 4-minute limit: duration and start", () => {
-  it("defaults to exactly 4 minutes", () => {
-    expect(DEFAULT_MATCH_DURATION_MS).toBe(240_000);
-    expect(CONFIG.match.durationMs).toBe(4 * 60 * 1000);
+describe("the 6-minute limit: duration and start", () => {
+  it("defaults to exactly 6 minutes", () => {
+    expect(DEFAULT_MATCH_DURATION_MS).toBe(360_000);
+    expect(CONFIG.match.durationMs).toBe(6 * 60 * 1000);
   });
 
   it("arms the deadline at match start, exactly one duration ahead", () => {

@@ -152,6 +152,27 @@ describe("the match clock sits below the top bar", () => {
     expect(topPad(clockBand.className)).toBeLessThanOrEqual(4);
   });
 
+  it("the decision countdown sits beside the clock, over the arena", async () => {
+    // Requested: the decision-time badge lives NEXT TO the match clock —
+    // one centered row over the arena — not in the top-right header.
+    const { sockets } = await renderGame();
+    await feed(sockets, {
+      matchDeadline: deadline(),
+      roundDeadline: Date.now() + 5_000,
+    });
+
+    const clock = screen.getByTestId("match-timer");
+    const countdown = screen.getByTestId("round-countdown");
+    // Same overlay row, side by side.
+    expect(countdown.parentElement).toBe(clock.parentElement);
+    // And that row belongs to the arena column (main), never the header.
+    const main = document.querySelector("main")!;
+    const header = document.querySelector("header")!;
+    expect(main.contains(countdown)).toBe(true);
+    expect(header.contains(countdown)).toBe(false);
+    expect(header.contains(clock)).toBe(false);
+  });
+
   it("still disappears when the match is over", async () => {
     const { sockets } = await renderGame();
     await feed(sockets, { matchDeadline: deadline() });

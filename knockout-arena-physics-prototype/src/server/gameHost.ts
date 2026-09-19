@@ -91,7 +91,7 @@ export interface GameHostOptions {
    * moment the match starts — the room manager builds the host in
    * startMatch, never while players wait in the lobby). When it expires
    * the host ends the match through the engine's `timeUp` command.
-   * Default: CONFIG.match.durationMs (4 minutes). Server-side
+   * Default: CONFIG.match.durationMs (6 minutes). Server-side
    * configuration only — clients never influence it.
    */
   matchDurationMs?: number;
@@ -285,7 +285,7 @@ export function createGameHost(options: GameHostOptions): GameHost {
    *
    * ORDERING — deliberate and deterministic: this runs BEFORE
    * checkRoundDeadline on every tick, so when both deadlines are due on
-   * the same tick the MATCH TIME LIMIT WINS. The match ends at 4:00; a
+   * the same tick the MATCH TIME LIMIT WINS. The match ends at 6:00; a
    * round that would have resolved at the very same moment does not
    * start its movement, because the match is already over. The reverse
    * order would let a final round resolve after time expired (and could

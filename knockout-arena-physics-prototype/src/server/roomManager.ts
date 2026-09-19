@@ -1046,7 +1046,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       // The round decision deadline is room policy: every match started
       // here gets the same server-configured aiming-round maximum.
       roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
-      // The 4-minute clock starts HERE — the host is created the moment
+      // The 6-minute clock starts HERE — the host is created the moment
       // the match starts, so lobby/waiting time is never counted.
       matchDurationMs: options?.matchDurationMs,
     });
