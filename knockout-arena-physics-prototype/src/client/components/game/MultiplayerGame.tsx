@@ -6,6 +6,7 @@ import { ErrorBanner } from "../lobby/ErrorBanner";
 import { ArenaView } from "./ArenaView";
 import { AudioControl } from "./AudioControl";
 import { audio } from "../../audio";
+import { EliminatedNotice } from "./EliminatedNotice";
 import { MatchControls } from "./MatchControls";
 import { MatchRail } from "./MatchRail";
 import { MatchProgressAnnouncer } from "./MatchProgressAnnouncer";
@@ -258,6 +259,11 @@ export function MultiplayerGame({
                   capturing pointer events, so aiming and Confirm are
                   unaffected; it reads the server's snapshot only. */}
               <ShrinkWarning snapshot={snapshot} />
+
+              {/* The eliminated player's death notice: prominent but
+                  non-blocking (see EliminatedNotice) — the match goes on
+                  and the player keeps watching the board. */}
+              <EliminatedNotice snapshot={snapshot} />
 
               {!connected && (
                 <ConnectionBanner
