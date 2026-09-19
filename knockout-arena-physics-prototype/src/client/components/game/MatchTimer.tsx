@@ -90,7 +90,7 @@ export function MatchTimer({
       role="timer"
       aria-label={`Match time remaining: ${formatMatchClock(remaining)}`}
       className={cn(
-        "flex items-center gap-2 rounded-full border px-3 py-1 font-mono tabular-nums",
+        "flex items-center gap-2 rounded-full border px-4 py-1.5 font-mono tabular-nums",
         urgent
           ? "animate-pulse border-red-400/40 bg-red-500/15 text-red-300"
           : "border-sky-400/30 bg-sky-500/10 text-sky-200"
@@ -98,12 +98,12 @@ export function MatchTimer({
     >
       {/* Hidden below sm so the badge fits narrow phone headers; the
           accessible name above keeps the meaning for screen readers. */}
-      <span className="hidden text-[10px] font-semibold uppercase tracking-wider opacity-70 sm:inline">
+      <span className="hidden text-[11px] font-semibold uppercase tracking-wider opacity-70 sm:inline">
         Match
       </span>
       <span
         data-testid="match-timer-clock"
-        className="text-lg font-bold leading-none"
+        className="text-2xl font-bold leading-none"
       >
         {formatMatchClock(remaining)}
       </span>

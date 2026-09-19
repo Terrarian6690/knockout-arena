@@ -16,6 +16,8 @@ import type { EffectFrame } from "./effects";
  */
 /** Dash count around the preview ring — constant at every radius. */
 const PREVIEW_DASHES = 36;
+/** Aim/launch arrow shaft width, in world units. */
+const SHAFT_WIDTH = 2.5;
 /** Preview ring stroke width, in world units. */
 const PREVIEW_LINE_WIDTH = 3;
 
@@ -401,7 +403,21 @@ function drawLaunchIndicator(
   );
 }
 
-/** Shared indicator geometry: dashed shaft, power chevrons, arrowhead. */
+/**
+ * Shared indicator geometry: ONE continuous arrow — a solid shaft and a
+ * filled head, nothing else.
+ *
+ * It used to be a dashed shaft with a row of chevrons marching along it,
+ * which at a glance read as a trail of separate marks rather than as a
+ * single pointer. The chevrons also carried a power cue (more power →
+ * more chevrons); that cue is not lost, because the arrow's LENGTH is
+ * still proportional to power, and the head still grows with it.
+ *
+ * The shaft is drawn with a butt cap and run to the exact tip, where the
+ * head is drawn over its last stretch: the two overlap, so they join
+ * seamlessly instead of leaving a notch (a round cap would poke out past
+ * the point of the head).
+ */
 function drawIndicator(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -418,37 +434,14 @@ function drawIndicator(
   ctx.save();
   ctx.globalAlpha = style.alpha;
 
-  // Dashed line.
-  ctx.setLineDash([8, 7]);
+  // The shaft: one unbroken stroke from the pawn's edge to the tip.
   ctx.beginPath();
   ctx.moveTo(x + direction.x * (CONFIG.pawn.radius + 2), y + direction.y * (CONFIG.pawn.radius + 2));
   ctx.lineTo(tipX, tipY);
   ctx.strokeStyle = style.lineColor;
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = "round";
+  ctx.lineWidth = SHAFT_WIDTH;
+  ctx.lineCap = "butt";
   ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Power chevrons along the shaft: evenly spaced, so a stronger power
-  // (longer indicator) shows more chevrons — "more power, harder launch"
-  // is readable at a glance without predicting the landing spot.
-  for (let d = CONFIG.pawn.radius + 14; d < len - 14; d += 14) {
-    const cx = x + direction.x * d;
-    const cy = y + direction.y * d;
-    ctx.beginPath();
-    ctx.moveTo(
-      cx - 7 * Math.cos(angle - 0.45),
-      cy - 7 * Math.sin(angle - 0.45)
-    );
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(
-      cx - 7 * Math.cos(angle + 0.45),
-      cy - 7 * Math.sin(angle + 0.45)
-    );
-    ctx.strokeStyle = style.arrowColor;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  }
 
   // Arrowhead (grows slightly with power).
   const head = 9 + power;

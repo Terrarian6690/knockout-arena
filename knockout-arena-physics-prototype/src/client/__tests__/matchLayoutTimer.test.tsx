@@ -9,19 +9,21 @@ import { createScriptedClient, wire } from "./lobbyTestHarness";
 /**
  * THE MATCH CLOCK'S PLACE ON SCREEN.
  *
- * Requested: the "time left in the match" readout belongs BELOW the top
- * bar on the arena screen, not crammed into the header next to the logo
- * and the connection badge.
+ * Requested (and then revised): the clock now lives CENTRED IN THE TOP
+ * BAR. It previously floated over the arena just under the header —
+ * that kept the board full height, but left the readout drifting in the
+ * play area. The top bar is the screen's status strip, and dead centre
+ * is where the eye lands.
  *
- * It floats over the top of the arena, which keeps the board's height
- * intact. Two things therefore have to stay true, and both are easy to
- * break by accident:
+ * What has to stay true:
  *
- *   - it must not capture pointer events (the arena underneath is the
- *     aiming surface — a clock that ate clicks would silently break
- *     aiming near the top edge);
- *   - it must not collide with the shrink warning, which occupies the
- *     same overlay band.
+ *   - it is inside the header, and horizontally CENTRED on the screen —
+ *     not merely "somewhere between the logo and the controls", which
+ *     is what a plain flex row would give (the logo is much wider than
+ *     the controls, so the midpoint of the leftover space is not the
+ *     midpoint of the screen);
+ *   - it must not overlap the arena or the shrink warning any more;
+ *   - it still vanishes when the match ends.
  */
 
 async function renderGame() {
@@ -52,69 +54,66 @@ async function feed(
 /** A live match deadline, comfortably in the future. */
 const deadline = () => Date.now() + 120_000;
 
-describe("the match clock sits below the top bar", () => {
-  it("is no longer inside the header", async () => {
+describe("the match clock sits centred in the top bar", () => {
+  it("lives inside the header", async () => {
     const { sockets } = await renderGame();
     await feed(sockets, { matchDeadline: deadline() });
 
     const timer = screen.getByTestId("match-timer");
     const header = document.querySelector("header");
     expect(header).not.toBeNull();
-    expect(timer).toBeInTheDocument();
-    // The whole point of the move: the clock is outside the top bar.
-    expect(header!.contains(timer)).toBe(false);
+    expect(header!.contains(timer)).toBe(true);
   });
 
-  it("renders below the header in document order", async () => {
-    const { sockets } = await renderGame();
-    await feed(sockets, { matchDeadline: deadline() });
-
-    const header = document.querySelector("header")!;
-    const timer = screen.getByTestId("match-timer");
-    expect(header.compareDocumentPosition(timer)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
-  });
-
-  it("floats over the arena without stealing aim clicks", async () => {
-    const { sockets } = await renderGame();
-    await feed(sockets, { matchDeadline: deadline() });
-
-    const timer = screen.getByTestId("match-timer");
-    const overlay = timer.parentElement!;
-    expect(overlay.className).toContain("absolute");
-    expect(overlay.className).toContain("pointer-events-none");
-    // The badge itself must not re-enable pointer capture.
-    expect(timer.className).not.toContain("pointer-events-auto");
-  });
-
-  it("shares the arena with the canvas rather than displacing it", async () => {
+  it("no longer floats over the arena", async () => {
     const { sockets } = await renderGame();
     await feed(sockets, { matchDeadline: deadline() });
 
     const timer = screen.getByTestId("match-timer");
     const main = document.querySelector("main")!;
-    // Overlaying the arena region is what keeps the board full height.
-    expect(main.contains(timer)).toBe(true);
+    // The arena region no longer contains it…
+    expect(main.contains(timer)).toBe(false);
+    // …and the canvas is still there, undisturbed.
     expect(main.contains(screen.getByTestId("arena-canvas"))).toBe(true);
   });
 
-  it("does not overlap the shrink warning's band", async () => {
+  it("is centred on the SCREEN, not on the space left between its neighbours", async () => {
+    // A flex row with justify-between would push the clock to the
+    // midpoint of the leftover gap, which is off-centre because the
+    // logo is far wider than the controls. A three-track grid with
+    // equal outer tracks (1fr auto 1fr) is what actually centres it.
     const { sockets } = await renderGame();
     await feed(sockets, { matchDeadline: deadline() });
 
-    const overlay = screen.getByTestId("match-timer").parentElement!;
-    // Both overlays pin to the top of the arena, so the clock has to sit
-    // in a higher stacking layer than the warning's z-10.
-    expect(overlay.className).toContain("z-20");
+    const header = document.querySelector("header")!;
+    expect(header.className).toContain("grid");
+    expect(header.className).toContain("grid-cols-[1fr_auto_1fr]");
+
+    // The clock sits in the middle track: exactly one element between
+    // the logo's track and the controls' track.
+    const tracks = Array.from(header.children);
+    expect(tracks).toHaveLength(3);
+    expect(tracks[1].contains(screen.getByTestId("match-timer"))).toBe(true);
+    // The outer tracks hold the logo and the controls, in that order.
+    expect(tracks[0].querySelector("h1")).not.toBeNull();
+    expect(tracks[2].contains(screen.getByTestId("audio-toggle"))).toBe(true);
   });
 
-  it("leaves the shrink warning padded clear of the clock", async () => {
-    // Both overlays are pinned to top-0 of the arena, so they would be
-    // drawn on top of each other unless the warning is pushed down past
-    // the clock. jsdom has no layout engine and cannot measure the
-    // overlap, so the guarantee is pinned on the padding itself: the
-    // warning's top padding must exceed the clock's.
+  it("is bigger than it was — the clock is the bar's focal point", async () => {
+    // jsdom has no layout engine, so this pins the type scale: the
+    // digits are text-2xl (1.5rem), up from the old text-lg (1.125rem).
+    const { sockets } = await renderGame();
+    await feed(sockets, { matchDeadline: deadline() });
+
+    const digits = screen.getByTestId("match-timer-clock");
+    expect(digits.className).toContain("text-2xl");
+    expect(digits.className).not.toContain("text-lg");
+  });
+
+  it("frees the arena's overlay band for the shrink warning", async () => {
+    // The warning used to be padded down (pt-14) purely to clear the
+    // floating clock. With the clock gone from the arena it returns to
+    // the top of the band, where it is noticed soonest.
     const { sockets } = await renderGame();
     await feed(sockets, {
       matchDeadline: deadline(),
@@ -129,27 +128,15 @@ describe("the match clock sits below the top bar", () => {
       },
     });
 
-    const clockBand = screen.getByTestId("match-timer").parentElement!;
-    // The warning must actually be on screen, or this test proves
-    // nothing about the two of them colliding.
     const band = screen.getByTestId("shrink-warning").parentElement!;
-
     const topPad = (cls: string): number => {
       const token = cls.split(" ").find((c) => c.startsWith("pt-"));
-      return token === undefined ? 0 : Number(token.slice(3));
+      return token === undefined ? 0 : Number(token.slice(2 + 1));
     };
-    // jsdom has no layout engine, so the clearance is pinned on the
-    // padding arithmetic instead. Merely being "greater" is not enough:
-    // the clock badge is itself about 32px tall (text-lg + py-1), so the
-    // warning has to clear the clock's own offset PLUS that height, or
-    // the two still overlap on screen. Tailwind's scale is 4px per step,
-    // so 32px is 8 steps.
-    const CLOCK_HEIGHT_STEPS = 8;
-    expect(topPad(band.className)).toBeGreaterThanOrEqual(
-      topPad(clockBand.className) + CLOCK_HEIGHT_STEPS
-    );
-    // …and the clock's own band stays a thin strip at the very top.
-    expect(topPad(clockBand.className)).toBeLessThanOrEqual(4);
+    expect(topPad(band.className)).toBeLessThanOrEqual(2);
+    // And it is still the non-interactive overlay it always was.
+    expect(band.className).toContain("pointer-events-none");
+    expect(band.className).toContain("absolute");
   });
 
   it("still disappears when the match is over", async () => {

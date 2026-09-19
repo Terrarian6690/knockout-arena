@@ -185,7 +185,11 @@ export function MultiplayerGame({
       data-testid="multiplayer-game"
       className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased"
     >
-      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
+      {/* Three tracks, not a flex row: the logo and the controls take
+          their natural width at the sides while the clock occupies the
+          middle column, so it is centred on the SCREEN rather than on
+          whatever space happens to be left between its neighbours. */}
+      <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-x-3 px-4 py-3 sm:px-6">
         <div className="flex items-center gap-3">
           <div className="leading-tight">
             {/* The logo IS the wordmark. It lives INSIDE the heading and
@@ -198,7 +202,18 @@ export function MultiplayerGame({
             </h1>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+
+        {/* The match clock: centre stage in the top bar. */}
+        <div className="flex justify-center">
+          {snapshot !== null && (
+            <MatchTimer
+              phase={snapshot.phase}
+              deadline={snapshot.matchDeadline}
+            />
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2">
           <AudioControl />
           {snapshot !== null && (
             <RoundCountdown
@@ -240,18 +255,6 @@ export function MultiplayerGame({
                 onAim={handleAim}
                 hostPlayerId={state.hostPlayerId}
               />
-
-              {/* The match clock sits just below the top bar, floating over
-                  the arena so it costs the board no height. z-20 keeps it
-                  above the shrink warning's z-10 band, and
-                  pointer-events-none guarantees it can never swallow an
-                  aim click. */}
-              <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center px-4 pt-2">
-                <MatchTimer
-                  phase={snapshot.phase}
-                  deadline={snapshot.matchDeadline}
-                />
-              </div>
 
               {/* Authoritative shrink warning. Overlays the arena without
                   capturing pointer events, so aiming and Confirm are
