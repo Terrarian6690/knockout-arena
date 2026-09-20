@@ -2,29 +2,33 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { PLAYER_COLORS, playerColor } from "../../game";
+import { playerColor, PLAYER_COLORS } from "../../game";
 import {
   allSent,
   connectPlayer,
   createServerHarness,
   renderLobby,
 } from "./lobbyTestHarness";
-import { DEFAULT_SKIN, skinName } from "../components/lobby/skins";
+import { loadSkinPreference, skinName } from "../components/lobby/skins";
 
 /**
  * THE DISC-SKIN PICKER.
  *
- * A cosmetic choice of the pawn's look (a palette index), picked in the
- * MAIN MENU, right of the player-name box. The pinned rules:
+ * A cosmetic choice of the pawn's look, picked in the MAIN MENU, right
+ * of the player-name box. The pinned rules:
  *
- *   - the DEFAULT skin is the palette's ORANGE (index 0);
- *   - the picker BUTTON itself displays the currently chosen skin;
+ *   - the DEFAULT choice is RANDOM (null): until the player joins a
+ *     room or a public game, their skin is unknown — the server deals
+ *     it at seating, EXCLUDING the colors the already-seated players
+ *     wear — so the button shows the random marker, not any one disc;
+ *   - the picker BUTTON itself displays the currently chosen skin (or
+ *     the random marker);
  *   - the picker sits in the name row, AFTER (right of) the input;
- *   - the choice persists across remounts (localStorage);
- *   - joining a room applies the choice to the seat: set_skin rides the
- *     wire (default included), and the roster echoes it back;
- *   - every player list shows the skin: the seat list renders each
- *     seat's disc swatch in their skin color.
+ *   - an EXPLICIT choice persists across remounts (localStorage);
+ *     "Random" clears the stored choice again;
+ *   - an explicit choice rides the wire (set_skin) on seating, while a
+ *     random player sends nothing — the dealt skin arrives on the
+ *     roster, and the seat list shows it as a disc swatch.
  */
 
 afterEach(() => {
@@ -32,27 +36,23 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-/** jsdom reports inline colors as rgb(...) — compare in the same shape. */
-function rgbOf(hex: string): string {
-  const n = Number.parseInt(hex.slice(1), 16);
-  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
-}
-
-/** The trigger button — it previews the current skin. */
+/** The trigger button — it previews the current choice. */
 const picker = () => screen.getByTestId("skin-picker");
 
 describe("the skin picker on the home screen", () => {
-  it("defaults to orange and shows it ON the button", () => {
+  it("defaults to RANDOM: unknown until joining, marker on the button", () => {
     renderLobby(createServerHarness().addPlayer().client);
 
-    expect(picker()).toHaveAccessibleName(
-      `Disc skin: ${skinName(DEFAULT_SKIN)}. Change skin`
+    expect(picker()).toHaveAccessibleName("Disc skin: Random. Change skin");
+    expect(skinName(null)).toBe("Random");
+    // No explicit choice is stored.
+    expect(loadSkinPreference()).toBeNull();
+    expect(window.localStorage.getItem("knockout-arena.skin")).toBeNull();
+    // The marker is the multi-color pie, NOT any single palette disc.
+    expect(picker().querySelector('svg circle[fill]:not([fill="none"])')).toBeNull();
+    expect(picker().querySelectorAll("svg path")).toHaveLength(
+      PLAYER_COLORS.length
     );
-    expect(DEFAULT_SKIN).toBe(0); // palette index 0 IS the orange
-    // The trigger's swatch is drawn in the default skin's color.
-    const swatch = picker().querySelector("svg circle");
-    expect(swatch).toHaveAttribute("fill", playerColor(DEFAULT_SKIN));
-    expect(playerColor(DEFAULT_SKIN)).toBe("#ff8a3d"); // orange
   });
 
   it("sits in the name row, to the RIGHT of the name input", () => {
@@ -70,42 +70,66 @@ describe("the skin picker on the home screen", () => {
     ).toBeTruthy();
   });
 
-  it("opens a menu of every palette skin and applies the pick", () => {
+  it("opens a menu with Random plus every palette skin", () => {
     renderLobby(createServerHarness().addPlayer().client);
 
     fireEvent.click(picker());
     const menu = screen.getByTestId("skin-menu");
+    // Random first, then the six palette colors.
     expect(menu.querySelectorAll("[role=menuitemradio]")).toHaveLength(
-      PLAYER_COLORS.length
+      PLAYER_COLORS.length + 1
     );
+    expect(screen.getByTestId("skin-option-random")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("skin-option-random")
+    ).toHaveAttribute("aria-checked", "true");
 
-    // Pick Violet (index 5): the button preview switches to it.
+    // Pick Violet (index 5): the button preview switches to the disc.
     fireEvent.click(screen.getByTestId("skin-option-5"));
     expect(screen.queryByTestId("skin-menu")).toBeNull(); // closed again
-    const swatch = picker().querySelector("svg circle");
-    expect(swatch).toHaveAttribute("fill", playerColor(5));
+    expect(picker().querySelector("svg circle")).toHaveAttribute(
+      "fill",
+      playerColor(5)
+    );
+    expect(picker()).toHaveAccessibleName("Disc skin: Violet. Change skin");
   });
 
-  it("persists the choice across remounts (localStorage)", () => {
-    const { client } = (() => {
-      const harness = createServerHarness();
-      return { client: harness.addPlayer().client };
-    })();
+  it("picking Random clears the explicit choice (localStorage)", () => {
+    const harness = createServerHarness();
+    renderLobby(harness.addPlayer().client);
+
+    fireEvent.click(picker());
+    fireEvent.click(screen.getByTestId("skin-option-2")); // Red
+    expect(loadSkinPreference()).toBe(2);
+
+    fireEvent.click(picker());
+    fireEvent.click(screen.getByTestId("skin-option-random"));
+    expect(loadSkinPreference()).toBeNull();
+    expect(window.localStorage.getItem("knockout-arena.skin")).toBeNull();
+    // …and the button is back to the random marker.
+    expect(picker().querySelector('svg circle[fill]:not([fill="none"])')).toBeNull();
+  });
+
+  it("persists an explicit choice across remounts (localStorage)", () => {
+    const harness = createServerHarness();
+    const client = harness.addPlayer().client;
 
     renderLobby(client);
     fireEvent.click(picker());
     fireEvent.click(screen.getByTestId("skin-option-2")); // Red
     cleanup();
 
-    // A fresh mount adopts the stored choice, not the default.
+    // A fresh mount adopts the stored choice, not the random default.
     renderLobby(client);
-    const swatch = picker().querySelector("svg circle");
-    expect(swatch).toHaveAttribute("fill", playerColor(2));
+    expect(picker().querySelector("svg circle")).toHaveAttribute(
+      "fill",
+      playerColor(2)
+    );
   });
 });
 
-describe("the chosen skin reaches the seat", () => {
-  it("joining a room puts set_skin on the wire — chosen skin included", async () => {
+describe("the skin reaches the seat", () => {
+  it("an explicit choice rides the wire on seating; the swatch shows it", async () => {
     const harness = createServerHarness();
     const player = harness.addPlayer();
     renderLobby(player.client);
@@ -121,18 +145,26 @@ describe("the chosen skin reaches the seat", () => {
       const setSkin = allSent(player.pairs[0]).find(
         (m) => m.type === "set_skin"
       );
-      expect(setSkin).toEqual({ protocolVersion: 1, type: "set_skin", skin: 3 });
+      expect(setSkin).toEqual({
+        protocolVersion: 1,
+        type: "set_skin",
+        skin: 3,
+      });
     });
 
-    // …and the seat's list swatch shows the chosen disc color.
-    const swatch = await waitFor(() => {
-      const el = screen.getByTestId("skin-swatch-p0");
-      return el.style.backgroundColor === rgbOf(playerColor(3)) ? el : null;
+    // The seat's list swatch shows the chosen disc color.
+    await waitFor(() => {
+      const swatch = screen.getByTestId("skin-swatch-p0");
+      return swatch.style.backgroundColor === rgbOf(playerColor(3))
+        ? swatch
+        : null;
     });
-    expect(swatch).not.toBeNull();
+    expect(
+      screen.getByTestId("skin-swatch-p0").style.backgroundColor
+    ).toBe(rgbOf(playerColor(3)));
   });
 
-  it("a default-skin player sends the default too (explicit orange)", async () => {
+  it("a random player sends NOTHING — the dealt skin arrives on the roster", async () => {
     const harness = createServerHarness();
     const player = harness.addPlayer();
     renderLobby(player.client);
@@ -141,15 +173,24 @@ describe("the chosen skin reaches the seat", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Room" }));
     await screen.findByTestId("room-code");
 
+    // No preference → no set_skin frame at all (the server dealt the
+    // skin while seating us; the harness draw is deterministic → 0).
     await waitFor(() => {
-      const setSkin = allSent(player.pairs[0]).find(
-        (m) => m.type === "set_skin"
-      );
-      expect(setSkin).toEqual({ protocolVersion: 1, type: "set_skin", skin: 0 });
+      expect(player.client.getState().roster).toHaveLength(1);
     });
-    // And the wire stays additive: a default seat carries no skin key,
-    // so the swatch shows the default orange.
+    expect(
+      allSent(player.pairs[0]).filter((m) => m.type === "set_skin")
+    ).toEqual([]);
+    expect(player.client.getState().roster[0].skin).toBe(0);
+
+    // The seat list swatch shows the dealt color (orange).
     const swatch = await screen.findByTestId("skin-swatch-p0");
     expect(swatch.style.backgroundColor).toBe(rgbOf(playerColor(0)));
   });
 });
+
+/** jsdom reports inline colors as rgb(...) — compare in the same shape. */
+function rgbOf(hex: string): string {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+}

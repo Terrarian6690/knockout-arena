@@ -120,7 +120,7 @@ function newServer(options: {
   matchDurationMs?: number;
   roundDecisionTimeoutMs?: number;
 } = {}): GameServer {
-  const server = createGameServer(options);
+  const server = createGameServer({ randomSkinIndex: () => 0, ...options });
   liveServers.push(server);
   return server;
 }

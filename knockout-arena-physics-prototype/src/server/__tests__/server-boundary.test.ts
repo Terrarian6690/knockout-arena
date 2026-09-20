@@ -224,7 +224,7 @@ describe("server package boundary", () => {
         expect(
           !spec.startsWith("../game") && !/(?:^|[/@])game(?:\/|$)/.test(spec),
           `${relFile} must not import "${spec}" — the transport goes through ` +
-            `createGameServer()/server APIs only; engine access would mean ` +
+            `createGameServer({ randomSkinIndex: () => 0 })/server APIs only; engine access would mean ` +
             `gameplay leaking into the transport`
         ).toBe(true);
       }

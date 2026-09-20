@@ -95,7 +95,11 @@ export interface NetworkClient {
    * Set THIS client's own disc skin (cosmetic; the server validates the
    * palette index and broadcasts the roster).
    */
-  setSkin(skin: number): boolean;
+  /**
+   * Set this seat's disc skin (a palette index), or `null` to go back
+   * to the server-dealt RANDOM skin (excluded colors the seated hold).
+   */
+  setSkin(skin: number | null): boolean;
   /**
    * Send a player intent. Only the intent fields required by protocol v1
    * are transmitted — any playerId or unknown field is dropped here, and
@@ -398,7 +402,7 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
       if (typeof roomId !== "string" || roomId.length === 0) return false;
       return sendRaw(joinRoomMessage(roomId));
     },
-    setSkin(skin: number): boolean {
+    setSkin(skin: number | null): boolean {
       return sendRaw(setSkinMessage(skin));
     },
 

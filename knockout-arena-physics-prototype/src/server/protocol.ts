@@ -24,7 +24,6 @@
  */
 
 import {
-  DEFAULT_SKIN,
   MAX_PLAYERS,
   type RoomInfo,
   type RoomSeatInfo,
@@ -57,7 +56,7 @@ export type ClientMessage =
   // another player. Validated server-side (1..16 code points, trimmed,
   // no control characters).
   | { type: "set_name"; name: string }
-  | { type: "set_skin"; skin: number }
+  | { type: "set_skin"; skin: number | null } // null = random skin again
   | { type: "command"; command: unknown };
 
 export type ClientMessageRejection =
@@ -153,13 +152,17 @@ export function parseClientMessage(raw: string): ParsedClientMessage {
       return { ok: false, code: "malformed-payload" };
 
     case "set_skin":
-      // Shape only: a number. Whether it is a valid palette index is the
-      // room manager's semantic call (clean "invalid-skin" error).
+      // Shape only: a number, or null (= deal a fresh RANDOM skin).
+      // Whether the number is a valid palette index is the room
+      // manager's semantic call (clean "invalid-skin" error).
       if (
         hasOnly(envelope, "type", "protocolVersion", "skin") &&
-        typeof envelope.skin === "number"
+        (typeof envelope.skin === "number" || envelope.skin === null)
       ) {
-        return { ok: true, message: { type: "set_skin", skin: envelope.skin } };
+        return {
+          ok: true,
+          message: { type: "set_skin", skin: envelope.skin as number | null },
+        };
       }
       return { ok: false, code: "malformed-payload" };
 
@@ -227,10 +230,10 @@ function hasOnly(
  * Clients fall back to the seat-derived "Player N" when it is absent.
  */
 function wireSeat(seat: RoomSeatInfo): Record<string, unknown> {
-  // `skin` is ADDITIVE (protocol v1): it is emitted ONLY when the seat
-  // differs from the default (orange), so older payloads and payload
-  // assertions stay byte-identical while nobody has customized. Clients
-  // treat an absent skin as the default.
+  // `skin` rides on EVERY seat (protocol v1, additive): skins are dealt
+  // per seat at seating time (random by default), so there is no single
+  // default the field could be omitted for anymore. Clients still
+  // tolerate an absent skin as DEFAULT_SKIN for older peers.
   const base: Record<string, unknown> =
     seat.displayName === null
       ? { playerId: seat.playerId, connected: seat.connected }
@@ -239,7 +242,7 @@ function wireSeat(seat: RoomSeatInfo): Record<string, unknown> {
           connected: seat.connected,
           displayName: seat.displayName,
         };
-  return seat.skin === DEFAULT_SKIN ? base : { ...base, skin: seat.skin };
+  return { ...base, skin: seat.skin };
 }
 
 export function welcomeMessage(

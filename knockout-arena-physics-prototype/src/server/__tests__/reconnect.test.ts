@@ -35,7 +35,7 @@ const CY = CONFIG.arena.centerY;
 
 const liveServers: GameServer[] = [];
 function newServer(options?: { reconnectReservationMs?: number }): GameServer {
-  const server = createGameServer(options);
+  const server = createGameServer({ randomSkinIndex: () => 0, ...options });
   liveServers.push(server);
   return server;
 }
@@ -167,7 +167,7 @@ describe("reconnect credentials", () => {
     const room = server.getRoom(roomId)!;
     expect(room.seats).toEqual([
       { playerId: "p0", connected: true, displayName: null, skin: 0 },
-      { playerId: "p1", connected: false, displayName: null, skin: 0 }, // reserved, not vacated
+      { playerId: "p1", connected: false, displayName: null, skin: 1 }, // reserved, not vacated
     ]);
     expect(room.state).toBe("waiting");
     expect(server.sessionCount()).toBe(2); // identity preserved
@@ -222,7 +222,7 @@ describe("seat recovery", () => {
     expect(recovered.reconnectToken).toBe(tokens[0]); // persistent credential
     expect(server.getRoom(roomId)!.seats).toEqual([
       { playerId: "p0", connected: true, displayName: null, skin: 0 }, // reservation cancelled
-      { playerId: "p1", connected: true, displayName: null, skin: 0 },
+      { playerId: "p1", connected: true, displayName: null, skin: 1 },
     ]);
     expect(server.sessionCount()).toBe(2); // no duplicate identity
   });
@@ -288,7 +288,7 @@ describe("seat recovery", () => {
     expect(room.state).toBe("playing");
     expect(room.seats).toEqual([
       { playerId: "p0", connected: true, displayName: null, skin: 0 },
-      { playerId: "p1", connected: true, displayName: null, skin: 0 },
+      { playerId: "p1", connected: true, displayName: null, skin: 1 },
     ]);
     expect(latestState(states)).toEqual(stateBefore);
 
@@ -449,7 +449,7 @@ describe("seat recovery", () => {
     const room = server.getRoom(roomId)!;
     expect(room.seats).toEqual([
       { playerId: "p0", connected: true, displayName: null, skin: 0 },
-      { playerId: "p1", connected: true, displayName: null, skin: 0 },
+      { playerId: "p1", connected: true, displayName: null, skin: 1 },
     ]);
     expect(server.sessionCount()).toBe(2);
   });
@@ -538,7 +538,7 @@ describe("reservation expiry", () => {
     expect(okSeat(server.joinRoom(newcomer, roomId)).playerId).toBe("p1");
     expect(server.getRoom(roomId)!.seats).toEqual([
       { playerId: "p0", connected: true, displayName: null, skin: 0 },
-      { playerId: "p1", connected: true, displayName: null, skin: 0 },
+      { playerId: "p1", connected: true, displayName: null, skin: 1 },
     ]);
   });
 
@@ -569,7 +569,7 @@ describe("reservation expiry", () => {
     expect(room.state).toBe("playing");
     expect(room.seats).toEqual([
       { playerId: "p0", connected: true, displayName: null, skin: 0 },
-      { playerId: "p1", connected: false, displayName: null, skin: 0 },
+      { playerId: "p1", connected: false, displayName: null, skin: 1 },
     ]);
     expect(states.length).toBeGreaterThan(0);
     expect(() => latestState(states)).not.toThrow();

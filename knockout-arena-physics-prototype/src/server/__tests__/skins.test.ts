@@ -10,21 +10,29 @@ import {
 import { DEFAULT_SKIN } from "../roomManager";
 
 /**
- * Disc skins — the cosmetic palette index of a player's pawn
- * (set_skin), the exact same lifecycle a display name has:
+ * Disc skins — the cosmetic palette index of a player's pawn.
  *
- *   - validation: an integer in [0, palette length); anything else is
- *     a clean "invalid-skin" (the wire carries shape only);
+ * THE DEFAULT IS RANDOM: a seat is dealt its skin at seating time,
+ * drawn from the palette while EXCLUDING whatever the already-seated
+ * players wear — so the skin is only known after joining a room (or a
+ * public game). An explicit set_skin overrides the deal; `null` hands
+ * the decision back to the server (a fresh draw). The rest is the same
+ * lifecycle a display name has:
+ *
+ *   - validation: an integer in [0, palette length) or null; anything
+ *     else is a clean "invalid-skin" (the wire carries shape only);
  *   - identity: the skin always lands on the CALLER's own seat (the
  *     session is derived; the wire has no playerId to forge);
  *   - authority: changes only while the room waits (room-playing once
  *     the roster froze), and the roster broadcast carries the skin;
- *   - the wire stays additive: `skin` appears on a roster seat ONLY
- *     when it differs from the default (orange), so older payloads
- *     stay byte-identical while everyone is default;
- *   - matches: the chosen skin becomes the pawn's colorIndex (frozen
- *     at startMatch) — the arena disc and every in-match list show it;
- *   - a freed lobby seat falls back to the default (no inheritance).
+ *   - the wire: `skin` rides on EVERY roster seat (there is no single
+ *     default to omit anymore);
+ *   - matches: the dealt/chosen skin becomes the pawn's colorIndex
+ *     (frozen at startMatch);
+ *   - a freed lobby seat is unassigned again (no inheritance).
+ *
+ * Determinism: `randomSkinIndex: () => 0` always picks the FIRST still-
+ * available palette index, so seats are dealt 0, 1, 2, … in join order.
  */
 
 const liveServers: GameServer[] = [];
@@ -38,6 +46,13 @@ afterEach(() => {
 });
 
 function newServer(): GameServer {
+  const server = createGameServer({ randomSkinIndex: () => 0 });
+  liveServers.push(server);
+  return server;
+}
+
+/** A server with the production (uniform-random) draw. */
+function randomServer(): GameServer {
   const server = createGameServer();
   liveServers.push(server);
   return server;
@@ -49,6 +64,13 @@ function must<T extends { ok: boolean }>(result: T): T & { ok: true } {
   return result as T & { ok: true };
 }
 
+/** The room's seat skins, plain numbers in seat order. */
+function seatSkins(server: GameServer, roomCode: string): number[] {
+  const room = server.getRoom(roomCode);
+  if (!room) throw new Error(`room ${roomCode} gone`);
+  return room.seats.map((s) => s.skin);
+}
+
 /** A seated host (p0) in a fresh room. */
 function seatedHost() {
   const server = newServer();
@@ -57,6 +79,77 @@ function seatedHost() {
   return { server, host, room: created.room };
 }
 
+describe("the random default skin", () => {
+  it("deals every seat a skin AT SEATING (the creator included)", () => {
+    const { server, host, room } = seatedHost();
+    void host;
+    expect(seatSkins(server, room.code)).toEqual([0]); // first pick
+    const guest = server.connect();
+    must(server.joinRoom(guest, room.code));
+    expect(seatSkins(server, room.code)).toEqual([0, 1]); // first available
+  });
+
+  it("the draw EXCLUDES the colors the seated players wear (real randomness)", () => {
+    // For every explicitly-taken color, a joiner without a choice must
+    // never be dealt it. A draw ignoring the exclusion would fail this
+    // with overwhelming probability, so the pin is meaningful even with
+    // the production RNG.
+    for (let taken = 0; taken < PLAYER_COLORS.length; taken++) {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const server = randomServer();
+        const host = server.connect();
+        const created = must(server.createRoom(host));
+        must(server.setSkin(host, taken));
+        const guest = server.connect();
+        const joined = must(server.joinRoom(guest, created.room.code));
+        const dealt = joined.room.seats[1].skin;
+        expect(dealt).not.toBe(taken);
+        expect(dealt).toBeGreaterThanOrEqual(0);
+        expect(dealt).toBeLessThan(PLAYER_COLORS.length);
+      }
+    }
+  });
+
+  it("six players hold six DISTINCT skins (deterministic draw)", () => {
+    const { server, room } = seatedHost();
+    for (let i = 1; i < PLAYER_COLORS.length; i++) {
+      must(server.joinRoom(server.connect(), room.code));
+    }
+    const skins = seatSkins(server, room.code);
+    expect(new Set(skins).size).toBe(PLAYER_COLORS.length);
+    expect([...skins].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it("setSkin(null) hands the decision back: a fresh draw excluding others", () => {
+    const { server, room } = seatedHost();
+    const guest = server.connect();
+    must(server.joinRoom(guest, room.code)); // p1 dealt 1
+
+    // The guest makes an explicit pick, then returns to random. The
+    // pool excludes p0's 0; the deterministic draw takes its first
+    // element → 1 again (proving a re-deal happened, not a keep).
+    must(server.setSkin(guest, 5));
+    expect(seatSkins(server, room.code)).toEqual([0, 5]);
+    must(server.setSkin(guest, null));
+    expect(seatSkins(server, room.code)).toEqual([0, 1]);
+  });
+
+  it("a freed lobby seat is unassigned: the next occupant gets a FRESH draw", () => {
+    const { server, host, room } = seatedHost();
+    must(server.setSkin(host, 4)); // explicit, would leak if inherited
+    const guest = server.connect();
+    must(server.joinRoom(guest, room.code)); // keeps the room alive
+
+    must(server.leaveRoom(host)); // p0 is freed
+    const next = server.connect();
+    must(server.joinRoom(next, room.code)); // takes the freed seat p0
+    // The guest had been dealt 0 (the first pick ≠ the host's 4); the
+    // newcomer's pool excludes that 0 → deterministic first pick is 1 —
+    // NOT the previous occupant's 4 (no inheritance).
+    expect(seatSkins(server, room.code)).toEqual([1, 0]);
+  });
+});
+
 describe("skin validation", () => {
   it("accepts every palette index (0..length-1)", () => {
     const { server, host } = seatedHost();
@@ -64,6 +157,13 @@ describe("skin validation", () => {
       const result = must(server.setSkin(host, skin));
       expect(result.room.seats[0].skin).toBe(skin);
     }
+  });
+
+  it("accepts null as the request for a fresh random skin", () => {
+    const { server, host, room } = seatedHost();
+    const result = must(server.setSkin(host, null));
+    expect(result.room.seats[0].skin).toBe(0); // re-dealt (deterministic)
+    expect(seatSkins(server, room.code)).toEqual([0]);
   });
 
   it("rejects non-integers and out-of-range indices with invalid-skin", () => {
@@ -82,7 +182,7 @@ describe("skin validation", () => {
     expect(server.setSkin(lone, 3)).toEqual({ ok: false, reason: "not-in-room" });
   });
 
-  it("freezes skins once the match starts (room-playing)", () => {
+  it("freezes skins once the match starts (room-playing), null included", () => {
     const { server, host, room } = seatedHost();
     const guest = server.connect();
     must(server.joinRoom(guest, room.code));
@@ -93,21 +193,25 @@ describe("skin validation", () => {
       ok: false,
       reason: "room-playing",
     });
+    expect(server.setSkin(host, null)).toEqual({
+      ok: false,
+      reason: "room-playing",
+    });
     // The frozen roster keeps the pre-start skin.
     expect(server.getRoom(room.code)!.seats[0].skin).toBe(3);
   });
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// Matches: the skin becomes the pawn's colorIndex
+// Matches: the dealt/chosen skin becomes the pawn's colorIndex
 // ────────────────────────────────────────────────────────────────────────
 
 describe("skins in matches", () => {
-  it("the chosen skin is the pawn's palette index; defaults stay orange", async () => {
+  it("pawns freeze with the seat skins: dealt default + chosen green", async () => {
     const { server, room } = seatedHost();
     const guest = server.connect();
     must(server.joinRoom(guest, room.code));
-    must(server.setSkin(guest, 3)); // green; the host keeps the default
+    must(server.setSkin(guest, 3)); // green; the host keeps its dealt 0
 
     const received: string[] = [];
     server.onRoomState(guest, (serialized) => received.push(serialized));
@@ -122,7 +226,7 @@ describe("skins in matches", () => {
       pawns: Array<{ id: string; colorIndex: number }>;
     };
     const byId = new Map(snapshot.pawns.map((p) => [p.id, p.colorIndex]));
-    expect(byId.get("p0")).toBe(DEFAULT_SKIN); // orange by default
+    expect(byId.get("p0")).toBe(0); // the deterministic deal
     expect(byId.get("p1")).toBe(3); // the guest's chosen green
   });
 });
@@ -132,20 +236,6 @@ describe("skins in matches", () => {
 // ────────────────────────────────────────────────────────────────────────
 
 describe("skins across the seat lifecycle", () => {
-  it("a freed lobby seat falls back to the default (no inheritance)", () => {
-    const { server, host, room } = seatedHost();
-    must(server.setSkin(host, 4));
-    expect(server.getRoom(room.code)!.seats[0].skin).toBe(4);
-
-    // A guest keeps the room alive while the host leaves it.
-    const guest = server.connect();
-    must(server.joinRoom(guest, room.code));
-    must(server.leaveRoom(host)); // p0 is freed
-    const next = server.connect();
-    must(server.joinRoom(next, room.code)); // takes the freed seat p0
-    expect(server.getRoom(room.code)!.seats[0].skin).toBe(DEFAULT_SKIN);
-  });
-
   it("the skin survives on the seat while the room waits (it is seat-scoped)", () => {
     const { server, host, room } = seatedHost();
     must(server.setSkin(host, 2));
@@ -156,10 +246,7 @@ describe("skins across the seat lifecycle", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// The wire: additive skin, strict envelope, real broadcast
-// ────────────────────────────────────────────────────────────────────────
-
-// The wire: set_skin over the real transport core
+// The wire: every seat carries its (dealt or chosen) skin
 // ────────────────────────────────────────────────────────────────────────
 
 /** Minimal fake socket (the transport's contract, test-driven). */
@@ -215,36 +302,56 @@ function connect(core: TransportCore): FakeSocket {
 const setSkin = (skin: unknown) => ({ protocolVersion: 1, type: "set_skin", skin });
 
 describe("set_skin over the wire", () => {
-  it("broadcasts the new roster to every member; skin is additive", () => {
+  it("every roster seat carries its skin; the deal is broadcast to all", () => {
     const { core } = newCore();
     const creator = connect(core);
     creator.receiveMsg({ protocolVersion: 1, type: "create_room" });
     const code = (creator.lastOf("welcome") as { roomId: string }).roomId;
 
-    // Before any skin: roster seats carry NO skin key at all — older
-    // payloads stay byte-identical while everyone is the default orange.
+    // The creator's dealt skin rides on the very first roster.
     const plain = creator.lastOf("room_state") as {
       roster: Array<Record<string, unknown>>;
     };
-    expect(plain.roster[0]).toEqual({ playerId: "p0", connected: true });
-    expect("skin" in plain.roster[0]).toBe(false);
+    expect(plain.roster[0]).toEqual({
+      playerId: "p0",
+      connected: true,
+      skin: 0,
+    });
 
     const joiner = connect(core);
     joiner.receiveMsg({ protocolVersion: 1, type: "join_room", roomId: code });
-    joiner.receiveMsg(setSkin(3));
 
-    // EVERY member's latest room_state shows the skin — on p1 only.
+    // The joiner was dealt skin 1 (first not held by p0) and EVERY
+    // member's latest room_state says so.
     for (const socket of [creator, joiner]) {
       const state = socket.lastOf("room_state") as {
         roster: Array<Record<string, unknown>>;
       };
-      expect(state.roster[0]).toEqual({ playerId: "p0", connected: true });
-      expect(state.roster[1]).toEqual({
-        playerId: "p1",
-        connected: true,
-        skin: 3,
-      });
+      expect(state.roster[0]).toEqual({ playerId: "p0", connected: true, skin: 0 });
+      expect(state.roster[1]).toEqual({ playerId: "p1", connected: true, skin: 1 });
     }
+
+    // An explicit pick rides through and is seen by everyone.
+    joiner.receiveMsg(setSkin(3));
+    for (const socket of [creator, joiner]) {
+      const state = socket.lastOf("room_state") as {
+        roster: Array<Record<string, unknown>>;
+      };
+      expect(state.roster[1]).toEqual({ playerId: "p1", connected: true, skin: 3 });
+    }
+  });
+
+  it("skin:null re-deals over the wire (clean ok, new roster)", () => {
+    const { core } = newCore();
+    const host = connect(core);
+    host.receiveMsg({ protocolVersion: 1, type: "create_room" });
+    host.receiveMsg(setSkin(4));
+    host.receiveMsg(setSkin(null));
+    const state = host.lastOf("room_state") as {
+      roster: Array<Record<string, unknown>>;
+    };
+    // Re-dealt deterministically (first available pick → 0).
+    expect(state.roster[0]).toEqual({ playerId: "p0", connected: true, skin: 0 });
   });
 
   it("rejects a forged playerId with a strict-envelope violation", () => {
@@ -279,5 +386,13 @@ describe("set_skin over the wire", () => {
       connected: true,
       skin: 1,
     });
+  });
+});
+
+// DEFAULT_SKIN stays exported as the clients' fallback.
+describe("the fallback constant", () => {
+  it("DEFAULT_SKIN is still the palette's orange", () => {
+    expect(DEFAULT_SKIN).toBe(0);
+    expect(PLAYER_COLORS[DEFAULT_SKIN]).toBe("#ff8a3d");
   });
 });

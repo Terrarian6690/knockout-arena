@@ -57,8 +57,9 @@ export function setNameMessage(name: string): string {
   return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "set_name", name });
 }
 
-/** The sender's OWN disc skin (palette index; validated server-side). */
-export function setSkinMessage(skin: number): string {
+/** The sender's OWN disc skin (palette index; validated server-side).
+ * `null` asks the server for a fresh RANDOM skin instead. */
+export function setSkinMessage(skin: number | null): string {
   return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "set_skin", skin });
 }
 

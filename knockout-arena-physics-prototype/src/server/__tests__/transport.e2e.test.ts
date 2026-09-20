@@ -120,6 +120,7 @@ async function startTransport(
   }
 ): Promise<WebSocketTransport> {
   const gameServer = createGameServer({
+    randomSkinIndex: () => 0,
     reconnectReservationMs: options?.reconnectReservationMs,
     roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
   });
@@ -252,8 +253,8 @@ describe("WebSocket transport over real sockets", () => {
     // stealable) but reported disconnected, and the guest's session is
     // alive for the reconnect window.
     expect(update.roster).toEqual([
-      { playerId: "p0", connected: true },
-      { playerId: "p1", connected: false },
+      { playerId: "p0", connected: true, skin: 0 },
+      { playerId: "p1", connected: false, skin: 1 },
     ]);
     expect(transport.gameServer.getRoom(roomId)!.seats).toHaveLength(2);
     expect(transport.gameServer.sessionCount()).toBe(2);

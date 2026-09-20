@@ -38,7 +38,7 @@ const CY = CONFIG.arena.centerY;
 
 const liveServers: GameServer[] = [];
 function newServer(): GameServer {
-  const server = createGameServer();
+  const server = createGameServer({ randomSkinIndex: () => 0 });
   liveServers.push(server);
   return server;
 }
@@ -366,7 +366,7 @@ describe("match lifecycle", () => {
     expect(room.state).toBe("playing");
     expect(room.seats).toEqual([
       { playerId: "p0", connected: true, displayName: null, skin: 0 },
-      { playerId: "p1", connected: false, displayName: null, skin: 0 }, // vacated, still in the roster
+      { playerId: "p1", connected: false, displayName: null, skin: 1 }, // vacated, still in the roster
     ]);
 
     // The match continues for the remaining player; the leaver is out.

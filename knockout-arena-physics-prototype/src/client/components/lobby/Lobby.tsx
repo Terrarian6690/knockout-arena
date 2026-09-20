@@ -14,6 +14,7 @@ import { LeaveRoomButton } from "./LeaveRoomButton";
 import {
   loadSkinPreference,
   saveSkinPreference,
+  type SkinChoice,
 } from "./skins";
 import { SkinPicker } from "./SkinPicker";
 import { RoomPanel } from "./RoomPanel";
@@ -151,12 +152,18 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
   // SEATED session, so the choice rides down on the first roster after
   // joining. One send per skin per seat (the same ref discipline as the
   // name gate), so re-renders never spam the wire.
-  const [skin, setSkinState] = useState<number>(() => loadSkinPreference());
-  const onSkinChange = (next: number) => {
+  //
+  // `null` = the RANDOM default: nothing is stored and NOTHING is sent
+  // on a fresh seat — the server deals a random skin (excluding what
+  // the seated players wear) at seating time, so only after joining is
+  // the skin known. An explicit choice is sent like before, and picking
+  // "Random" while seated sends null to get a fresh draw.
+  const [skin, setSkinState] = useState<SkinChoice>(() => loadSkinPreference());
+  const onSkinChange = (next: SkinChoice) => {
     setSkinState(next);
     saveSkinPreference(next);
   };
-  const appliedSkin = useRef<{ seat: string; skin: number } | null>(null);
+  const appliedSkin = useRef<{ seat: string; skin: SkinChoice } | null>(null);
   useEffect(() => {
     if (state.roomId === null || state.playerId === null) {
       appliedSkin.current = null; // a new seat must be skinned again
@@ -165,6 +172,13 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     const seat = `${state.roomId}:${state.playerId}`;
     const applied = appliedSkin.current;
     if (applied !== null && applied.seat === seat && applied.skin === skin) {
+      return;
+    }
+    if (skin === null) {
+      // No explicit preference → NOTHING to apply: the server dealt the
+      // random skin while seating us, and the picker (a home-screen
+      // control) cannot change it mid-room. Just record the seat.
+      appliedSkin.current = { seat, skin: null };
       return;
     }
     if (client.setSkin(skin)) appliedSkin.current = { seat, skin };
@@ -392,9 +406,12 @@ interface HomeViewProps {
   readonly nameReady: boolean;
   readonly nameInputRef: React.RefObject<HTMLInputElement | null>;
   onPlayerNameChange: (value: string) => void;
-  /** The currently chosen disc skin (palette index; default orange). */
-  readonly skin: number;
-  onSkinChange: (skin: number) => void;
+  /**
+   * The currently chosen disc skin, or null = the RANDOM default (the
+   * server deals one at seating; unknown until the player joins).
+   */
+  readonly skin: SkinChoice;
+  onSkinChange: (skin: SkinChoice) => void;
   onJoinCodeChange: (value: string) => void;
   onCreate: () => void;
   onJoin: () => void;

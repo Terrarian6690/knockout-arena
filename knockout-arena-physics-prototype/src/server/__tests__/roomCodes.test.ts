@@ -34,7 +34,7 @@ const liveServers: GameServer[] = [];
 const liveManagers: RoomManager[] = [];
 
 function newServer(): GameServer {
-  const server = createGameServer();
+  const server = createGameServer({ randomSkinIndex: () => 0 });
   liveServers.push(server);
   return server;
 }
@@ -156,6 +156,7 @@ describe("room code generation", () => {
 
   it("retries a colliding code until it draws a free one", () => {
     const manager = createRoomManager({
+    randomSkinIndex: () => 0,
       roomCodeFactory: scriptedFactory("AAAA", "AAAA", "BBBB"),
     });
     liveManagers.push(manager);

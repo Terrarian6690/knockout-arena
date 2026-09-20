@@ -96,7 +96,7 @@ function newServer(options?: {
   roundDecisionTimeoutMs?: number;
   reconnectReservationMs?: number;
 }): GameServer {
-  const server = createGameServer(options);
+  const server = createGameServer({ randomSkinIndex: () => 0, ...options });
   liveServers.push(server);
   return server;
 }
@@ -753,7 +753,7 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
     const room = server.getRoom(roomId)!;
     expect(room.seats).toEqual([
       { playerId: "p0", connected: true, displayName: null, skin: 0 },
-      { playerId: "p1", connected: false, displayName: null, skin: 0 }, // still just disconnected
+      { playerId: "p1", connected: false, displayName: null, skin: 1 }, // still just disconnected
     ]);
     const latest = events[events.length - 1].state;
     const p0 = latest.pawns.find((p) => p.id === "p0")!;
@@ -796,7 +796,7 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
       playerId: "p1",
       connected: false,
       displayName: null,
-      skin: 0,
+      skin: 1,
     });
   }, 15000);
 
@@ -817,7 +817,7 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
       playerId: "p1",
       connected: true,
       displayName: null,
-      skin: 0,
+      skin: 1,
     });
 
     // If reconnect had reset the deadline, the round would resolve at

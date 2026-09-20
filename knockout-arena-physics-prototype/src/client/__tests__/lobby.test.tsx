@@ -85,7 +85,6 @@ describe("lobby initial screen", () => {
     expect(allSent(pair).map((m) => m.type)).toEqual([
       "create_room",
       "set_name",
-      "set_skin",
     ]);
 
     // The room screen shows the SERVER-assigned room code and seat.

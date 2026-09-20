@@ -86,7 +86,7 @@ function newCore(options?: { snapshotBufferLimitBytes?: number }): {
   server: GameServer;
   core: TransportCore;
 } {
-  const server = createGameServer();
+  const server = createGameServer({ randomSkinIndex: () => 0 });
   liveServers.push(server);
   return { server, core: createTransportCore(server, options) };
 }
@@ -310,7 +310,7 @@ describe("room operations", () => {
       hostPlayerId: "p0",
     });
     expect(typeof welcome.roomId).toBe("string");
-    expect(welcome.roster).toEqual([{ playerId: "p0", connected: true }]);
+    expect(welcome.roster).toEqual([{ playerId: "p0", connected: true, skin: 0 }]);
 
     const roomState = socket.lastOf("room_state")!;
     expect(roomState).toMatchObject({ type: "room_state", roomState: "waiting" });
@@ -371,9 +371,9 @@ describe("room operations", () => {
     for (const socket of sockets) {
       const last = socket.lastOf("room_state")!;
       expect(last.roster).toEqual([
-        { playerId: "p0", connected: true },
-        { playerId: "p1", connected: true },
-        { playerId: "p2", connected: true },
+        { playerId: "p0", connected: true, skin: 0 },
+        { playerId: "p1", connected: true, skin: 1 },
+        { playerId: "p2", connected: true, skin: 2 },
       ]);
     }
     // The creator's message log shows the incremental updates.
@@ -406,7 +406,7 @@ describe("room operations", () => {
 
     // The remaining player is notified with the updated roster.
     const last = sockets[0].lastOf("room_state")!;
-    expect(last.roster).toEqual([{ playerId: "p0", connected: true }]);
+    expect(last.roster).toEqual([{ playerId: "p0", connected: true, skin: 0 }]);
     expect(server.getRoom(roomId)!.seats).toHaveLength(1);
 
     // The leaver can create a fresh room afterwards.
@@ -740,8 +740,8 @@ describe("disconnect", () => {
     // The remaining player is notified (p0 vacated, roster frozen)…
     const last = sockets[1].lastOf("room_state")!;
     expect(last.roster).toEqual([
-      { playerId: "p0", connected: false },
-      { playerId: "p1", connected: true },
+      { playerId: "p0", connected: false, skin: 0 },
+      { playerId: "p1", connected: true, skin: 1 },
     ]);
     // …and the GameHost keeps running: snapshots keep flowing and the match
     // resolves to a winner without the disconnected player.
@@ -766,7 +766,7 @@ describe("disconnect", () => {
     expect(server.getRoom(roomA.roomId)).not.toBeNull();
     expect(server.getRoom(roomA.roomId)!.seats).toEqual([
       { playerId: "p0", connected: false, displayName: null, skin: 0 },
-      { playerId: "p1", connected: false, displayName: null, skin: 0 },
+      { playerId: "p1", connected: false, displayName: null, skin: 1 },
     ]);
     expect(server.sessionCount()).toBe(4); // reservations keep sessions
 
