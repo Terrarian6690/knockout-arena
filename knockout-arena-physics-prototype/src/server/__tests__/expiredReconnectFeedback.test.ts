@@ -40,7 +40,7 @@ const liveServers: GameServer[] = [];
 function newServer(options?: {
   reconnectReservationMs?: number;
 }): GameServer {
-  const server = createGameServer(options);
+  const server = createGameServer({ randomSkinIndex: () => 0, ...options });
   liveServers.push(server);
   return server;
 }

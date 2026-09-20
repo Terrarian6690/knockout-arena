@@ -84,21 +84,21 @@ describe("the lobby shows up to six players", () => {
     expect(screen.queryAllByTestId("empty-seat")).toHaveLength(0);
   });
 
-  it("keeps the You and Host markers correct in a full six-player room", async () => {
+  it("keeps the You marker correct in a full six-player room; no HOST marker", async () => {
     const { harness, roomId } = await seatedHost();
     for (let i = 1; i < MAX_SEATS; i++) await joinHeadless(harness, roomId);
     expect(await screen.findByText(`6 / ${MAX_SEATS}`)).toBeInTheDocument();
 
-    // This screen belongs to the creator: p0 is both "You" and the host.
+    // This screen belongs to the creator: p0 is "You". The HOST chip was
+    // removed from every player list — no seat carries it, even the
+    // host's own row.
     const own = screen.getByTestId("seat-p0");
     expect(within(own).getByText("You")).toBeInTheDocument();
-    expect(within(own).getByText("Host")).toBeInTheDocument();
-    // Exactly one seat carries each marker (the room header shows its
-    // own Host badge, so scope the count to the seat list).
+    expect(within(own).queryByText("Host")).toBeNull();
     const seatList = screen.getByTestId("seat-list");
     expect(within(seatList).getAllByText("You")).toHaveLength(1);
-    expect(within(seatList).getAllByText("Host")).toHaveLength(1);
-    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 1");
+    expect(within(seatList).queryByText("Host")).toBeNull();
+    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed: the seat's You badge says it
   });
 
   it("shows custom names beside fallbacks for six players", async () => {

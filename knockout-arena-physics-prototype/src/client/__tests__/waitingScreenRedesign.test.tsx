@@ -87,13 +87,15 @@ describe("the HOST indicator sits in the panel's top-right corner", () => {
 
   it("does not duplicate the Host marker beside the seat label", async () => {
     await seatedPlayer("private");
-    // The corner badge and the one on the player's own seat row — the
-    // "You are Player 1" line no longer repeats it a third time.
+    // The corner badge and the one on the player's own seat row. The
+    // "You are Player 1" line that once made a third spot is GONE
+    // (removed on request), so the count stays at two and no removed
+    // element can ever resurrect it.
     const panel = screen.getByTestId("room-panel");
-    expect(within(panel).getAllByText("Host")).toHaveLength(2);
-    expect(
-      within(screen.getByTestId("local-player-id").parentElement!).queryByText("Host")
-    ).toBeNull();
+    // Only the panel's top-right corner badge remains — the seat-row
+    // marker was removed from the player list (on request).
+    expect(within(panel).getAllByText("Host")).toHaveLength(1);
+    expect(screen.queryByTestId("local-player-id")).toBeNull();
   });
 });
 
@@ -303,8 +305,9 @@ describe("the lobby fits on screen without scrolling", () => {
 
   it("keeps every functional element that had to survive the resize", async () => {
     await seatedPlayer("private");
-    // Nothing was cut to make it fit: seats, counts, code, actions,
-    // connection status and the way out are all still here.
+    // Nothing was cut to make it fit: seats, counts, code, actions and
+    // the way out are all still here. The connection badge is gone on
+    // purpose (removed from the header), not squeezed out by space.
     expect(screen.getByTestId("seat-list").children).toHaveLength(6);
     expect(screen.getByTestId("player-count")).toBeInTheDocument();
     expect(screen.getByTestId("room-code")).toBeInTheDocument();
@@ -312,9 +315,14 @@ describe("the lobby fits on screen without scrolling", () => {
     expect(screen.getByTestId("invite-button")).toBeInTheDocument();
     expect(screen.getByTestId("start-match")).toBeInTheDocument();
     expect(screen.getByTestId("leave-room")).toBeInTheDocument();
-    expect(screen.getByTestId("connection-status")).toBeInTheDocument();
-    expect(screen.getByLabelText("Player name:")).toBeInTheDocument();
-    expect(screen.getByTestId("local-player-id")).toBeInTheDocument();
+    expect(screen.queryByTestId("connection-status")).toBeNull();
+    // The in-room rename box was removed on request: names are set on
+    // the home screen, never in the waiting room.
+    expect(screen.queryByLabelText("Player name:")).toBeNull();
+    expect(screen.queryByTestId("display-name-input")).toBeNull();
+    // The "You are pN" line was removed on purpose (the seat's You badge
+    // already marks the local player) — it must not creep back in.
+    expect(screen.queryByTestId("local-player-id")).toBeNull();
   });
 
   it("is measurably shorter than the pre-redesign layout", async () => {
@@ -388,10 +396,12 @@ describe("the name gate does not disturb the Quick Play / Create layout", () => 
     ).toBeTruthy();
   });
 
-  it("the name box does not appear once seated (it becomes a rename box)", async () => {
+  it("no name box exists once seated (no rename box either)", async () => {
     await seatedPlayer("public");
+    // Neither the home-screen box (left behind) nor a rename box (the
+    // in-room editor was removed on request) may appear once seated.
     expect(screen.queryByTestId("player-name-input")).toBeNull();
-    expect(screen.getByTestId("display-name-input")).toHaveValue("Tester");
+    expect(screen.queryByTestId("display-name-input")).toBeNull();
   });
 
   it("renders the name box for an un-named player", async () => {

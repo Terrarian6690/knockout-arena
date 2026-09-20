@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { CONFIG, type CommandRejection, type GameCommand, type PlayerSpec } from "../game";
+import {
+  CONFIG,
+  PLAYER_COLORS,
+  type CommandRejection,
+  type GameCommand,
+  type PlayerSpec,
+} from "../game";
 import { normalizeDisplayName } from "./displayName";
 import { createGameHost, type GameHost, type SerializedStateListener } from "./gameHost";
 import { generateUniqueRoomCode, normalizeRoomCode } from "./roomCode";
@@ -137,6 +143,13 @@ export interface RoomManagerOptions {
    * Default: crypto-random codes (see roomCode.ts).
    */
   roomCodeFactory?: () => string;
+  /**
+   * The random-skin draw for seats WITHOUT an explicit choice (Task:
+   * random default skin): given the number of still-available palette
+   * indices it returns the chosen slot in that list. Injectable so
+   * tests can make assignments deterministic. Default: uniform draw.
+   */
+  randomSkinIndex?: (availableCount: number) => number;
 }
 
 /** Options for createRoom (Task 17: room visibility). */
@@ -156,6 +169,19 @@ export interface RoomSeatInfo {
    * (clients fall back to the seat-derived "Player N"). Purely cosmetic.
    */
   readonly displayName: string | null;
+  /**
+   * The seat's disc skin (palette index). Purely cosmetic: it is baked
+   * into the seat's pawn when the match starts and shown on every
+   * roster. Dealt randomly at seating unless the player sets one.
+   */
+  readonly skin: number;
+  /**
+   * How many matches this seat's occupant has won in this room (see
+   * RoomEntry.wins). ADDITIVE: the field is present only when NON-ZERO
+   * — a seat without win history reports no `wins` at all, mirroring
+   * the wire (protocol v1) — so absent reads as zero.
+   */
+  readonly wins?: number;
 }
 
 /** Immutable room snapshot (for transports, tests, observability). */
@@ -212,8 +238,8 @@ export type SeatResult =
         | "unknown-session" // malformed/absent session token
         | "already-in-room" // seated sessions must leave first
         | "unknown-room"
-        | "room-full" // > MAX_PLAYERS
-        | "room-playing"; // roster frozen (playing or finished)
+        | "room-full" // > MAX_PLAYERS (no free seat to wait in)
+        | "room-playing"; // legacy join refusal (joins now wait instead)
     };
 
 /** Setting a display name: the seat's own player only, lobby state only. */
@@ -227,6 +253,25 @@ export type NameResult =
         | "invalid-name" // empty/oversized/control characters
         | "room-playing"; // names are frozen once the match starts
     };
+
+/**
+ * Setting a seat's disc skin (cosmetic; same rules as a display name).
+ * `setSkin(token, null)` re-enters the RANDOM default: the seat is
+ * dealt a fresh random skin (excluding the ones the other seats hold).
+ */
+export type SkinResult =
+  | { ok: true; room: RoomInfo }
+  | {
+      ok: false;
+      reason:
+        | "unknown-session" // malformed/absent session token
+        | "not-in-room" // the session holds no seat
+        | "invalid-skin" // not an integer in [0, palette length)
+        | "room-playing"; // skins are frozen once the match starts
+    };
+
+/** Fallback disc skin: the palette's orange (index 0). */
+export const DEFAULT_SKIN = 0;
 
 export type LeaveResult =
   | { ok: true; room: RoomInfo | null } // null: the room was removed
@@ -313,6 +358,23 @@ interface RoomEntry {
   seats: Array<string | null>;
   /** seat index → the seat's display name; null = none (fallback). */
   names: Array<string | null>;
+  /**
+   * seat index → the seat's disc skin (palette index), or null while
+   * unassigned. A seat is dealt its skin AT SEATING TIME: an explicit
+   * choice is unknown to the server, so every newcomer without one gets
+   * a RANDOM palette index that none of the already-seated players
+   * holds (see assignSkin). A freed/vacated seat returns to null.
+   */
+  skins: Array<number | null>;
+  /**
+   * seat index → how many matches THIS seat's occupant has won in this
+   * room (across play-again rematches; the roster — and the group —
+   * survive them). Wins belong to the SEAT'S OCCUPANT: when the seat
+   * changes owner (a freed lobby seat, a seat vacated mid-match that
+   * reopens) the counter starts from zero again, exactly like the name
+   * and the skin.
+   */
+  wins: number[];
   /** Seats vacated after the match started — the roster is frozen. */
   vacated: Set<number>;
   /**
@@ -410,6 +472,10 @@ export interface RoomManager {
    */
   setName(token: string, name: string): NameResult;
   /**
+   * Set the calling session's OWN disc skin (cosmetic; see setSkin).
+   */
+  setSkin(token: string, skin: number | null): SkinResult;
+  /**
    * Start the match with the current stable roster (creates the GameHost).
    * Reserved (disconnected) seats count — the roster is occupied seats;
    * the host may start while waiting for a player to reconnect.
@@ -457,6 +523,8 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
   /** Player-facing room codes of ACTIVE rooms → their room (join lookup). */
   const roomsByCode = new Map<string, RoomEntry>();
   const roomCodeFactory = options?.roomCodeFactory;
+  const randomSkinIndex = options?.randomSkinIndex ??
+    ((availableCount: number) => Math.floor(Math.random() * availableCount));
 
   // ── internals ─────────────────────────────────────────────────────────
 
@@ -601,6 +669,37 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     onAutoStart?.(infoOf(room));
   }
 
+  /**
+   * The palette indices NOT held by any other occupied seat — the pool
+   * a newcomer's random skin is drawn from (Task: random default skin,
+   * excluding what the players already in the lobby wear). Reserved
+   * (disconnected) seats still hold theirs: the player may return.
+   */
+  function availableSkins(room: RoomEntry, forSeat: number): number[] {
+    const taken = new Set<number>();
+    for (let i = 0; i < MAX_PLAYERS; i++) {
+      if (i !== forSeat && room.seats[i] !== null && room.skins[i] !== null) {
+        taken.add(room.skins[i] as number);
+      }
+    }
+    const all = PLAYER_COLORS.map((_, index) => index);
+    const free = all.filter((index) => !taken.has(index));
+    // Every seat can end up with a legal skin even in the pathological
+    // all-colors-taken case: fall back to the full palette.
+    return free.length > 0 ? free : all;
+  }
+
+  /** Deal `seat` a random skin none of the other seats holds. */
+  function assignSkin(room: RoomEntry, seat: number): number {
+    const pool = availableSkins(room, seat);
+    const pick = Math.min(
+      Math.max(0, Math.floor(randomSkinIndex(pool.length))),
+      pool.length - 1
+    );
+    room.skins[seat] = pool[pick];
+    return room.skins[seat] as number;
+  }
+
   function infoOf(room: RoomEntry): RoomInfo {
     const seats: RoomSeatInfo[] = [];
     for (let i = 0; i < MAX_PLAYERS; i++) {
@@ -611,6 +710,9 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
           playerId: `p${i}`,
           connected: !room.reserved.has(i),
           displayName: room.names[i],
+          skin: room.skins[i] ?? DEFAULT_SKIN,
+          // Additive wins: present only when non-zero (see the type).
+          ...(room.wins[i] > 0 ? { wins: room.wins[i] } : {}),
         });
       } else if (room.vacated.has(i)) {
         // Vacated mid-match: the frozen roster keeps the seat (and its
@@ -619,6 +721,8 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
           playerId: `p${i}`,
           connected: false,
           displayName: room.names[i],
+          skin: room.skins[i] ?? DEFAULT_SKIN,
+          ...(room.wins[i] > 0 ? { wins: room.wins[i] } : {}),
         });
       }
     }
@@ -664,6 +768,16 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     }
   }
 
+  /** The finished snapshot's winner id ("p2"), or null (no winner). */
+  function winnerOf(serialized: string): string | null {
+    try {
+      const parsed = JSON.parse(serialized) as { winnerId?: unknown };
+      return typeof parsed.winnerId === "string" ? parsed.winnerId : null;
+    } catch {
+      return null;
+    }
+  }
+
   // ── room operations ───────────────────────────────────────────────────
 
   function createRoom(token: string, options?: CreateRoomOptions): SeatResult {
@@ -687,6 +801,8 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       // slots would have read as `undefined` rather than null.
       seats: Array.from({ length: MAX_PLAYERS }, () => null),
       names: Array.from({ length: MAX_PLAYERS }, () => null),
+      skins: Array.from({ length: MAX_PLAYERS }, () => null),
+      wins: Array.from({ length: MAX_PLAYERS }, () => 0),
       vacated: new Set(),
       reserved: new Map(),
       hostToken: token, // the creator is the room host
@@ -698,6 +814,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     rooms.set(room.id, room);
     roomsByCode.set(room.code, room);
     room.seats[0] = token;
+    assignSkin(room, 0); // the creator's random skin, dealt at seating
     return { ok: true, room: infoOf(room), playerId: "p0" };
   }
 
@@ -720,11 +837,19 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       return { ok: false, reason: "unknown-room" };
     }
     if (findSeat(token)) return { ok: false, reason: "already-in-room" };
-    if (room.state !== "waiting") return { ok: false, reason: "room-playing" };
+    // A RUNNING (or just-finished) match no longer shuts the door: the
+    // newcomer takes a genuinely free seat and WAITS for the next match
+    // (the frozen roster — and the running game — are untouched; their
+    // pawn simply does not exist yet). lowestFreeSeat skips the seats
+    // vacated mid-match, so a departed player's chair stays theirs.
     const seat = lowestFreeSeat(room);
     if (seat === -1) return { ok: false, reason: "room-full" };
     room.seats[seat] = token;
-    reconcileAutoStart(room); // a new arrival may shorten the wait (Task 28)
+    assignSkin(room, seat); // random, excluding what the seated hold
+    // Only a waiting room has a countdown to reconcile; a playing one
+    // has none (cancelled at start), and a finished one re-arms on
+    // reopen — a late arrival must not arm anything.
+    if (room.state === "waiting") reconcileAutoStart(room);
     return { ok: true, room: infoOf(room), playerId: `p${seat}` };
   }
 
@@ -762,6 +887,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     /* c8 ignore next */
     if (seat === -1) return { ok: false, reason: "room-full" }; // unreachable: findOpenPublicRoom filters full rooms
     open.seats[seat] = token;
+    assignSkin(open, seat); // random, excluding what the seated hold
     reconcileAutoStart(open); // public: arm or shorten the countdown (Task 28)
     return { ok: true, room: infoOf(open), playerId: `p${seat}` };
   }
@@ -862,8 +988,13 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       room.vacated.add(seat);
     } else {
       // A freed lobby seat is joinable again: its display name must not
-      // survive into the next occupant.
+      // survive into the next occupant — and neither may its skin (the
+      // seat goes back to unassigned; the next occupant gets a fresh
+      // random draw that may legally reuse the color) — and neither may
+      // its WIN COUNT: wins belong to the occupant, not the chair.
       room.names[seat] = null;
+      room.skins[seat] = null;
+      room.wins[seat] = 0;
     }
     // A departure can drop the room below MIN_PLAYERS (cancel) or simply
     // leave a locked full-room countdown alone (Task 28).
@@ -968,6 +1099,39 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
   }
 
   /**
+   * Set the calling session's OWN disc skin (cosmetic, seat-scoped).
+   * Same rules as a display name: the seat is derived from the session
+   * token, only a waiting room accepts it (skins are frozen into the
+   * pawns at start), and a freed lobby seat falls back to the default.
+   */
+  function setSkin(token: string, rawSkin: number | null): SkinResult {
+    if (!validKey(token)) return { ok: false, reason: "unknown-session" };
+    const seated = findSeat(token);
+    if (!seated) return { ok: false, reason: "not-in-room" };
+    if (seated.room.state !== "waiting") {
+      // Skins are frozen into the match (pawn colors) once it starts;
+      // changing them mid-match would diverge the roster from the field.
+      return { ok: false, reason: "room-playing" };
+    }
+    if (rawSkin === null) {
+      // Back to the DEFAULT behavior: a fresh RANDOM skin, excluding
+      // whatever the other seats hold.
+      assignSkin(seated.room, seated.seat);
+      return { ok: true, room: infoOf(seated.room) };
+    }
+    if (
+      typeof rawSkin !== "number" ||
+      !Number.isInteger(rawSkin) ||
+      rawSkin < 0 ||
+      rawSkin >= PLAYER_COLORS.length
+    ) {
+      return { ok: false, reason: "invalid-skin" };
+    }
+    seated.room.skins[seated.seat] = rawSkin;
+    return { ok: true, room: infoOf(seated.room) };
+  }
+
+  /**
    * Return a FINISHED room to the waiting lobby so the same group can play
    * again (Task 25).
    *
@@ -1003,6 +1167,8 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     // Mid-match departures become ordinary empty seats again.
     for (const seat of room.vacated) {
       room.names[seat] = null;
+      room.skins[seat] = null;
+      room.wins[seat] = 0;
     }
     room.vacated.clear();
     room.state = "waiting";
@@ -1039,6 +1205,10 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     const roster: PlayerSpec[] = occupied.map((i) => ({
       id: `p${i}`,
       name: room.names[i] ?? `Player ${i + 1}`,
+      // The seat's disc skin becomes the pawn's palette index —
+      // cosmetics frozen at start time, exactly like the name. Every
+      // seated player was dealt one at seating; the ?? is pure safety.
+      colorIndex: room.skins[i] ?? DEFAULT_SKIN,
     }));
 
     const host = createGameHost({
@@ -1046,7 +1216,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       // The round decision deadline is room policy: every match started
       // here gets the same server-configured aiming-round maximum.
       roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
-      // The 4-minute clock starts HERE — the host is created the moment
+      // The 6-minute clock starts HERE — the host is created the moment
       // the match starts, so lobby/waiting time is never counted.
       matchDurationMs: options?.matchDurationMs,
     });
@@ -1057,7 +1227,21 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     // One subscription drives both the room lifecycle (finished detection)
     // and the broadcast hook for every seated session.
     room.detachHost = host.onStateChange((serialized) => {
-      room.state = phaseOf(serialized) === "finished" ? "finished" : "playing";
+      const finished = phaseOf(serialized) === "finished";
+      // A match JUST ended (the playing → finished transition — the
+      // guard keeps repeated finished snapshots from re-crediting):
+      // credit its winner's seat with one win. A wipeout (winnerId
+      // null) credits nobody.
+      if (finished && room.state !== "finished") {
+        const winner = winnerOf(serialized);
+        if (winner !== null) {
+          const seat = Number.parseInt(winner.replace(/^p/, ""), 10);
+          if (Number.isInteger(seat) && seat >= 0 && seat < MAX_PLAYERS) {
+            room.wins[seat] += 1;
+          }
+        }
+      }
+      room.state = finished ? "finished" : "playing";
       for (const listener of [...room.listeners]) listener.cb(serialized);
     });
     host.start(); // the fixed 60 Hz loop — this is a real match now
@@ -1225,6 +1409,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     resolveRound,
     removeEmptyRooms,
   setName,
+    setSkin,
     onRoomState,
     roomCount,
     destroy,

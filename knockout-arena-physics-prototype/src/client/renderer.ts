@@ -102,19 +102,23 @@ export function render(
   // Reveal: once the round is resolving, every committed launch becomes
   // public — one arrow per confirmed launcher, drawn under the pawns in
   // the pawn's own color. Unconfirmed pawns have no launch datum (null),
-  // so they get no arrow — never a guessed one. (The projection already
-  // nulls launches during "aiming"; the phase check is defense-in-depth
-  // for hand-fed snapshots.)
+  // so they get no arrow — never a guessed one. Eliminated pawns draw
+  // nothing at all: knocked off the arena means off the screen (their
+  // arrow would be a lone shaft floating over the background).
   if (snapshot.phase !== "aiming") {
     for (const pawn of snapshot.pawns) {
+      if (pawn.eliminated) continue;
       if (pawn.launch) {
         drawLaunchIndicator(ctx, pawn);
       }
     }
   }
 
-  // Draw pawns.
+  // Draw pawns — ALIVE ones only. Elimination removes the pawn from the
+  // board entirely (the knockout burst in the VFX layer marks the moment;
+  // afterwards there is simply nothing where the pawn used to be).
   for (const pawn of snapshot.pawns) {
+    if (pawn.eliminated) continue;
     drawPawn(ctx, pawn, snapshot);
   }
 
@@ -205,11 +209,9 @@ function drawArena(ctx: CanvasRenderingContext2D, arena: Arena) {
 
   // THE PLATFORM. A solid blue disc out to the visible edge, so the
   // arena reads as a surface you stand on rather than a faint gradient
-  // in the dark. (Task 30 removed this fill along with the boundary
-  // ring, which went too far: the ring is what had to go, not the
-  // platform itself.) The grid rings below are drawn ON TOP of it for
-  // depth — the old code painted this disc over them, which is why they
-  // were never visible.
+  // in the dark. (Task 30 removed the old boundary ring; the interior
+  // grid rings were removed later on request — the floor is now ONE
+  // clean disc: fill + depth gradient + a soft rim, nothing else.)
   ctx.beginPath();
   ctx.arc(cx, cy, edge, 0, Math.PI * 2);
   ctx.fillStyle = CONFIG.colors.arenaWall;
@@ -227,14 +229,9 @@ function drawArena(ctx: CanvasRenderingContext2D, arena: Arena) {
   ctx.fill();
   ctx.globalAlpha = 1;
 
-  // Subtle grid rings for depth, now genuinely visible on the platform.
-  ctx.strokeStyle = "rgba(255,255,255,0.05)";
-  ctx.lineWidth = 1;
-  for (let r = edge * 0.25; r < edge; r += edge * 0.25) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.stroke();
-  }
+  // (The old quarter/half/three-quarter "grid rings" that used to sit
+  // here were removed on request: the interior is deliberately empty —
+  // no circles inside the arena.)
 
   // A soft rim so the platform's edge is legible against the background
   // WITHOUT reinstating the hard white boundary ring Task 30 removed.
@@ -337,13 +334,8 @@ function drawPawn(
     ctx.stroke();
   }
 
-  // Eliminated tint.
-  if (pawn.eliminated) {
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(239,68,68,0.5)";
-    ctx.fill();
-  }
+  // NOTE: eliminated pawns are never drawn at all (see the pawn loop in
+  // render) — the old red tint was removed together with the pawn.
 }
 
 /**
@@ -358,7 +350,7 @@ interface IndicatorStyle {
 }
 
 /**
- * The viewer's OWN live aim indicator: dashed shaft + power chevrons +
+ * The viewer's OWN live aim indicator: a single solid shaft +
  * arrowhead, length ∝ power. Pure presentation of the projection's
  * aimDirection/power — no trajectory prediction.
  */
@@ -401,7 +393,7 @@ function drawLaunchIndicator(
   );
 }
 
-/** Shared indicator geometry: dashed shaft, power chevrons, arrowhead. */
+/** Shared indicator geometry: one solid shaft, one arrowhead. */
 function drawIndicator(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -418,8 +410,8 @@ function drawIndicator(
   ctx.save();
   ctx.globalAlpha = style.alpha;
 
-  // Dashed line.
-  ctx.setLineDash([8, 7]);
+  // SOLID line (the old dash pattern was removed on request): one
+  // continuous shaft from the pawn's rim to the arrowhead.
   ctx.beginPath();
   ctx.moveTo(x + direction.x * (CONFIG.pawn.radius + 2), y + direction.y * (CONFIG.pawn.radius + 2));
   ctx.lineTo(tipX, tipY);
@@ -427,28 +419,10 @@ function drawIndicator(
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
   ctx.stroke();
-  ctx.setLineDash([]);
 
-  // Power chevrons along the shaft: evenly spaced, so a stronger power
-  // (longer indicator) shows more chevrons — "more power, harder launch"
-  // is readable at a glance without predicting the landing spot.
-  for (let d = CONFIG.pawn.radius + 14; d < len - 14; d += 14) {
-    const cx = x + direction.x * d;
-    const cy = y + direction.y * d;
-    ctx.beginPath();
-    ctx.moveTo(
-      cx - 7 * Math.cos(angle - 0.45),
-      cy - 7 * Math.sin(angle - 0.45)
-    );
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(
-      cx - 7 * Math.cos(angle + 0.45),
-      cy - 7 * Math.sin(angle + 0.45)
-    );
-    ctx.strokeStyle = style.arrowColor;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  }
+  // (The small chevrons that used to repeat along the shaft were removed
+  // on request: the indicator is ONE arrow now — a single shaft and a
+  // single head. Power still reads from the arrow's LENGTH.)
 
   // Arrowhead (grows slightly with power).
   const head = 9 + power;

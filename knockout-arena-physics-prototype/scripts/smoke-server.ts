@@ -35,12 +35,12 @@ const RECONNECT_RESERVATION_MS = loadServerConfig(process.env, {
   onWarning: (detail) => console.warn(`[smoke] ${detail}`),
 }).reconnectReservationMs;
 /**
- * Round decision deadline (default 10 s, like production): after this long
+ * Round decision deadline (default 30 s, like production): after this long
  * in the aiming phase the server itself resolves the round. Shrink it to
  * watch the timeout path in the manual smoke test, e.g.
  * ROUND_DECISION_TIMEOUT_MS=3000.
  */
-const ROUND_DECISION_TIMEOUT_MS = Number(process.env.ROUND_DECISION_TIMEOUT_MS ?? 10_000);
+const ROUND_DECISION_TIMEOUT_MS = Number(process.env.ROUND_DECISION_TIMEOUT_MS ?? 30_000);
 
 const httpServer = createServer((_req, res) => {
   try {

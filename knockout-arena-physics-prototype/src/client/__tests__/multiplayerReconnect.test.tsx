@@ -140,6 +140,7 @@ describe("seat recovery through the real UI", () => {
       // The name chosen at the gate belongs to the seat and survives the
       // drop with it (the server holds it, the client never restores it).
       displayName: "Tester",
+      skin: 0,
     });
   }, 15000);
 

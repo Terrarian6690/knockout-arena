@@ -139,7 +139,7 @@ export const CONFIG = {
    */
   match: {
     /**
-     * Hard maximum match duration: 4 minutes of real time, measured from
+     * Hard maximum match duration: 6 minutes of real time, measured from
      * the moment the match actually STARTS (never from lobby/waiting
      * time). When it elapses the server ends the match through the
      * ordinary authoritative path and the existing "finished" phase —
@@ -150,7 +150,7 @@ export const CONFIG = {
      * WHEN the engine's `timeUp` command is submitted, and never feeds
      * into the simulation, which keeps advancing by fixed ticks.
      */
-    durationMs: 4 * 60 * 1000,
+    durationMs: 6 * 60 * 1000,
 
     /**
      * Hard multiplayer CAPACITY: the maximum number of players in one

@@ -104,6 +104,7 @@ function newCore(options?: {
   reconnectReservationMs?: number;
 }): { server: GameServer; core: TransportCore } {
   const server = createGameServer({
+    randomSkinIndex: () => 0,
     reconnectReservationMs: options?.reconnectReservationMs,
   });
   liveServers.push(server);

@@ -44,7 +44,7 @@ beforeAll(() => {
 afterEach(cleanup);
 
 describe("app shell", () => {
-  it("boots into the lobby (initial screen with connection status)", () => {
+  it("boots into the lobby (initial screen, no status badge)", () => {
     render(<App />);
 
     // The lobby's own heading (the "Multiplayer lobby" subtitle was
@@ -54,9 +54,12 @@ describe("app shell", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Enter the arena")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create Room" })).toBeDisabled();
-    expect(screen.getByTestId("connection-status")).toHaveTextContent(
-      "Disconnected"
-    );
+    // The always-on connection badge was removed from the header on
+    // request; the disconnected state still shows through the disabled
+    // actions and the reconnect affordance below.
+    expect(
+      screen.queryByTestId("connection-status")
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
   });
 
@@ -145,9 +148,11 @@ describe("app shell", () => {
     // The reconnect affordance goes through the network client; with no
     // WebSocket implementation it fails cleanly and the UI stays usable.
     fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
-    expect(screen.getByTestId("connection-status")).toHaveTextContent(
-      "Disconnected"
-    );
+    // No status badge in the header (removed) — the failed state shows
+    // through the still-disabled actions instead.
+    expect(
+      screen.queryByTestId("connection-status")
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create Room" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Practice solo/ })).toBeEnabled();
   });

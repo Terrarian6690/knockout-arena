@@ -15,17 +15,13 @@ import { render } from "@testing-library/react";
 import type { PawnSnapshot } from "../../game/types";
 
 /**
- * TASK 27 — the name saves itself, and the way out is a red icon in the
- * corner.
+ * The way out is a red icon in the corner.
  *
- * Two presentation changes, each with a rule that must NOT bend:
+ * (The in-room name editor this suite used to pin alongside the exit
+ * icon was removed on request: names are set on the home screen only.
+ * The exit-icon half is unchanged.)
  *
- *   1. AUTO-SAVE. The "Save Name" button is gone. A valid name applies
- *      itself 400 ms after typing stops, and immediately on blur or
- *      Enter. What must not change: an INVALID draft is never sent —
- *      not on the debounce, not on blur, not on Enter — because the
- *      validation rule (normalizeDisplayName: 1–16 code points, no
- *      control characters) is the server's rule mirrored client-side.
+ * The remaining rule that must NOT bend:
  *
  *   2. THE EXIT ICON. The leave action moved out of the panel footer to
  *      the screen's top-left corner and lost its text. What must not
@@ -52,14 +48,6 @@ async function seatedHost() {
   return { harness, host, view };
 }
 
-const nameBox = () => screen.getByTestId("display-name-input");
-
-/** Every name this client has put on the wire, in order. */
-const namesSent = (pair: SocketPair) =>
-  allSent(pair)
-    .filter((m) => m.type === "set_name")
-    .map((m) => m.name as string);
-
 /** How many frames of a type this client has sent. */
 const countSent = (pair: SocketPair, type: string) =>
   allSent(pair).filter((m) => m.type === type).length;
@@ -73,159 +61,7 @@ function seatCount(
   return room === null ? 0 : room.seats.filter((s) => s !== null).length;
 }
 
-/** Let the 400 ms auto-save debounce elapse. */
-async function settleDebounce() {
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 450));
-  });
-}
-
-// ── 1. typing alone saves the name ───────────────────────────────────────
-
-describe("a valid name saves itself, with nothing to click", () => {
-  it("applies after typing stops — no Save button is involved", async () => {
-    const { host } = await seatedHost();
-    const pair = host.pairs[0]!;
-    const before = namesSent(pair).length;
-
-    // There is no Save button anywhere on the screen to press.
-    expect(screen.queryByTestId("save-name")).toBeNull();
-    expect(screen.queryByRole("button", { name: /save/i })).toBeNull();
-
-    fireEvent.change(nameBox(), { target: { value: "Marika" } });
-    await settleDebounce();
-
-    expect(namesSent(pair).slice(before)).toEqual(["Marika"]);
-    // The server's roster push is what actually renames the seat.
-    const seat = await screen.findByTestId("seat-p0");
-    expect(seat).toHaveTextContent("Marika");
-  });
-
-  it("waits for the pause: mid-word keystrokes do not each send", async () => {
-    const { host } = await seatedHost();
-    const pair = host.pairs[0]!;
-    const before = namesSent(pair).length;
-
-    // Four keystrokes in quick succession, none of them a full pause.
-    for (const draft of ["A", "An", "Ann", "Anna"]) {
-      fireEvent.change(nameBox(), { target: { value: draft } });
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 60));
-      });
-    }
-    // Nothing has gone out yet — the player is still typing.
-    expect(namesSent(pair).slice(before)).toEqual([]);
-
-    await settleDebounce();
-    // Exactly one message, carrying the finished name — not "A"/"An"/"Ann".
-    expect(namesSent(pair).slice(before)).toEqual(["Anna"]);
-  });
-
-  it("blur applies it immediately, without waiting out the debounce", async () => {
-    const { host } = await seatedHost();
-    const pair = host.pairs[0]!;
-    const before = namesSent(pair).length;
-
-    fireEvent.change(nameBox(), { target: { value: "  Borys  " } });
-    fireEvent.blur(nameBox());
-
-    // Synchronously on blur, and trimmed the way the server would.
-    expect(namesSent(pair).slice(before)).toEqual(["Borys"]);
-
-    // The pending debounce must not then send a duplicate.
-    await settleDebounce();
-    expect(namesSent(pair).slice(before)).toEqual(["Borys"]);
-  });
-
-  it("Enter applies it immediately too", async () => {
-    const { host } = await seatedHost();
-    const pair = host.pairs[0]!;
-    const before = namesSent(pair).length;
-
-    fireEvent.change(nameBox(), { target: { value: "Celina" } });
-    fireEvent.keyDown(nameBox(), { key: "Enter" });
-
-    expect(namesSent(pair).slice(before)).toEqual(["Celina"]);
-    await settleDebounce();
-    expect(namesSent(pair).slice(before)).toEqual(["Celina"]);
-  });
-
-  it("re-typing the same name sends no second message", async () => {
-    const { host } = await seatedHost();
-    const pair = host.pairs[0]!;
-
-    fireEvent.change(nameBox(), { target: { value: "Dorota" } });
-    await settleDebounce();
-    const after = namesSent(pair).length;
-
-    // Same value again, committed every way there is.
-    fireEvent.change(nameBox(), { target: { value: "Dorota" } });
-    fireEvent.blur(nameBox());
-    fireEvent.keyDown(nameBox(), { key: "Enter" });
-    await settleDebounce();
-
-    expect(namesSent(pair).length).toBe(after);
-  });
-});
-
-// ── 2. invalid drafts still never reach the wire ─────────────────────────
-
-describe("auto-save does not weaken validation", () => {
-  it("never auto-applies an invalid in-progress name", async () => {
-    const { host } = await seatedHost();
-    const pair = host.pairs[0]!;
-    const before = namesSent(pair).length;
-
-    // Too long, a tab, a control character, and empty — every one of
-    // these is a name normalizeDisplayName refuses.
-    for (const bad of ["A".repeat(17), "A\tB", "A\u0007B", "   ", ""]) {
-      fireEvent.change(nameBox(), { target: { value: bad } });
-      await settleDebounce(); // the debounce fires and declines
-      fireEvent.blur(nameBox()); // an explicit commit declines too
-      fireEvent.keyDown(nameBox(), { key: "Enter" });
-    }
-
-    expect(namesSent(pair).slice(before)).toEqual([]);
-  });
-
-  it("stays quiet while typing, but explains itself on an explicit commit", async () => {
-    await seatedHost();
-
-    // Mid-edit: an incomplete draft is not scolded on every keystroke.
-    fireEvent.change(nameBox(), { target: { value: "" } });
-    await settleDebounce();
-    expect(screen.queryByTestId("name-error")).toBeNull();
-
-    // Blur is a deliberate commit — now the refusal is explained.
-    fireEvent.blur(nameBox());
-    expect(screen.getByTestId("name-error")).toHaveTextContent(/characters/);
-    expect(screen.getByTestId("name-error")).toHaveAttribute("role", "alert");
-
-    // And typing something valid clears it and goes through.
-    fireEvent.change(nameBox(), { target: { value: "Ewa" } });
-    expect(screen.queryByTestId("name-error")).toBeNull();
-    await settleDebounce();
-    expect(await screen.findByTestId("seat-p0")).toHaveTextContent("Ewa");
-  });
-
-  it("an invalid rename leaves the confirmed name standing", async () => {
-    const { host } = await seatedHost();
-    const pair = host.pairs[0]!;
-
-    fireEvent.change(nameBox(), { target: { value: "Filip" } });
-    await settleDebounce();
-    expect(await screen.findByTestId("seat-p0")).toHaveTextContent("Filip");
-    const after = namesSent(pair).length;
-
-    // Now wreck the draft: the seat must keep the good name.
-    fireEvent.change(nameBox(), { target: { value: "F".repeat(20) } });
-    await settleDebounce();
-    expect(namesSent(pair).length).toBe(after);
-    expect(screen.getByTestId("seat-p0")).toHaveTextContent("Filip");
-  });
-});
-
-// ── 3. the exit icon ─────────────────────────────────────────────────────
+// ── the exit icon ────────────────────────────────────────────────────────
 
 describe("the leave action is a red exit icon in the top-left corner", () => {
   it("is icon-only, yet still has an accessible name", async () => {

@@ -81,7 +81,7 @@ export interface GameHostOptions {
    * The round decision deadline: the maximum wall-clock time an "aiming"
    * round may last. When it expires the host resolves the round with
    * whatever confirmations exist (confirmed players move, unconfirmed
-   * players do not). Default: DEFAULT_ROUND_DECISION_TIMEOUT_MS (20 s).
+   * players do not). Default: DEFAULT_ROUND_DECISION_TIMEOUT_MS (30 s).
    * Server-side configuration only — clients never influence it.
    */
   roundDecisionTimeoutMs?: number;
@@ -91,7 +91,7 @@ export interface GameHostOptions {
    * moment the match starts — the room manager builds the host in
    * startMatch, never while players wait in the lobby). When it expires
    * the host ends the match through the engine's `timeUp` command.
-   * Default: CONFIG.match.durationMs (4 minutes). Server-side
+   * Default: CONFIG.match.durationMs (6 minutes). Server-side
    * configuration only — clients never influence it.
    */
   matchDurationMs?: number;
@@ -105,7 +105,7 @@ export const DEFAULT_MAX_CATCH_UP_TICKS = 60;
 
 /**
  * Default round decision deadline: an aiming round is resolved by the
- * server after twenty seconds even if not every alive player has
+ * server after thirty seconds even if not every alive player has
  * confirmed.
  *
  * Authoritative and server-only: the client never holds a duration, it
@@ -115,11 +115,12 @@ export const DEFAULT_MAX_CATCH_UP_TICKS = 60;
  *
  * On expiry the round resolves for everyone at once, and a player who
  * LOCKED an aim but never pressed Confirm is launched with that aim and
- * their selected power (see beginRoundMovement in game.ts). Twenty
- * seconds is the budget for aiming plus power plus confirm; ten was
- * tight enough that deliberate aims were regularly lost.
+ * their selected power (see beginRoundMovement in game.ts). Thirty
+ * seconds is the budget for aiming plus power plus confirm; twenty was
+ * still tight enough that deliberate aims were regularly lost (and ten
+ * before that, tighter still).
  */
-export const DEFAULT_ROUND_DECISION_TIMEOUT_MS = 20_000;
+export const DEFAULT_ROUND_DECISION_TIMEOUT_MS = 30_000;
 
 /**
  * Default hard match duration: 4 minutes, owned by the engine config so
@@ -285,7 +286,7 @@ export function createGameHost(options: GameHostOptions): GameHost {
    *
    * ORDERING — deliberate and deterministic: this runs BEFORE
    * checkRoundDeadline on every tick, so when both deadlines are due on
-   * the same tick the MATCH TIME LIMIT WINS. The match ends at 4:00; a
+   * the same tick the MATCH TIME LIMIT WINS. The match ends at 6:00; a
    * round that would have resolved at the very same moment does not
    * start its movement, because the match is already over. The reverse
    * order would let a final round resolve after time expired (and could

@@ -8,10 +8,15 @@ import { normalizeRoomCode } from "../../network/roomCode";
 import type { ConnectionStatus } from "../../network/types";
 import { cn } from "../../utils/cn";
 import { BrandLogo } from "../BrandLogo";
-import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { ErrorBanner } from "./ErrorBanner";
 import { getPrefillJoinCode } from "./invite";
 import { LeaveRoomButton } from "./LeaveRoomButton";
+import {
+  loadSkinPreference,
+  saveSkinPreference,
+  type SkinChoice,
+} from "./skins";
+import { SkinPicker } from "./SkinPicker";
 import { RoomPanel } from "./RoomPanel";
 import { MultiplayerGame } from "../game/MultiplayerGame";
 
@@ -140,15 +145,69 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     if (client.setName(validName)) appliedName.current = { seat, name: validName };
   }, [client, state.roomId, state.playerId, validName]);
 
-  // The server moved the room into the match → the game screen takes over.
+  // ── the disc skin ──────────────────────────────────────────────────
+  // The cosmetic look of this player's pawn, chosen in the main menu
+  // (right of the name box), persisted locally, and applied to the seat
+  // exactly like the name is: the server only accepts set_skin from a
+  // SEATED session, so the choice rides down on the first roster after
+  // joining. One send per skin per seat (the same ref discipline as the
+  // name gate), so re-renders never spam the wire.
+  //
+  // `null` = the RANDOM default: nothing is stored and NOTHING is sent
+  // on a fresh seat — the server deals a random skin (excluding what
+  // the seated players wear) at seating time, so only after joining is
+  // the skin known. An explicit choice is sent like before, and picking
+  // "Random" while seated sends null to get a fresh draw.
+  const [skin, setSkinState] = useState<SkinChoice>(() => loadSkinPreference());
+  const onSkinChange = (next: SkinChoice) => {
+    setSkinState(next);
+    saveSkinPreference(next);
+  };
+  const appliedSkin = useRef<{ seat: string; skin: SkinChoice } | null>(null);
+  useEffect(() => {
+    if (state.roomId === null || state.playerId === null) {
+      appliedSkin.current = null; // a new seat must be skinned again
+      return;
+    }
+    const seat = `${state.roomId}:${state.playerId}`;
+    const applied = appliedSkin.current;
+    if (applied !== null && applied.seat === seat && applied.skin === skin) {
+      return;
+    }
+    if (skin === null) {
+      // No explicit preference → NOTHING to apply: the server dealt the
+      // random skin while seating us, and the picker (a home-screen
+      // control) cannot change it mid-room. Just record the seat.
+      appliedSkin.current = { seat, skin: null };
+      return;
+    }
+    if (client.setSkin(skin)) appliedSkin.current = { seat, skin };
+  }, [client, state.roomId, state.playerId, skin]);
+
+  // A match that is already running when we seat down may not include
+  // us: a late joiner waits in the lobby for the NEXT match. The
+  // snapshot's pawn list is the authority — our pawn simply is not in
+  // the frozen roster. (No snapshot yet counts as "not in it"; a real
+  // participant's pawn shows up within a frame.)
+  const inLiveMatch =
+    state.snapshot !== null &&
+    state.playerId !== null &&
+    state.snapshot.pawns.some((p) => p.id === state.playerId);
+  const waitingForMatch =
+    inRoom && state.roomState === "playing" && !inLiveMatch;
+
+  // The server moved the room into a match WE ARE PART of → the game
+  // screen takes over (also while "finished", so the result overlay is
+  // shown in context). A waiting late joiner stays in the lobby.
   useEffect(() => {
     if (
       inRoom &&
-      (state.roomState === "playing" || state.roomState === "finished")
+      (state.roomState === "playing" || state.roomState === "finished") &&
+      inLiveMatch
     ) {
       setMatchActive(true);
     }
-  }, [inRoom, state.roomState]);
+  }, [inRoom, state.roomState, inLiveMatch]);
 
   // Once we are connected again but no longer seated, the match view is
   // over. With seat recovery the room picture SURVIVES a drop (the server
@@ -256,7 +315,10 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
             </h1>
           </div>
         </div>
-        <ConnectionStatusBadge status={state.status} />
+        {/* The connection-status badge that used to sit here was removed
+            on request: the lobby stays clean, and connection problems
+            still surface through the error banner and the reconnect
+            affordance instead of an always-on indicator. */}
       </header>
 
       {/* The room view top-aligns (the home screen stays centered): with
@@ -287,6 +349,21 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
                 onDismiss={() => setDismissedError(true)}
               />
             )}
+            {waitingForMatch && (
+              <div
+                data-testid="match-waiting-banner"
+                role="status"
+                className="mb-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2.5"
+              >
+                <p className="text-sm font-bold text-amber-200">
+                  Waiting for the current game to end…
+                </p>
+                <p className="text-xs text-white/60">
+                  The running match has a fixed roster — you will join the
+                  next one automatically.
+                </p>
+              </div>
+            )}
             <RoomPanel
               roomCode={state.roomId as string}
               playerId={state.playerId as string}
@@ -299,22 +376,6 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               startPending={startPending}
               connected={state.status === "connected"}
               onStart={handleStart}
-              onSetName={(name) => {
-                // A rename in the room updates the gate's name too, so
-                // the two boxes never disagree (and a later room entry
-                // reuses the latest name).
-                const sent = client.setName(name);
-                if (sent) {
-                  setPlayerName(name);
-                  if (state.roomId !== null && state.playerId !== null) {
-                    appliedName.current = {
-                      seat: `${state.roomId}:${state.playerId}`,
-                      name,
-                    };
-                  }
-                }
-                return sent;
-              }}
             />
             {/* The seat is server-reserved while the client reconnects —
                 the room stays, the hint says what is happening. */}
@@ -338,6 +399,8 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
               setPlayerName(value);
               setNameError(null);
             }}
+            skin={skin}
+            onSkinChange={onSkinChange}
             onJoinCodeChange={handleJoinCodeChange}
             onCreate={handleCreate}
             onJoin={handleJoin}
@@ -373,6 +436,12 @@ interface HomeViewProps {
   readonly nameReady: boolean;
   readonly nameInputRef: React.RefObject<HTMLInputElement | null>;
   onPlayerNameChange: (value: string) => void;
+  /**
+   * The currently chosen disc skin, or null = the RANDOM default (the
+   * server deals one at seating; unknown until the player joins).
+   */
+  readonly skin: SkinChoice;
+  onSkinChange: (skin: SkinChoice) => void;
   onJoinCodeChange: (value: string) => void;
   onCreate: () => void;
   onJoin: () => void;
@@ -393,6 +462,8 @@ function HomeView({
   nameReady,
   nameInputRef,
   onPlayerNameChange,
+  skin,
+  onSkinChange,
   onJoinCodeChange,
   onCreate,
   onJoin,
@@ -479,6 +550,10 @@ function HomeView({
                 nameError !== null ? "border-red-400/50" : "border-white/15"
               )}
             />
+            {/* The disc-skin picker lives RIGHT OF the name box (the
+                input is flex-1, so the picker takes exactly its own
+                width). The button itself previews the chosen skin. */}
+            <SkinPicker value={skin} onChange={onSkinChange} />
           </div>
           {nameError !== null && (
             <p

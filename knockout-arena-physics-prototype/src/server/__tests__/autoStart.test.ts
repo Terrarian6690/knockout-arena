@@ -30,7 +30,7 @@ import { AUTO_START_MS_BY_PLAYERS } from "../roomManager";
 
 const liveServers: GameServer[] = [];
 function newServer(): GameServer {
-  const server = createGameServer();
+  const server = createGameServer({ randomSkinIndex: () => 0 });
   liveServers.push(server);
   return server;
 }

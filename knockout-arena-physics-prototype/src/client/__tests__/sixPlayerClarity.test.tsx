@@ -203,7 +203,7 @@ describe("the six-seat lobby stays compact and correct", () => {
     }));
 
   it("renders exactly six rows at full capacity", () => {
-    render(<SeatList roster={roster(MAX)} selfPlayerId="p0" hostPlayerId="p0" />);
+    render(<SeatList roster={roster(MAX)} selfPlayerId="p0" />);
     const list = screen.getByTestId("seat-list");
     // One row per seat, no placeholders, no scroll container needed.
     expect(list.children).toHaveLength(MAX);
@@ -213,7 +213,7 @@ describe("the six-seat lobby stays compact and correct", () => {
   it("always shows exactly six rows, seated plus placeholders", () => {
     for (let seated = 1; seated <= MAX; seated++) {
       const view = render(
-        <SeatList roster={roster(seated)} selfPlayerId="p0" hostPlayerId="p0" />
+        <SeatList roster={roster(seated)} selfPlayerId="p0" />
       );
       const list = screen.getByTestId("seat-list");
       expect(list.children).toHaveLength(MAX);
@@ -223,7 +223,7 @@ describe("the six-seat lobby stays compact and correct", () => {
   });
 
   it("labels empty seats for screen readers", () => {
-    render(<SeatList roster={roster(2)} selfPlayerId="p0" hostPlayerId="p0" />);
+    render(<SeatList roster={roster(2)} selfPlayerId="p0" />);
     const empties = screen.getAllByTestId("empty-seat");
     expect(empties).toHaveLength(MAX - 2);
     for (const seat of empties) {
@@ -234,25 +234,25 @@ describe("the six-seat lobby stays compact and correct", () => {
 
   it("reports connection state per seat with six players", () => {
     const mixed = roster(MAX).map((s, i) => ({ ...s, connected: i !== 5 }));
-    render(<SeatList roster={mixed} selfPlayerId="p0" hostPlayerId="p0" />);
+    render(<SeatList roster={mixed} selfPlayerId="p0" />);
     expect(within(screen.getByTestId("seat-p5")).getByLabelText("disconnected")).toBeInTheDocument();
     expect(screen.getAllByLabelText("connected")).toHaveLength(MAX - 1);
     expect(screen.getByTestId("seat-p5")).toHaveTextContent("Disconnected");
   });
 
-  it("keeps names, You and Host correct at six seats", () => {
+  it("keeps names and You correct at six seats; no HOST marker anywhere", () => {
     const named = roster(MAX).map((s, i) => ({
       ...s,
       displayName: i === 2 ? "Ada" : null,
     }));
-    render(<SeatList roster={named} selfPlayerId="p4" hostPlayerId="p1" />);
+    render(<SeatList roster={named} selfPlayerId="p4" />);
     const list = screen.getByTestId("seat-list");
     expect(within(screen.getByTestId("seat-p2")).getByText("Ada")).toBeInTheDocument();
     expect(within(screen.getByTestId("seat-p0")).getByText("Player 1")).toBeInTheDocument();
     expect(within(list).getAllByText("You")).toHaveLength(1);
-    expect(within(list).getAllByText("Host")).toHaveLength(1);
+    expect(within(list).queryByText("Host")).toBeNull(); // chip removed
     expect(screen.getByTestId("seat-p4")).toHaveTextContent("You");
-    expect(screen.getByTestId("seat-p1")).toHaveTextContent("Host");
+    expect(screen.getByTestId("seat-p1")).not.toHaveTextContent("Host");
   });
 
   it("uses the derived capacity, not a hard-coded six", () => {

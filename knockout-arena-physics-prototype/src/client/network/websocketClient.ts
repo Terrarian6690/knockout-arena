@@ -3,6 +3,7 @@ import {
   createRoomMessage,
   joinPublicMessage,
   setNameMessage,
+  setSkinMessage,
   joinRoomMessage,
   leaveRoomMessage,
   parseServerMessage,
@@ -90,6 +91,15 @@ export interface NetworkClient {
    * pre-check is UX, not authority).
    */
   setName(name: string): boolean;
+  /**
+   * Set THIS client's own disc skin (cosmetic; the server validates the
+   * palette index and broadcasts the roster).
+   */
+  /**
+   * Set this seat's disc skin (a palette index), or `null` to go back
+   * to the server-dealt RANDOM skin (excluded colors the seated hold).
+   */
+  setSkin(skin: number | null): boolean;
   /**
    * Send a player intent. Only the intent fields required by protocol v1
    * are transmitted — any playerId or unknown field is dropped here, and
@@ -261,6 +271,14 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
         setState({ winnerId: message.winnerId, roomState: "finished" });
         return;
       case "error":
+        // Expected command races are information, not faults: an intent
+        // sent while the player could act can arrive just after the
+        // server resolved the round (deadline or the last confirm), and
+        // the engine answers wrong-phase. The very next snapshot moves
+        // the UI to the new phase anyway, so showing a "Server error"
+        // banner would only mislead — skip it. (A rejected reconnect
+        // below stays a real error: the seat was lost.)
+        if (message.code === "wrong-phase") return;
         if (reconnectToken !== null && state.status !== "connected") {
           // A recovery handshake was pending and the server rejected it
           // (invalid or expired credential — indistinguishable by
@@ -384,6 +402,10 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
       if (typeof roomId !== "string" || roomId.length === 0) return false;
       return sendRaw(joinRoomMessage(roomId));
     },
+    setSkin(skin: number | null): boolean {
+      return sendRaw(setSkinMessage(skin));
+    },
+
     setName(name: string): boolean {
       if (typeof name !== "string" || name.length === 0) return false;
       return sendRaw(setNameMessage(name));
@@ -394,6 +416,13 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
         // Leaving on purpose: this connection's credential is useless now
         // (the server revokes it with the seat).
         reconnectToken = null;
+        // Protocol v1 never acknowledges a leave — the server sends
+        // nothing back to the leaver — so the client must drop the seat
+        // state ITSELF. Without this the home screen still believes it
+        // holds a seat, and a cosmetic change there (a disc skin, a
+        // name) would send set_skin/set_name to a seat that no longer
+        // exists and answer "not-in-room".
+        clearRoomState();
       }
       return sent;
     },

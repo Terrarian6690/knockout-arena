@@ -57,6 +57,12 @@ export function setNameMessage(name: string): string {
   return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "set_name", name });
 }
 
+/** The sender's OWN disc skin (palette index; validated server-side).
+ * `null` asks the server for a fresh RANDOM skin instead. */
+export function setSkinMessage(skin: number | null): string {
+  return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "set_skin", skin });
+}
+
 export function startMatchMessage(): string {
   return JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: "start_match" });
 }
@@ -351,7 +357,27 @@ function asRoster(value: unknown): RosterEntry[] | null {
       if (typeof seat.displayName !== "string") return null;
       displayName = seat.displayName;
     }
-    roster.push({ playerId: seat.playerId, connected: seat.connected, displayName });
+    // skin is additive (v1): absent = the default (orange). When present
+    // it must be a number, or the payload is malformed.
+    let skin: number | undefined;
+    if (seat.skin !== undefined) {
+      if (typeof seat.skin !== "number") return null;
+      skin = seat.skin;
+    }
+    // wins is additive (v1): absent = zero. When present it must be a
+    // number, or the payload is malformed.
+    let wins: number | undefined;
+    if (seat.wins !== undefined) {
+      if (typeof seat.wins !== "number") return null;
+      wins = seat.wins;
+    }
+    roster.push({
+      playerId: seat.playerId,
+      connected: seat.connected,
+      displayName,
+      skin,
+      wins,
+    });
   }
   return roster;
 }

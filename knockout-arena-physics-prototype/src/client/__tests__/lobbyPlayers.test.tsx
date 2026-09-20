@@ -69,16 +69,15 @@ describe("lobby player list", () => {
 
     // The seat shows the player's chosen name (a name is required before
     // entering — Task 20); the seat-derived "Player N" identity is still
-    // shown as the local seat label below. You + Host chips and the
-    // connection state as text.
+    // shown as the local seat label below. The You chip and the
+    // connection state as text. The HOST chip was removed from every
+    // player list — the seat rows never mark a host.
     const ownSeat = screen.getByTestId("seat-p0");
     expect(within(ownSeat).getByText("Tester")).toBeInTheDocument();
     expect(within(ownSeat).getByText("You")).toBeInTheDocument();
-    expect(within(ownSeat).getByText("Host")).toBeInTheDocument();
+    expect(within(ownSeat).queryByText("Host")).toBeNull();
     expect(within(ownSeat).getByText("Connected")).toBeInTheDocument();
-    expect(screen.getByTestId("local-player-id")).toHaveTextContent(
-      "Player 1"
-    );
+    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed
 
     // Empty seats are explicit placeholders, not blank space.
     const emptySeats = screen.getAllByTestId("empty-seat");
@@ -117,11 +116,9 @@ describe("lobby player list", () => {
     expect(within(ownSeat).queryByText("Host")).toBeNull();
     const otherSeat = screen.getByTestId("seat-p0");
     expect(within(otherSeat).getByText("Tester")).toBeInTheDocument();
-    expect(within(otherSeat).getByText("Host")).toBeInTheDocument();
+    expect(within(otherSeat).queryByText("Host")).toBeNull(); // chip removed
     expect(within(otherSeat).queryByText("You")).toBeNull();
-    expect(screen.getByTestId("local-player-id")).toHaveTextContent(
-      "Player 2"
-    );
+    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed
     expect(screen.getByTestId("player-count")).toHaveTextContent(`2 / ${MAX_SEATS}`);
   });
 

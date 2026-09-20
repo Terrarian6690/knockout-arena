@@ -23,7 +23,11 @@
  * match_finished.
  */
 
-import { MAX_PLAYERS, type RoomInfo, type RoomSeatInfo } from "./roomManager";
+import {
+  MAX_PLAYERS,
+  type RoomInfo,
+  type RoomSeatInfo,
+} from "./roomManager";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -52,6 +56,7 @@ export type ClientMessage =
   // another player. Validated server-side (1..16 code points, trimmed,
   // no control characters).
   | { type: "set_name"; name: string }
+  | { type: "set_skin"; skin: number | null } // null = random skin again
   | { type: "command"; command: unknown };
 
 export type ClientMessageRejection =
@@ -146,6 +151,21 @@ export function parseClientMessage(raw: string): ParsedClientMessage {
       }
       return { ok: false, code: "malformed-payload" };
 
+    case "set_skin":
+      // Shape only: a number, or null (= deal a fresh RANDOM skin).
+      // Whether the number is a valid palette index is the room
+      // manager's semantic call (clean "invalid-skin" error).
+      if (
+        hasOnly(envelope, "type", "protocolVersion", "skin") &&
+        (typeof envelope.skin === "number" || envelope.skin === null)
+      ) {
+        return {
+          ok: true,
+          message: { type: "set_skin", skin: envelope.skin as number | null },
+        };
+      }
+      return { ok: false, code: "malformed-payload" };
+
     case "reconnect":
       // The seat-recovery credential. Opaque server-issued value; the
       // server resolves it to exactly one seat — a credential is never
@@ -210,14 +230,24 @@ function hasOnly(
  * Clients fall back to the seat-derived "Player N" when it is absent.
  */
 function wireSeat(seat: RoomSeatInfo): Record<string, unknown> {
-  if (seat.displayName === null) {
-    return { playerId: seat.playerId, connected: seat.connected };
-  }
-  return {
-    playerId: seat.playerId,
-    connected: seat.connected,
-    displayName: seat.displayName,
-  };
+  // `skin` rides on EVERY seat (protocol v1, additive): skins are dealt
+  // per seat at seating time (random by default), so there is no single
+  // default the field could be omitted for anymore. Clients still
+  // tolerate an absent skin as DEFAULT_SKIN for older peers.
+  //
+  // `wins` is additive too and appears only when NON-ZERO — a fresh
+  // room's payload stays exactly as slim as before; a seasoned one
+  // carries the win counts the lobby sorts and crowns by.
+  const base: Record<string, unknown> =
+    seat.displayName === null
+      ? { playerId: seat.playerId, connected: seat.connected }
+      : {
+          playerId: seat.playerId,
+          connected: seat.connected,
+          displayName: seat.displayName,
+        };
+  const withWins = (seat.wins ?? 0) > 0 ? { ...base, wins: seat.wins } : base;
+  return { ...withWins, skin: seat.skin };
 }
 
 export function welcomeMessage(
@@ -333,6 +363,7 @@ export const ERROR_DESCRIPTIONS: Record<string, string> = {
   "invalid-command": "the command is malformed",
   "wrong-player": "the player is eliminated",
   "wrong-phase": "the command is not allowed in the current phase",
+  "invalid-skin": "that disc skin is not available",
   "already-confirmed": "the move is locked in for this round — wait for the next one",
 };
 

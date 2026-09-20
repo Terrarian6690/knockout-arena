@@ -18,7 +18,7 @@ import { computeTransform, render } from "../renderer";
  *  - the LOCAL aim arrow originates at the local pawn's center, points
  *    along the projected aimDirection, and its length grows monotonically
  *    with power 1→5 (Task 13 labels 5, 20);
- *  - during aiming exactly ONE dashed arrow exists (the viewer's own) —
+ *  - during aiming exactly ONE solid arrow exists (the viewer's own) —
  *    there is no data from which any other arrow could be drawn;
  *  - during moving, every pawn with a committed launch gets one arrow,
  *    attached to that pawn, in that player's color, with the length of
@@ -83,25 +83,30 @@ function recordingCtx() {
 }
 
 /**
- * Every dashed main line tip, in draw order. The indicator shaft is the
- * only setLineDash([8, 7]) sequence followed by a moveTo→lineTo pair; the
- * lineTo argument is the arrow tip, in WORLD coordinates (the recorder
- * sees through the canvas transform).
+ * Every indicator shaft's tip, in draw order. The shaft is the only
+ * stroke drawn with lineWidth 2.5 (pawns use 2, halos and pulses 1.5,
+ * the shrink preview 3); its tip is the last lineTo before that stroke,
+ * in WORLD coordinates (the recorder sees through the canvas transform).
  */
 function arrowTips(calls: Call[]): Array<{ x: number; y: number; color: string }> {
   const tips: Array<{ x: number; y: number; color: string }> = [];
   for (let i = 0; i < calls.length; i++) {
     const call = calls[i];
-    if (call.op !== "setLineDash") continue;
-    const dash = call.args[0] as number[];
-    if (dash.length !== 2 || dash[0] !== 8 || dash[1] !== 7) continue;
+    if (call.op !== "stroke") continue;
+    const width = calls
+      .slice(0, i)
+      .reverse()
+      .find((c) => c.op === "set:lineWidth");
+    if (!width || width.args[0] !== 2.5) continue;
     const lineTo = calls
-      .slice(i + 1)
+      .slice(0, i)
+      .reverse()
       .find((c) => c.op === "lineTo") as Call | undefined;
     if (!lineTo) continue;
     const [x, y] = lineTo.args as [number, number];
     const stroke = calls
-      .slice(i + 1)
+      .slice(0, i)
+      .reverse()
       .find((c) => c.op === "set:strokeStyle") as Call | undefined;
     tips.push({ x, y, color: stroke ? String(stroke.args[0]) : "" });
   }
@@ -297,5 +302,42 @@ describe("renderer — the revealed launch arrows", () => {
     );
     expect(tips).toHaveLength(1);
     expect(tips[0].color).toBe(playerColor(0));
+  });
+
+  it("is ONE arrow — no chevrons repeat along the shaft", () => {
+    const calls = draw(
+      snap({
+        pawns: [pawnView("p0", { position: { x: 400, y: 350 } }), pawnView("p1")],
+        aimDirection: { x: 1, y: 0 },
+        isAiming: true,
+        power: 5,
+      })
+    );
+
+    // The shaft's stroke is followed by nothing stroked and exactly ONE
+    // new path (the head) before the head's fill. The chevrons that used
+    // to repeat along the shaft are gone — and the shaft is SOLID: this
+    // snapshot sets no dash pattern at all (the shrink preview, the only
+    // other dashed draw, is absent here).
+    const shaftStroke = calls.findIndex(
+      (c) =>
+        c.op === "stroke" &&
+        calls
+          .slice(0, calls.indexOf(c))
+          .reverse()
+          .find((w) => w.op === "set:lineWidth")?.args[0] === 2.5
+    );
+    const headFill = calls.findIndex(
+      (c) => c.op === "set:fillStyle" && c.args[0] === CONFIG.colors.aimArrow
+    );
+    expect(shaftStroke).toBeGreaterThanOrEqual(0);
+    expect(headFill).toBeGreaterThan(shaftStroke);
+
+    const between = calls.slice(shaftStroke + 1, headFill);
+    expect(between.filter((c) => c.op === "set:strokeStyle")).toEqual([]);
+    expect(between.filter((c) => c.op === "beginPath")).toHaveLength(1);
+
+    // Solid, not dashed: no setLineDash anywhere in this draw.
+    expect(calls.filter((c) => c.op === "setLineDash")).toEqual([]);
   });
 });

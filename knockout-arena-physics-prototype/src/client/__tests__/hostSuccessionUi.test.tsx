@@ -13,25 +13,24 @@ import {
  * HOST SUCCESSION IN THE UI (Task 26) — real server, real transport, real
  * network clients, real Lobby components over in-memory sockets.
  *
- * The HOST chip and the Start Match button are pure functions of the
- * server-reported `hostPlayerId`, so what actually needs proving is that
- * the promotion REACHES every connected client (not just the promoted
- * one) and that the promoted player's UI genuinely becomes a host UI.
+ * The HOST chip was REMOVED from every player list, so succession is no
+ * longer visible as a label — what still must hold is that the
+ * server-reported promotion REACHES every connected client (their
+ * `hostPlayerId` state moves), that the promoted player's UI genuinely
+ * becomes a host UI (the Start Match button), and that NO seat list
+ * ever renders a host marker again.
  */
 
-/** The HOST chip currently rendered in a given tree's seat list. */
-function hostSeatIn(container: HTMLElement): string | null {
+/** True when NO seat row in the tree carries a host marker. */
+function noHostMarkerIn(container: HTMLElement): boolean {
   const list = within(container).queryByTestId("seat-list");
-  if (list === null) return null;
-  for (const row of Array.from(list.querySelectorAll("li"))) {
-    if ((row.textContent ?? "").includes("Host")) {
-      return row.getAttribute("data-testid");
-    }
-  }
-  return null;
+  if (list === null) return true;
+  return !Array.from(list.querySelectorAll("li")).some((row) =>
+    (row.textContent ?? "").includes("Host")
+  );
 }
 
-describe("the HOST label follows succession in every client", () => {
+describe("host succession without the HOST label", () => {
   it("moves to the promoted player for BOTH remaining clients", async () => {
     const harness = createServerHarness();
     const creator = harness.addPlayer();
@@ -53,20 +52,23 @@ describe("the HOST label follows succession in every client", () => {
     await playerAct(() => third.client.joinRoom(roomId));
     const thirdView = renderLobby(third.client, { playerName: "Third" });
 
-    // Everyone agrees the creator is host.
-    expect(hostSeatIn(creatorView.container)).toBe("seat-p0");
-    expect(hostSeatIn(secondView.container)).toBe("seat-p0");
-    expect(hostSeatIn(thirdView.container)).toBe("seat-p0");
+    // Everyone sees NO host marker on the seat rows (the chip is gone),
+    // and every client knows who the host is.
+    for (const view of [creatorView, secondView, thirdView]) {
+      expect(noHostMarkerIn(view.container)).toBe(true);
+    }
+    expect(creator.client.getState().hostPlayerId).toBe("p0");
+    expect(second.client.getState().hostPlayerId).toBe("p0");
 
     // The host leaves.
     await playerAct(() => creator.client.leaveRoom());
 
-    // Both remaining clients see the chip move to p1 — the promotion is
-    // broadcast, not just known to the promoted player.
-    expect(hostSeatIn(secondView.container)).toBe("seat-p1");
-    expect(hostSeatIn(thirdView.container)).toBe("seat-p1");
+    // The promotion is broadcast to BOTH remaining clients — visible in
+    // their state (and through the Start control), never as a label.
     expect(second.client.getState().hostPlayerId).toBe("p1");
     expect(third.client.getState().hostPlayerId).toBe("p1");
+    expect(noHostMarkerIn(secondView.container)).toBe(true);
+    expect(noHostMarkerIn(thirdView.container)).toBe(true);
   });
 
   it("gives the promoted player a working Start Match button", async () => {
@@ -122,8 +124,9 @@ describe("the HOST label follows succession in every client", () => {
 
     await playerAct(() => creator.client.leaveRoom());
 
-    // p2 sees the new host, but is not it.
-    expect(hostSeatIn(thirdView.container)).toBe("seat-p1");
+    // p2 sees the new host in its state, but is not it — and no marker.
+    expect(third.client.getState().hostPlayerId).toBe("p1");
+    expect(noHostMarkerIn(thirdView.container)).toBe(true);
     expect(
       within(thirdView.container).queryByTestId("start-match")
     ).not.toBeInTheDocument();
@@ -144,13 +147,14 @@ describe("the HOST label follows succession in every client", () => {
     await connectPlayer(second);
     await playerAct(() => second.client.joinRoom(roomId));
     const secondView = renderLobby(second.client, { playerName: "Second" });
-    expect(hostSeatIn(secondView.container)).toBe("seat-p0");
+    expect(second.client.getState().hostPlayerId).toBe("p0");
 
     // The host's socket dies (not a leave) — the seat is reserved.
     await playerAct(() => creator.pairs[0]!.serverEnd.close());
 
-    expect(hostSeatIn(secondView.container)).toBe("seat-p0"); // unchanged
-    expect(second.client.getState().hostPlayerId).toBe("p0");
+    // No handover, and still no host marker on any seat row.
+    expect(second.client.getState().hostPlayerId).toBe("p0"); // unchanged
+    expect(noHostMarkerIn(secondView.container)).toBe(true);
     const seatRow = within(secondView.container).getByTestId("seat-p0");
     expect(within(seatRow).getByLabelText("disconnected")).toBeInTheDocument();
   });

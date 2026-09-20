@@ -176,7 +176,7 @@ describe("the WebSocket edge (protocol v1 on the same port)", () => {
 
 describe("graceful shutdown", () => {
   it("close() closes clients cleanly, stops listening, destroys game state, and is idempotent", async () => {
-    const gameServer: GameServer = createGameServer();
+    const gameServer: GameServer = createGameServer({ randomSkinIndex: () => 0 });
     const server = await createHttpGameServer({
       staticFile: tempAppFile(),
       gameServer,

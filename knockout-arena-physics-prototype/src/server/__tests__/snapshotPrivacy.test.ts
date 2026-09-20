@@ -60,7 +60,7 @@ function expectDirection(
 
 const liveServers: GameServer[] = [];
 function newServer(): GameServer {
-  const server = createGameServer();
+  const server = createGameServer({ randomSkinIndex: () => 0 });
   liveServers.push(server);
   return server;
 }
@@ -229,6 +229,7 @@ describe("snapshot privacy and reveal (onRoomView)", () => {
       playerId: "p0",
       connected: false,
       displayName: null,
+      skin: 0,
     });
 
     // The round resolves while p0 is gone. The committed launch lives in

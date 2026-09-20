@@ -78,23 +78,24 @@ describe("lobby room screen", () => {
     expect(host.client.getState().roster).toHaveLength(2); // store = server truth
   });
 
-  it("identifies the host from server data: Host chip on the host seat, You on your own", async () => {
+  it("no seat row carries a HOST marker; You marks only your own seat", async () => {
     const { harness, view, roomId } = await seatedHost();
-    // The host sees its own seat flagged as both Host and You.
-    expect(within(screen.getByTestId("seat-p0")).getByText("Host")).toBeInTheDocument();
+    // The host sees its own seat flagged as You — and NO Host chip:
+    // host markers were removed from every player list.
     expect(within(screen.getByTestId("seat-p0")).getByText("You")).toBeInTheDocument();
+    expect(within(screen.getByTestId("seat-p0")).queryByText("Host")).toBeNull();
 
     // Now the guest's screen (host view unmounted; one tree at a time).
     view.unmount();
     await joinRoom(harness, roomId);
 
     const p0 = screen.getByTestId("seat-p0");
-    expect(within(p0).getByText("Host")).toBeInTheDocument();
+    expect(within(p0).queryByText("Host")).toBeNull();
     expect(within(p0).queryByText("You")).toBeNull();
     const p1 = screen.getByTestId("seat-p1");
     expect(within(p1).getByText("You")).toBeInTheDocument();
     expect(within(p1).queryByText("Host")).toBeNull();
-    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 2");
+    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed: the seat's You badge says it
   });
 
   it("shows the Start Match button only to the server-reported host", async () => {
@@ -190,7 +191,9 @@ describe("lobby room screen", () => {
     ).toEqual([{ protocolVersion: 1, type: "start_match" }]);
 
     // The server moves the room on → the lobby hands the screen to the
-    // multiplayer game (no local guessing).
+    // multiplayer game (no local guessing). The hand-over keys on a
+    // snapshot that includes OUR pawn — a late joiner's pawn is absent
+    // from the frozen roster, so THEY keep the lobby instead.
     await act(async () => {
       sockets[0].serverMessage(
         wire.roomState(
@@ -202,6 +205,11 @@ describe("lobby room screen", () => {
           "p0"
         )
       );
+    });
+    expect(screen.queryByTestId("multiplayer-game")).toBeNull(); // not yet
+
+    await act(async () => {
+      sockets[0].serverMessage(wire.snapshot({}, { p0: { isLocal: true } }));
     });
     expect(screen.getByTestId("multiplayer-game")).toBeInTheDocument();
     expect(screen.queryByTestId("start-match")).toBeNull();

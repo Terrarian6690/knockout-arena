@@ -92,13 +92,13 @@ describe("two clients play one authoritative match (full stack)", () => {
     expect(initialSnap.pawns).toHaveLength(2);
     const initialPositions = initialSnap.pawns.map((p) => ({ ...p.position }));
     // The server-stamped decision deadline arrives with the snapshot: the
-    // countdown starts at the full 20-second window (default config).
-    // The client holds no duration of its own — this 20 is the SERVER's
+    // countdown starts at the full 30-second window (default config).
+    // The client holds no duration of its own — this 30 is the SERVER's
     // number arriving as an absolute timestamp and being rendered, which
     // is exactly why raising the deadline needed no client change.
     expect(typeof initialSnap.roundDeadline).toBe("number");
     expect(screen.getByTestId("round-countdown")).toHaveTextContent("Decision time");
-    expect(screen.getByTestId("round-countdown-seconds")).toHaveTextContent("20");
+    expect(screen.getByTestId("round-countdown-seconds")).toHaveTextContent("30");
 
     // ── [20] the HOST chooses first (aim: pointer input → intent → server) ──
     fireEvent.pointerMove(screen.getByTestId("arena-canvas"), {

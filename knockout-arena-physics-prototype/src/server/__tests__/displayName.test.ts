@@ -48,7 +48,7 @@ afterEach(() => {
 });
 
 function newServer(): GameServer {
-  const server = createGameServer();
+  const server = createGameServer({ randomSkinIndex: () => 0 });
   liveServers.push(server);
   return server;
 }
@@ -136,6 +136,7 @@ describe("setName at the facade", () => {
       playerId: "p0",
       connected: true,
       displayName: "Szymon", // trimmed server-side
+      skin: 0,
     });
     // getRoom agrees (by code and by internal id — the dual lookup).
     expect(server.getRoom(room.code)!.seats[0].displayName).toBe("Szymon");
@@ -344,7 +345,7 @@ describe("set_name over the wire", () => {
     const plain = creator.socket.lastOf("room_state") as {
       roster: Array<Record<string, unknown>>;
     };
-    expect(plain.roster[0]).toEqual({ playerId: "p0", connected: true });
+    expect(plain.roster[0]).toEqual({ playerId: "p0", connected: true, skin: 0 });
     expect("displayName" in plain.roster[0]).toBe(false);
 
     const joiner = connect(core);
@@ -359,8 +360,8 @@ describe("set_name over the wire", () => {
         roster: Array<Record<string, unknown>>;
       };
       expect(state.roster).toEqual([
-        { playerId: "p0", connected: true },
-        { playerId: "p1", connected: true, displayName: "Żółć" },
+        { playerId: "p0", connected: true, skin: 0 },
+        { playerId: "p1", connected: true, displayName: "Żółć", skin: 1 },
       ]);
     }
 
@@ -405,6 +406,7 @@ describe("set_name over the wire", () => {
       playerId: "p0",
       connected: true,
       displayName: "Szymon",
+      skin: 0,
     });
   });
 

@@ -6,6 +6,7 @@ import { ErrorBanner } from "../lobby/ErrorBanner";
 import { ArenaView } from "./ArenaView";
 import { AudioControl } from "./AudioControl";
 import { audio } from "../../audio";
+import { EliminatedNotice } from "./EliminatedNotice";
 import { MatchControls } from "./MatchControls";
 import { MatchRail } from "./MatchRail";
 import { MatchProgressAnnouncer } from "./MatchProgressAnnouncer";
@@ -52,9 +53,10 @@ import { canLocalPlayerAct } from "./localControl";
  * The round decision countdown (RoundCountdown) is presentation of the
  * server-stamped `snapshot.roundDeadline` only — the server remains the
  * sole authority for when a round ends. The match clock (MatchTimer) is
- * the same arrangement for the 4-minute match time limit: it renders
- * `snapshot.matchDeadline` and never ends a match itself. Both are shown
- * only during a match — a lobby has neither deadline.
+ * the same arrangement for the 6-minute match time limit: it renders
+ * `snapshot.matchDeadline` and never ends a match itself. Both live in
+ * the clock bar above the arena and are shown only during a match — a
+ * lobby has neither deadline.
  */
 export function MultiplayerGame({
   onLeave,
@@ -200,12 +202,6 @@ export function MultiplayerGame({
         </div>
         <div className="flex items-center gap-2">
           <AudioControl />
-          {snapshot !== null && (
-            <RoundCountdown
-              phase={snapshot.phase}
-              deadline={snapshot.roundDeadline}
-            />
-          )}
           {snapshot !== null && <RoundBadge snapshot={snapshot} />}
         </div>
       </header>
@@ -233,7 +229,26 @@ export function MultiplayerGame({
               roomVisibility={state.roomVisibility}
             />
 
-            <main ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 outline-none">
+            <main ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 flex-col outline-none">
+              {/* The clocks' own BAR above the arena: match clock and,
+                  beside it, the round decision countdown, centered on the
+                  arena column. A real strip (in normal flow, not an
+                  overlay), so the timers never cover the board and are
+                  always in the same place. */}
+              <div
+                data-testid="clock-bar"
+                className="flex items-start justify-center gap-2 border-b border-white/5 bg-white/[0.02] px-4 py-2"
+              >
+                <MatchTimer
+                  phase={snapshot.phase}
+                  deadline={snapshot.matchDeadline}
+                />
+                <RoundCountdown
+                  phase={snapshot.phase}
+                  deadline={snapshot.roundDeadline}
+                />
+              </div>
+
               <ArenaView
                 snapshot={displaySnapshot ?? snapshot}
                 interactive={canAct && connected}
@@ -241,24 +256,15 @@ export function MultiplayerGame({
                 hostPlayerId={state.hostPlayerId}
               />
 
-              {/* The match clock sits just below the top bar, floating over
-                  the arena so it costs the board no height. z-20 keeps it
-                  above the shrink warning's z-10 band, and
-                  pointer-events-none guarantees it can never swallow an
-                  aim click. */}
-              <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center px-4 pt-2">
-                <MatchTimer
-                  phase={snapshot.phase}
-                  deadline={snapshot.matchDeadline}
-                />
-              </div>
-
               {/* Authoritative shrink warning. Overlays the arena without
                   capturing pointer events, so aiming and Confirm are
                   unaffected; it reads the server's snapshot only. */}
               <ShrinkWarning snapshot={snapshot} />
 
-              {!connected && (
+              {/* The eliminated player's death notice: prominent but
+                  non-blocking (see EliminatedNotice) — the match goes on
+                  and the player keeps watching the board. */}
+              <EliminatedNotice snapshot={snapshot} />              {!connected && (
                 <ConnectionBanner
                   status={state.status}
                   reconnectAttempt={state.reconnectAttempt}
