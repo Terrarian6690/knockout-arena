@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   CONFIG,
-  arenaEdgeRadius,
   arenaFromSnapshot,
   createArena,
   floorRadius,
@@ -307,7 +306,7 @@ describe("six identities stay distinguishable", () => {
     expect(marker(arcs(draw(confirmed)))).toBe(false);
   });
 
-  it("eliminated pawns vanish from the board; the winner still gets the halo", () => {
+  it("tints eliminated pawns and haloes the winner", () => {
     const pawns = Array.from({ length: MAX }, (_, i) =>
       pawnAtSlot(i, { eliminated: i !== 5 })
     );
@@ -317,53 +316,16 @@ describe("six identities stay distinguishable", () => {
     const fills = calls
       .filter((c) => c.op === "set:fillStyle")
       .map((c) => String(c.args[0]));
-    // The old red knockout tint is gone — with the pawn itself: nothing
-    // eliminated is drawn at all (knocked off the arena = off the screen).
-    expect(fills).not.toContain("rgba(239,68,68,0.5)");
+    expect(fills).toContain("rgba(239,68,68,0.5)"); // elimination tint
 
-    const drawn = arcs(calls);
-    // Only the survivor's body sits at its spawn slot: every eliminated
-    // slot has NO arc at its exact center with the pawn radius (the body
-    // would be the first such arc).
-    for (let i = 0; i < MAX - 1; i++) {
-      const [ex, ey] = spawnPositionForSlot(createArena(), i);
-      const bodyAt = drawn.some(
-        ([x, y, r]) =>
-          Math.abs(x - ex) < 0.001 &&
-          Math.abs(y - ey) < 0.001 &&
-          r === CONFIG.pawn.radius
-      );
-      expect(bodyAt).toBe(false);
-    }
-    const [sx, sy] = spawnPositionForSlot(createArena(), 5);
-    const survivorBody = drawn.some(
-      ([x, y, r]) =>
-        Math.abs(x - sx) < 0.001 &&
-        Math.abs(y - sy) < 0.001 &&
-        r === CONFIG.pawn.radius
-    );
-    expect(survivorBody).toBe(true);
-
-    // The champion is still celebrated.
     const [wx, wy] = spawnPositionForSlot(createArena(), 5);
-    const halo = drawn.some(
+    const halo = arcs(calls).some(
       ([x, y, r]) =>
         Math.abs(x - wx) < 0.001 &&
         Math.abs(y - wy) < 0.001 &&
         r > CONFIG.pawn.radius + 5
     );
     expect(halo).toBe(true);
-  });
-
-  it("draws the floor as ONE clean disc — no interior rings", () => {
-    // The interior grid rings (¼, ½, ¾ of the radius) were removed on
-    // request: the only circles left at the arena center are the platform
-    // fill, its gradient and the soft rim — all at the FULL edge radius.
-    const calls = draw(snapshotOf(MAX));
-    const interior = arenaArcRadii(calls).filter(
-      (r) => r < arenaEdgeRadius(createArena()) - 0.001
-    );
-    expect(interior).toEqual([]);
   });
 });
 

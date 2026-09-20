@@ -74,7 +74,6 @@ function newCore(options?: { reconnectReservationMs?: number }): {
   core: TransportCore;
 } {
   const server = createGameServer({
-    randomSkinIndex: () => 0,
     reconnectReservationMs: options?.reconnectReservationMs,
   });
   liveServers.push(server);
@@ -191,8 +190,8 @@ describe("reconnect over the wire", () => {
     // …the room shows the seat reserved (disconnected, not freed)…
     const reserved = creator.socket.lastOf("room_state")!;
     expect(reserved.roster).toEqual([
-      { playerId: "p0", connected: true, skin: 0 },
-      { playerId: "p1", connected: false, skin: 1 },
+      { playerId: "p0", connected: true },
+      { playerId: "p1", connected: false },
     ]);
     expect(server.sessionCount()).toBe(2);
 
@@ -209,8 +208,8 @@ describe("reconnect over the wire", () => {
     expect(typeof welcome.reconnectToken).toBe("string");
     // Everyone (including the old member) sees p1 connected again.
     expect(creator.socket.lastOf("room_state")!.roster).toEqual([
-      { playerId: "p0", connected: true, skin: 0 },
-      { playerId: "p1", connected: true, skin: 1 },
+      { playerId: "p0", connected: true },
+      { playerId: "p1", connected: true },
     ]);
     expect(server.getRoom(creator.roomId)!.seats).toHaveLength(2); // no duplicates
     expect(server.sessionCount()).toBe(2); // fresh session discarded
@@ -257,7 +256,7 @@ describe("reconnect over the wire", () => {
     // the session — the identity lives on in the new connection.
     expect(server.sessionCount()).toBe(1);
     expect(server.getRoom(creator.roomId)!.seats).toEqual([
-      { playerId: "p0", connected: true, displayName: null, skin: 0 },
+      { playerId: "p0", connected: true, displayName: null },
     ]);
     // Messages on the dead socket go nowhere.
     const sentBefore = creator.socket.sent.length;
@@ -304,7 +303,7 @@ describe("reconnect over the wire", () => {
     });
     // The seat is untouched by the rejected attempt.
     expect(server.getRoom(creator.roomId)!.seats).toEqual([
-      { playerId: "p0", connected: true, displayName: null, skin: 0 },
+      { playerId: "p0", connected: true, displayName: null },
     ]);
   });
 

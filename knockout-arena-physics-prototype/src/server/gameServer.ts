@@ -4,7 +4,6 @@ import {
   DEFAULT_RESERVATION_MS,
   type LeaveResult,
   type NameResult,
-  type SkinResult,
   type ResetResult,
   type ResolveRoundResult,
   type RoomInfo,
@@ -82,12 +81,6 @@ export interface GameServerOptions {
    * minutes). Server policy, forwarded to every match started here.
    */
   matchDurationMs?: number;
-  /**
-   * The random-skin draw for seats without an explicit choice: given
-   * the number of available palette indices returns the picked slot.
-   * Injectable for deterministic tests; default is a uniform draw.
-   */
-  randomSkinIndex?: (availableCount: number) => number;
   /**
    * Called when a PUBLIC room's auto-start countdown started its match
    * by itself (Task 28). The transport uses this to broadcast the new
@@ -184,8 +177,6 @@ export interface GameServer {
    * another player, and the server validates the name for real.
    */
   setName(session: unknown, name: unknown): NameResult;
-  /** Set the session's OWN disc skin (cosmetic; see roomManager). */
-  setSkin(session: unknown, skin: number | null): SkinResult;
   /** Room snapshot by id (null if unknown/malformed). */
   getRoom(roomId: unknown): RoomInfo | null;
   /** Resolve the identity chain: session → { room, assigned playerId }. */
@@ -255,7 +246,6 @@ export function createGameServer(options?: GameServerOptions): GameServer {
   const manager: RoomManager = createRoomManager({
     roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
     matchDurationMs: options?.matchDurationMs,
-    randomSkinIndex: options?.randomSkinIndex,
     onAutoStart: (room) => {
       options?.onAutoStart?.(room);
       for (const listener of autoStartListeners) listener(room);
@@ -409,15 +399,6 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     return manager.setName(s.token, name);
   }
 
-  function setSkin(session: unknown, skin: number | null): SkinResult {
-    const s = resolve(session);
-    if (!s) return { ok: false, reason: "unknown-session" };
-    if (skin !== null && typeof skin !== "number") {
-      return { ok: false, reason: "invalid-skin" };
-    }
-    return manager.setSkin(s.token, skin);
-  }
-
   function leaveRoom(session: unknown): LeaveResult {
     const s = resolve(session);
     if (!s) return { ok: false, reason: "unknown-session" };
@@ -546,7 +527,6 @@ export function createGameServer(options?: GameServerOptions): GameServer {
     joinPublicRoom,
     leaveRoom,
     setName,
-    setSkin,
     getRoom,
     getSeat,
     startMatch,

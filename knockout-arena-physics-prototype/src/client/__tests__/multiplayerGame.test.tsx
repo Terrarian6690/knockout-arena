@@ -327,31 +327,6 @@ describe("multiplayer game: commands", () => {
     expect(screen.queryByTestId("error-banner")).toBeNull();
     expect(screen.getByTestId("launch")).toBeEnabled();
   });
-
-  it("never shows a banner for the expected wrong-phase command race", async () => {
-    // An intent sent while the player could act can land just after the
-    // server resolved the round (deadline or the last confirm). The
-    // engine answers wrong-phase — information, not a fault: the very
-    // next snapshot moves the UI on, and a red "Server error" banner
-    // would only mislead.
-    const { sockets } = await renderGame();
-    await feed(sockets, {});
-
-    await act(async () => {
-      sockets[0].serverMessage(
-        JSON.stringify({
-          protocolVersion: 1,
-          type: "error",
-          code: "wrong-phase",
-          message: "the command is not allowed in the current phase",
-        })
-      );
-    });
-
-    expect(screen.queryByTestId("error-banner")).toBeNull();
-    // The screen stays fully playable.
-    expect(screen.getByTestId("launch")).toBeEnabled();
-  });
 });
 
 // ── match completion ─────────────────────────────────────────────────────
@@ -462,13 +437,11 @@ describe("lobby → game screen transition", () => {
         { playerId: "p0", connected: true },
       ]));
     });
-
-    // A snapshot that includes OUR pawn is what actually hands the
-    // screen over (a late joiner's pawn is absent from the frozen
-    // roster — they stay in the lobby instead).
-    await feed(sockets, {}, { p0: { isLocal: true } });
     expect(await screen.findByTestId("multiplayer-game")).toBeInTheDocument();
     expect(screen.queryByTestId("room-panel")).toBeNull();
+
+    // Snapshot arrives → the game renders it.
+    await feed(sockets, {});
     expect(screen.getByTestId("arena-canvas")).toBeInTheDocument();
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
       "Choose your move — aim!"

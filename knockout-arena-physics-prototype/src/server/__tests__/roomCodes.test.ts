@@ -34,7 +34,7 @@ const liveServers: GameServer[] = [];
 const liveManagers: RoomManager[] = [];
 
 function newServer(): GameServer {
-  const server = createGameServer({ randomSkinIndex: () => 0 });
+  const server = createGameServer();
   liveServers.push(server);
   return server;
 }
@@ -156,7 +156,6 @@ describe("room code generation", () => {
 
   it("retries a colliding code until it draws a free one", () => {
     const manager = createRoomManager({
-    randomSkinIndex: () => 0,
       roomCodeFactory: scriptedFactory("AAAA", "AAAA", "BBBB"),
     });
     liveManagers.push(manager);
@@ -303,11 +302,10 @@ describe("joining by room code", () => {
     const extra = server.connect();
     expect(server.joinRoom(extra, code)).toEqual({ ok: false, reason: "room-full" });
 
-    // Once playing, joining by the code still WORKS — the newcomer waits
-    // for the next match — but a full room has nowhere to seat them.
+    // Once playing, joining by the code is refused like any other join.
     expect(server.startMatch(created.room.id).ok).toBe(true);
     const late = server.connect();
-    expect(server.joinRoom(late, code)).toEqual({ ok: false, reason: "room-full" });
+    expect(server.joinRoom(late, code)).toEqual({ ok: false, reason: "room-playing" });
   });
 });
 

@@ -267,6 +267,36 @@ describe("with a valid name, every entrance works", () => {
 });
 
 describe("the name carries through the session", () => {
+  it("renaming in the room keeps the two boxes in agreement", async () => {
+    const { player } = await unnamedPlayer();
+    typeName("Ada");
+    await act(async () => {
+      fireEvent.click(quickPlay());
+    });
+    await waitFor(() => expect(player.client.getState().roomId).not.toBeNull());
+
+    // Rename from inside the room…
+    fireEvent.change(screen.getByTestId("display-name-input"), {
+      target: { value: "Grace" },
+    });
+    // Task 27: the rename auto-saves on blur — no Save button exists.
+    await act(async () => {
+      fireEvent.blur(screen.getByTestId("display-name-input"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("seat-p0")).toHaveTextContent("Grace")
+    );
+
+    // …leave, and the home screen remembers the latest name, so the
+    // player is not asked again.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("leave-room"));
+    });
+    await waitFor(() => expect(nameBox()).toBeInTheDocument());
+    expect(nameBox()).toHaveValue("Grace");
+    expect(screen.queryByTestId("name-gate-hint")).toBeNull();
+  });
+
   it("re-entering after leaving needs no re-typing and re-names the seat", async () => {
     const { player, pair } = await unnamedPlayer();
     typeName("Ada");

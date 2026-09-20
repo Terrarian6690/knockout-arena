@@ -138,7 +138,6 @@ export function createServerHarness(
   playerOptions?: { reconnect?: Record<string, unknown> }
 ) {
   const gameServer = createGameServer({
-    randomSkinIndex: () => 0,
     reconnectReservationMs: options?.reconnectReservationMs,
     roundDecisionTimeoutMs: options?.roundDecisionTimeoutMs,
   });

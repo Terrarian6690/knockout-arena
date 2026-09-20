@@ -21,10 +21,6 @@ import type * as EngineApi from "../index";
 /** Every value (runtime) export of the engine entry point, sorted. */
 const EXPECTED_RUNTIME_EXPORTS = [
   "CONFIG",
-  // The fixed pawn palette (Task: disc skins): the picker and every
-  // player list render seat colors from these shared tables.
-  "PLAYER_COLORS",
-  "PLAYER_STROKES",
   "aimAt",
   // The shrinking arena (Task 5): consumers need the authoritative
   // radius as geometry (arenaFromSnapshot) and the schedule's derived

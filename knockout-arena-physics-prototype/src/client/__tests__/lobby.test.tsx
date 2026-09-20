@@ -26,13 +26,13 @@ import {
  */
 
 describe("lobby initial screen", () => {
-  it("renders the disconnected state: no badge, actions disabled", () => {
+  it("renders the disconnected state: status badge shown, actions disabled", () => {
     const { client } = createScriptedClient();
     renderLobby(client);
 
-    // The always-on connection badge is gone from the header (removed on
-    // request); the state still reads from the disabled actions.
-    expect(screen.queryByTestId("connection-status")).toBeNull();
+    expect(screen.getByTestId("connection-status")).toHaveTextContent(
+      "Disconnected"
+    );
     const create = screen.getByRole("button", { name: "Create Room" });
     const join = screen.getByRole("button", { name: "Join Room" });
     expect(create).toBeDisabled();
@@ -49,8 +49,9 @@ describe("lobby initial screen", () => {
     await act(async () => {
       client.connect();
     });
-    // No header badge — the handshake shows through the banner text.
-    expect(screen.queryByTestId("connection-status")).toBeNull();
+    expect(screen.getByTestId("connection-status")).toHaveTextContent(
+      "Connecting…"
+    );
     expect(screen.getByRole("button", { name: "Create Room" })).toBeDisabled();
     expect(screen.getByText("Connecting to the server…")).toBeDefined();
     expect(sockets).toHaveLength(1); // exactly one socket
@@ -62,7 +63,9 @@ describe("lobby initial screen", () => {
     renderLobby(player.client);
     await connectPlayer(player);
 
-    expect(screen.queryByTestId("connection-status")).toBeNull();
+    expect(screen.getByTestId("connection-status")).toHaveTextContent(
+      "Connected"
+    );
     expect(screen.getByRole("button", { name: "Create Room" })).toBeEnabled();
     expect(screen.queryByTestId("room-panel")).toBeNull();
   });
@@ -91,7 +94,7 @@ describe("lobby initial screen", () => {
     const roomCode = player.client.getState().roomId as string;
     const shownCode = await screen.findByTestId("room-code");
     expect(shownCode).toHaveTextContent(roomCode);
-    expect(screen.queryByTestId("local-player-id")).toBeNull(); // the "You are" line was removed
+    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 1");
     expect(screen.getByTestId("room-state-badge")).toHaveTextContent(
       "Waiting for players"
     );
@@ -123,7 +126,7 @@ describe("lobby initial screen", () => {
     });
     const shownCode = await screen.findByTestId("room-code");
     expect(shownCode).toHaveTextContent(roomCode);
-    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed: the seat's You badge says it
+    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 2");
   });
 
   it("refuses to send join_room for an empty code (client-side form guard only)", async () => {
@@ -158,8 +161,9 @@ describe("lobby initial screen", () => {
     // Dismissal is visual only; the connection itself is untouched.
     fireEvent.click(screen.getByRole("button", { name: "Dismiss error" }));
     expect(screen.queryByTestId("error-banner")).toBeNull();
-    expect(screen.queryByTestId("connection-status")).toBeNull();
-    expect(screen.getByRole("button", { name: "Create Room" })).toBeEnabled();
+    expect(screen.getByTestId("connection-status")).toHaveTextContent(
+      "Connected"
+    );
   });
 
   it("an unexpected drop shows Reconnecting… and disables the actions", async () => {
@@ -172,8 +176,9 @@ describe("lobby initial screen", () => {
       pair.serverEnd.close(); // the network drops us
     });
 
-    // No header badge anymore: the drop reads from the disabled actions.
-    expect(screen.queryByTestId("connection-status")).toBeNull();
+    expect(screen.getByTestId("connection-status")).toHaveTextContent(
+      "Reconnecting…"
+    );
     expect(screen.getByRole("button", { name: "Create Room" })).toBeDisabled();
   });
 
@@ -193,11 +198,10 @@ describe("lobby initial screen", () => {
       player.pairs[1].open();
     });
 
-    // The badge is gone; recovery shows through the re-enabled actions.
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Create Room" })).toBeEnabled();
-    });
-    expect(screen.queryByTestId("connection-status")).toBeNull();
+    expect(await screen.findByTestId("connection-status")).toHaveTextContent(
+      "Connected"
+    );
+    expect(screen.getByRole("button", { name: "Create Room" })).toBeEnabled();
     // The seat did not survive the drop — nothing pretends it did.
     expect(screen.queryByTestId("room-panel")).toBeNull();
   });

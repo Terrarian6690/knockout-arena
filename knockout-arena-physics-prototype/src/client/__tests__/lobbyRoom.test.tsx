@@ -94,7 +94,7 @@ describe("lobby room screen", () => {
     const p1 = screen.getByTestId("seat-p1");
     expect(within(p1).getByText("You")).toBeInTheDocument();
     expect(within(p1).queryByText("Host")).toBeNull();
-    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed: the seat's You badge says it
+    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 2");
   });
 
   it("shows the Start Match button only to the server-reported host", async () => {
@@ -190,9 +190,7 @@ describe("lobby room screen", () => {
     ).toEqual([{ protocolVersion: 1, type: "start_match" }]);
 
     // The server moves the room on → the lobby hands the screen to the
-    // multiplayer game (no local guessing). The hand-over keys on a
-    // snapshot that includes OUR pawn — a late joiner's pawn is absent
-    // from the frozen roster, so THEY keep the lobby instead.
+    // multiplayer game (no local guessing).
     await act(async () => {
       sockets[0].serverMessage(
         wire.roomState(
@@ -204,11 +202,6 @@ describe("lobby room screen", () => {
           "p0"
         )
       );
-    });
-    expect(screen.queryByTestId("multiplayer-game")).toBeNull(); // not yet
-
-    await act(async () => {
-      sockets[0].serverMessage(wire.snapshot({}, { p0: { isLocal: true } }));
     });
     expect(screen.getByTestId("multiplayer-game")).toBeInTheDocument();
     expect(screen.queryByTestId("start-match")).toBeNull();

@@ -98,7 +98,7 @@ describe("the lobby shows up to six players", () => {
     const seatList = screen.getByTestId("seat-list");
     expect(within(seatList).getAllByText("You")).toHaveLength(1);
     expect(within(seatList).getAllByText("Host")).toHaveLength(1);
-    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed: the seat's You badge says it
+    expect(screen.getByTestId("local-player-id")).toHaveTextContent("Player 1");
   });
 
   it("shows custom names beside fallbacks for six players", async () => {

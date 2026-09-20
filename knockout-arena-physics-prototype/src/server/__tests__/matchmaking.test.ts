@@ -447,7 +447,7 @@ describe("an emptied public room is cleaned up", () => {
 
 describe("the facade issues credentials like any other join", () => {
   it("returns a reconnect credential for a matchmade seat", () => {
-    const server = createGameServer({ randomSkinIndex: () => 0 });
+    const server = createGameServer();
     const session = server.connect();
     const result = server.joinPublicRoom(session);
 
@@ -459,7 +459,7 @@ describe("the facade issues credentials like any other join", () => {
   });
 
   it("seats two facade sessions into the same public room", () => {
-    const server = createGameServer({ randomSkinIndex: () => 0 });
+    const server = createGameServer();
     const a = server.joinPublicRoom(server.connect());
     const b = server.joinPublicRoom(server.connect());
     expect(a.ok && b.ok).toBe(true);
@@ -469,7 +469,7 @@ describe("the facade issues credentials like any other join", () => {
   });
 
   it("rejects an unknown session", () => {
-    const server = createGameServer({ randomSkinIndex: () => 0 });
+    const server = createGameServer();
     expect(server.joinPublicRoom({ token: "nope" })).toEqual({
       ok: false,
       reason: "unknown-session",
@@ -477,7 +477,7 @@ describe("the facade issues credentials like any other join", () => {
   });
 
   it("the credential reconnects into the public room", () => {
-    const server = createGameServer({ randomSkinIndex: () => 0 });
+    const server = createGameServer();
     const joined = server.joinPublicRoom(server.connect());
     if (!joined.ok) return;
     const again = server.reconnect(joined.reconnectToken);

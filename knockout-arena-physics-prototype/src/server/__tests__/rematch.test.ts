@@ -36,7 +36,7 @@ const CY = CONFIG.arena.centerY;
 
 const liveServers: GameServer[] = [];
 function newServer(): GameServer {
-  const server = createGameServer({ randomSkinIndex: () => 0 });
+  const server = createGameServer();
   liveServers.push(server);
   return server;
 }

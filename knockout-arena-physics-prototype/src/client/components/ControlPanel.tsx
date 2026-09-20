@@ -1,5 +1,4 @@
 import { CONFIG, type GamePhase } from "../../game";
-import { useMatchKeyboard } from "../useMatchKeyboard";
 import { PowerSelector } from "./PowerSelector";
 import { cn } from "../utils/cn";
 
@@ -24,15 +23,6 @@ export function ControlPanel({
 }: ControlPanelProps) {
   const aiming = phase === "aiming";
   const finished = phase === "finished";
-
-  // Keyboard shortcuts, the same as the multiplayer screen: digits 1..5
-  // pick the power level, Space presses Launch — only while aiming (the
-  // hook attaches no listener otherwise).
-  useMatchKeyboard({
-    active: aiming,
-    onPower: onPowerChange,
-    onConfirm: onLaunch,
-  });
 
   return (
     <div className="flex flex-col items-center justify-center gap-4 border-t border-white/10 bg-white/[0.02] px-4 py-4 sm:flex-row sm:gap-8 sm:py-5">

@@ -36,7 +36,7 @@ const CY = CONFIG.arena.centerY;
 
 const liveServers: GameServer[] = [];
 function newServer(options?: { reconnectReservationMs?: number }): GameServer {
-  const server = createGameServer({ randomSkinIndex: () => 0, ...options });
+  const server = createGameServer(options);
   liveServers.push(server);
   return server;
 }

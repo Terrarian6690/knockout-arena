@@ -15,7 +15,7 @@ import {
  *   1. the numeric power readout ("3" over "/ 5") that sat between the
  *      power selector and Confirm is gone, without touching Task 21's
  *      accessibility contract;
- *   2. the player-name input carries a VISIBLE "Player name:" label to
+ *   2. both player-name inputs carry a VISIBLE "Player name:" label to
  *      the left of the field, each still with exactly one accessible
  *      name.
  */
@@ -211,12 +211,49 @@ describe("the home-screen name box is labelled", () => {
   });
 });
 
-describe("the waiting room has no rename box", () => {
-  // Removed on request: the name is chosen on the home screen only, so
-  // the seated view must not offer (or render) a rename editor.
-  it("a seated player sees no name editor at all", async () => {
+describe("the in-room rename box is labelled", () => {
+  it("renders the label VISIBLY (it used to be sr-only)", async () => {
     await renderInRoom();
-    expect(screen.queryByTestId("display-name-input")).toBeNull();
-    expect(screen.queryByLabelText("Player name:")).toBeNull();
+    const input = screen.getByTestId("display-name-input");
+    const label = screen.getByLabelText("Player name:");
+    expect(label).toBe(input);
+    const labelEl = screen.getByText("Player name:");
+    expect(labelEl.tagName).toBe("LABEL");
+    expect(labelEl).not.toHaveClass("sr-only");
+    expect(labelEl).toBeVisible();
+  });
+
+  it("sits to the LEFT of the rename field", async () => {
+    await renderInRoom();
+    const input = screen.getByTestId("display-name-input");
+    const label = screen.getByText("Player name:");
+    const row = label.parentElement!;
+    expect(row).toBe(input.parentElement);
+    expect(row.className).toContain("flex");
+    expect(row.className).toContain("items-center");
+    expect(
+      label.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("has exactly one accessible name", async () => {
+    await renderInRoom();
+    const input = screen.getByTestId("display-name-input");
+    expect(input).not.toHaveAttribute("aria-label");
+    expect(input).not.toHaveAttribute("aria-labelledby");
+    expect(input).toHaveAccessibleName("Player name:");
+    // Only one element claims that label.
+    expect(screen.getAllByText("Player name:")).toHaveLength(1);
+  });
+
+  it("still saves a rename on Enter (Task 27 logic untouched)", async () => {
+    await renderInRoom();
+    const input = screen.getByLabelText("Player name:");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "Ada" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await new Promise((r) => setTimeout(r, 40));
+    });
+    expect(input).toHaveValue("Ada");
   });
 });

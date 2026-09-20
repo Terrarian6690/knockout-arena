@@ -76,7 +76,9 @@ describe("lobby player list", () => {
     expect(within(ownSeat).getByText("You")).toBeInTheDocument();
     expect(within(ownSeat).getByText("Host")).toBeInTheDocument();
     expect(within(ownSeat).getByText("Connected")).toBeInTheDocument();
-    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed
+    expect(screen.getByTestId("local-player-id")).toHaveTextContent(
+      "Player 1"
+    );
 
     // Empty seats are explicit placeholders, not blank space.
     const emptySeats = screen.getAllByTestId("empty-seat");
@@ -117,7 +119,9 @@ describe("lobby player list", () => {
     expect(within(otherSeat).getByText("Tester")).toBeInTheDocument();
     expect(within(otherSeat).getByText("Host")).toBeInTheDocument();
     expect(within(otherSeat).queryByText("You")).toBeNull();
-    expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed
+    expect(screen.getByTestId("local-player-id")).toHaveTextContent(
+      "Player 2"
+    );
     expect(screen.getByTestId("player-count")).toHaveTextContent(`2 / ${MAX_SEATS}`);
   });
 

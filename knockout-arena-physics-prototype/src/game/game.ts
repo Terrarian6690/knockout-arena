@@ -73,7 +73,7 @@ import { projectSnapshot } from "./project";
  * The countdown/warning players see is DERIVED from this state
  * (arena.ts#arenaShrinkView) — clients never count rounds themselves.
  *
- * MATCH TIME LIMIT — a hard 6-minute cap (CONFIG.match.durationMs):
+ * MATCH TIME LIMIT — a hard 4-minute cap (CONFIG.match.durationMs):
  *
  *   - the engine has NO clock. The server owns the deadline (gameHost)
  *     and submits the match-level `timeUp` command when it fires, which

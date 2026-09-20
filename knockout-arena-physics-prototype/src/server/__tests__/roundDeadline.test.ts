@@ -96,7 +96,7 @@ function newServer(options?: {
   roundDecisionTimeoutMs?: number;
   reconnectReservationMs?: number;
 }): GameServer {
-  const server = createGameServer({ randomSkinIndex: () => 0, ...options });
+  const server = createGameServer(options);
   liveServers.push(server);
   return server;
 }
@@ -241,16 +241,16 @@ function launchInwardSession(server: GameServer, session: Session, power = 2): v
 // ────────────────────────────────────────────────────────────────────────
 
 describe("round decision deadline — configuration", () => {
-  it("[A] defaults to a 30 000 ms round decision deadline", () => {
-    // Raised over time (10 s -> 20 s -> 30 s). It is SERVER-AUTHORITATIVE: the
+  it("[A] defaults to a 20 000 ms round decision deadline", () => {
+    // Task 22 raised this from 10 s. It is SERVER-AUTHORITATIVE: the
     // number lives here, and the client only ever receives the absolute
     // timestamp computed from it.
-    expect(DEFAULT_ROUND_DECISION_TIMEOUT_MS).toBe(30_000);
+    expect(DEFAULT_ROUND_DECISION_TIMEOUT_MS).toBe(20_000);
     let fakeNow = 1_000;
     const h = host({ players: specs(2), clock: () => fakeNow });
     // Round 1's deadline is armed the moment the aiming phase exists
     // (host creation — startMatch creates and starts the host at once).
-    expect(h.roundDeadline()).toBe(1_000 + 30_000);
+    expect(h.roundDeadline()).toBe(1_000 + 20_000);
   });
 
   it("[B] accepts a custom roundDecisionTimeoutMs", () => {
@@ -752,8 +752,8 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
 
     const room = server.getRoom(roomId)!;
     expect(room.seats).toEqual([
-      { playerId: "p0", connected: true, displayName: null, skin: 0 },
-      { playerId: "p1", connected: false, displayName: null, skin: 1 }, // still just disconnected
+      { playerId: "p0", connected: true, displayName: null },
+      { playerId: "p1", connected: false, displayName: null }, // still just disconnected
     ]);
     const latest = events[events.length - 1].state;
     const p0 = latest.pawns.find((p) => p.id === "p0")!;
@@ -796,7 +796,6 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
       playerId: "p1",
       connected: false,
       displayName: null,
-      skin: 1,
     });
   }, 15000);
 
@@ -817,7 +816,6 @@ describe("round decision deadline — room behavior (real loop, short deadlines)
       playerId: "p1",
       connected: true,
       displayName: null,
-      skin: 1,
     });
 
     // If reconnect had reset the deadline, the round would resolve at

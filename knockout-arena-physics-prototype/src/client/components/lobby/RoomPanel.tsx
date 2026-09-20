@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  MAX_DISPLAY_NAME_LENGTH,
+  normalizeDisplayName,
+} from "../../network/displayName";
 import type { RoomState, RoomVisibility, RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
 import { AutoStartCountdown } from "./AutoStartCountdown";
@@ -42,6 +46,14 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+/**
+ * How long after the last keystroke a valid name applies itself
+ * (Task 27). Long enough not to send a frame per character, short
+ * enough that the name is saved before the player reaches for another
+ * control. Blur and Enter bypass it entirely.
+ */
+const NAME_AUTOSAVE_DEBOUNCE_MS = 400;
+
 /** The app's keyboard-focus ring (same as the game screen's controls). */
 const FOCUS_RING =
   "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70";
@@ -77,6 +89,11 @@ export interface RoomPanelProps {
    * no-op. Optional for direct-use tests; absent means "not disconnected".
    */
   readonly connected?: boolean;
+  /**
+   * Send this player's own display name (the network client's setName —
+   * the server validates and broadcasts; the roster push comes back).
+   */
+  onSetName: (name: string) => boolean;
   onStart: () => void;
   /**
    * "public" for a matchmade room, "private" for a code-shared one.
@@ -101,6 +118,7 @@ export function RoomPanel({
   winnerId,
   startPending,
   connected,
+  onSetName,
   onStart,
   roomVisibility,
   autoStartDeadline,
@@ -151,6 +169,74 @@ export function RoomPanel({
       inviteTimer.current = null;
     }, COPY_FEEDBACK_MS);
   };
+
+  // ── the local player's display name (own seat only) ────────────────
+  const ownSeat = roster.find((entry) => entry.playerId === playerId) ?? null;
+  const [nameDraft, setNameDraft] = useState(ownSeat?.displayName ?? "");
+  const [nameError, setNameError] = useState<string | null>(null);
+
+  // The own name only ever changes through our own auto-save (or a
+  // reconnect restoring the seat) — both arrive while the input is not
+  // being edited — so adopting the server's value keeps the input
+  // truthful without clobbering anyone's typing.
+  useEffect(() => {
+    setNameDraft(ownSeat?.displayName ?? "");
+  }, [ownSeat?.displayName]);
+
+  /**
+   * Auto-save (Task 27). There is no Save button: a valid name is sent
+   * on its own, shortly after typing stops, and immediately on blur or
+   * Enter so a player who types-then-leaves never loses the edit.
+   *
+   * Validation is UNCHANGED and still gates every send: the draft goes
+   * through the same normalizeDisplayName the Save button used, and an
+   * invalid in-progress draft is simply never sent (the server, which
+   * validates again, remains the authority).
+   *
+   * `commit` is kept in a ref so the debounce effect can fire the latest
+   * version without re-arming the timer on every keystroke-driven
+   * re-render.
+   */
+  const lastSent = useRef<string | null>(ownSeat?.displayName ?? null);
+  useEffect(() => {
+    // A new seat (or a name applied elsewhere) resets what we consider
+    // already-sent, so the next valid draft is always delivered.
+    if (ownSeat?.displayName != null) lastSent.current = ownSeat.displayName;
+  }, [ownSeat?.displayName]);
+
+  const commitName = (draft: string, { silent }: { silent: boolean }) => {
+    const name = normalizeDisplayName(draft);
+    if (name === null) {
+      // Nothing is sent. While the player is still typing we stay quiet
+      // (an empty box mid-edit is not an error worth shouting about);
+      // an explicit commit — blur or Enter — explains the refusal.
+      if (!silent) {
+        setNameError(
+          "Names are 1\u201316 characters — letters, digits, punctuation; no line breaks."
+        );
+      }
+      return;
+    }
+    setNameError(null);
+    if (name === lastSent.current) return; // nothing changed: no traffic
+    lastSent.current = name;
+    onSetName(name); // the server validates again and broadcasts
+  };
+
+  const commitRef = useRef(commitName);
+  commitRef.current = commitName;
+
+  // Debounced typing: DEBOUNCE_MS after the last keystroke, a valid
+  // draft applies itself. Cleared on every change, so only the pause
+  // triggers a send.
+  useEffect(() => {
+    if (connected === false) return;
+    if (nameDraft === (ownSeat?.displayName ?? "")) return; // nothing new
+    const timer = setTimeout(() => {
+      commitRef.current(nameDraft, { silent: true });
+    }, NAME_AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [nameDraft, connected, ownSeat?.displayName]);
 
   const handleCopyCode = async () => {
     // The code stays on screen, big and selectable; only a real success
@@ -338,10 +424,76 @@ export function RoomPanel({
         )}
 
         {/* The HOST indicator is NOT repeated here: it sits in the
-            panel's top-right corner (and on your own seat row). The
-            "You are pN" line that used to sit here was removed on
-            request — your own row in the seat list is already marked
-            with the You badge, which says the same thing once. */}
+            panel's top-right corner (and on your own seat row). */}
+        <div className="mt-2 flex items-center justify-center gap-2 text-xs leading-tight">
+          <span className="text-white/50">You are</span>
+          <span
+            data-testid="local-player-id"
+            className="text-sm font-bold text-white"
+          >
+            {seatLabel(playerId)}
+          </span>
+        </div>
+
+        {roomState === "waiting" && (
+          <div className="mt-2">
+            {/* Task 31: this label used to be sr-only (the player had
+                already named themselves on the home screen, so it read
+                as a rename box rather than a prompt). It is now VISIBLE
+                and sits to the left of the field, matching the home
+                screen. The element and its htmlFor are unchanged, so
+                the input still has exactly one accessible name — no
+                aria-label was added alongside it. */}
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="display-name-input"
+                className="shrink-0 whitespace-nowrap text-[11px] uppercase tracking-widest text-white/50"
+              >
+                Player name:
+              </label>
+              <input
+                id="display-name-input"
+                data-testid="display-name-input"
+                value={nameDraft}
+                onChange={(event) => {
+                  setNameDraft(event.target.value);
+                  setNameError(null);
+                }}
+                onKeyDown={(event) => {
+                  // Enter is an explicit commit: apply now rather than
+                  // waiting out the debounce.
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                    commitName(nameDraft, { silent: false });
+                  }
+                }}
+                onBlur={() => commitName(nameDraft, { silent: false })}
+                placeholder={seatLabel(playerId)}
+                // maxLength bounds the UTF-16 units, so 2× the code-point
+                // maximum still admits any valid name (surrogate pairs)
+                // while keeping pasted novels out of the field.
+                maxLength={2 * MAX_DISPLAY_NAME_LENGTH}
+                disabled={connected === false}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={nameError !== null}
+                className={cn(
+                  "min-w-0 flex-1 rounded-xl border bg-white/5 px-4 py-1.5 text-sm text-white outline-none transition-colors",
+                  "placeholder:text-white/50 focus:border-amber-400/50",
+                  "disabled:cursor-not-allowed disabled:opacity-40",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+                  nameError !== null ? "border-red-400/50" : "border-white/15"
+                )}
+              />
+            </div>
+            {nameError !== null && (
+              <p data-testid="name-error" role="alert" className="mt-2 text-xs text-red-300">
+                {nameError}
+              </p>
+            )}
+
+          </div>
+        )}
 
         <div className="mt-3">
           <div className="mb-1 flex items-center justify-between leading-tight">

@@ -79,7 +79,7 @@ function newCore(options?: {
   maxConnections?: number;
   maxMalformedMessages?: number;
 }): { server: GameServer; core: TransportCore } {
-  const server = createGameServer({ randomSkinIndex: () => 0 });
+  const server = createGameServer();
   liveServers.push(server);
   const core = createTransportCore(server, options);
   liveCores.push(core);

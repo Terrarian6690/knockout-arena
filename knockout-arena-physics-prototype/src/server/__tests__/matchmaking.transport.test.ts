@@ -62,7 +62,7 @@ class FakeSocket implements TransportSocket {
 
 const liveServers: GameServer[] = [];
 function newCore(): { server: GameServer; core: TransportCore } {
-  const server = createGameServer({ randomSkinIndex: () => 0 });
+  const server = createGameServer();
   liveServers.push(server);
   return { server, core: createTransportCore(server) };
 }

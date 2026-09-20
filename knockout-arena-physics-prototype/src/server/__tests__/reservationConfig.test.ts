@@ -182,7 +182,6 @@ describe("Part B — RECONNECT_RESERVATION_MS", () => {
 
   it("the configured window is the one the server actually enforces", async () => {
     const server = createGameServer({
-    randomSkinIndex: () => 0,
       reconnectReservationMs: loadServerConfig({
         RECONNECT_RESERVATION_MS: "5000",
       }).reconnectReservationMs,

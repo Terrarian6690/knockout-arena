@@ -115,7 +115,6 @@ afterEach(() => {
 /** A real transport core around a real game server. */
 function makeCore(options?: { reconnectReservationMs?: number }): TransportCore {
   const gameServer = createGameServer({
-    randomSkinIndex: () => 0,
     reconnectReservationMs: options?.reconnectReservationMs,
   });
   liveServers.push(gameServer);
@@ -204,7 +203,7 @@ describe("browser client ↔ real server (in-memory wire)", () => {
     expect(hostState.hostPlayerId).toBe("p0");
     expect(hostState.roomState).toBe("waiting");
     expect(hostState.roster).toEqual([
-      { playerId: "p0", connected: true, displayName: null, skin: 0 },
+      { playerId: "p0", connected: true, displayName: null },
     ]);
 
     // The guest joins and is seated p1; the host sees the roster grow.

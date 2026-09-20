@@ -6,19 +6,22 @@ import { MAX_SEATS } from "../components/lobby/SeatList";
 import {
   connectPlayer,
   createServerHarness,
+  lastSent,
   playerAct,
   renderLobby,
 } from "./lobbyTestHarness";
 
 /**
- * Display names in the waiting room.
+ * Display-name UX in the waiting room — the regression suite for
+ * "YOUR NAME".
  *
- * The in-room RENAME EDITOR was removed on request: a player's name is
- * chosen on the home screen, before entering a room, and cannot be
- * changed while waiting. What is still true and pinned here:
- *
- *   - the waiting room renders NO name editor at all (and none returns
- *     once the match starts — names freeze into the match);
+ * What these tests pin:
+ *   - the editor renders accessibly (label, bounded input, Save button)
+ *     and only while the room waits;
+ *   - local validation: empty/oversized/control-character names get an
+ *     instant, explicit error and NOTHING is sent;
+ *   - a valid save sends exactly one set_name with the locally trimmed
+ *     name; the server broadcast renames the OWN seat (You chip stays);
  *   - remote players' names appear live (roster broadcasts only);
  *   - players without a name keep the seat-derived "Player N" fallback;
  *   - Unicode names round-trip through the real stack;
@@ -27,9 +30,7 @@ import {
  *   - the server is the authority: its roster push is what renames.
  *
  * All flows run against the REAL server stack through in-memory socket
- * pairs — nothing is mocked. Names are driven through the client
- * directly (client.setName), exactly the call the removed editor used
- * to make — the roster UI under test is the same.
+ * pairs — nothing is mocked.
  */
 
 /** A rendered, connected host sitting in its freshly created room. */
@@ -59,19 +60,86 @@ async function waitFor<T>(
   return null;
 }
 
-describe("display names in the waiting room", () => {
-  it("renders NO name editor in the waiting room", async () => {
+describe("the display-name editor", () => {
+  it("renders accessibly in the waiting room", async () => {
     await seatedHost();
 
-    // The rename box was removed on request: the name is set on the
-    // home screen and the waiting room only ever DISPLAYS it.
-    expect(screen.queryByTestId("display-name-input")).toBeNull();
-    expect(screen.queryByLabelText("Player name:")).toBeNull();
-    // The roster itself is, of course, still here.
-    expect(screen.getByTestId("seat-p0")).toBeInTheDocument();
+    const input = screen.getAllByLabelText("Player name:").at(-1)!;
+    expect(input).toBeEnabled();
+    expect(input).toHaveAttribute("maxlength", "32"); // 2× the code-point max
+    // Task 27: the name auto-saves — there is deliberately no Save
+    // button to press (and nothing else took its place).
+    expect(screen.queryByRole("button", { name: "Save Name" })).toBeNull();
+    expect(screen.queryByTestId("save-name")).toBeNull();
+    // The in-room box is a RENAME box: a name is now mandatory before
+    // entering at all (Task 20), so it arrives pre-filled with the name
+    // the player chose on the home screen — there is no "leave empty to
+    // stay Player 1" fallback to advertise any more.
+    expect(input).toHaveValue("Tester");
   });
 
-  it("no editor appears while playing either — names freeze into the match", async () => {
+  it("saves a trimmed valid name: one set_name, own seat renamed", async () => {
+    const { host } = await seatedHost();
+    const pair = host.pairs[0];
+
+    fireEvent.change(screen.getByLabelText("Player name:"), {
+      target: { value: "  Szymon  " },
+    });
+    // Task 27: blur is an explicit commit — no button to click.
+    fireEvent.blur(screen.getByLabelText("Player name:"));
+
+    // Exactly one wire message: the trimmed name.
+    expect(lastSent(pair)).toEqual({
+      protocolVersion: 1,
+      type: "set_name",
+      name: "Szymon",
+    });
+
+    // The server's roster push renames the OWN seat; the You chip stays.
+    const seat = await screen.findByTestId("seat-p0");
+    expect(within(seat).getByText("Szymon")).toBeInTheDocument();
+    expect(within(seat).getByText("You")).toBeInTheDocument();
+    expect(within(seat).getByText("Host")).toBeInTheDocument();
+    // The input adopts the server-confirmed name.
+    expect(screen.getByLabelText("Player name:")).toHaveValue("Szymon");
+  });
+
+  it("validates locally: invalid names never reach the wire", async () => {
+    const { host } = await seatedHost();
+    const sentBefore = host.pairs[0].clientSent.length;
+
+    // Whitespace-only: committing it sends nothing (no wire traffic).
+    fireEvent.change(screen.getByLabelText("Player name:"), {
+      target: { value: "   " },
+    });
+    fireEvent.blur(screen.getByLabelText("Player name:"));
+
+    // Non-empty but invalid shapes: an explicit, non-color-only error
+    // (role=alert), and still nothing on the wire. (Newlines cannot even
+    // reach this point: the single-line input sanitizes them away — tab
+    // and BEL survive the input and are rejected by the validator.)
+    for (const bad of ["A".repeat(17), "A\tB", "A\u0007B"]) {
+      fireEvent.change(screen.getByLabelText("Player name:"), {
+        target: { value: bad },
+      });
+      fireEvent.blur(screen.getByLabelText("Player name:"));
+      expect(screen.getByTestId("name-error")).toHaveTextContent(/characters/);
+    }
+    // Nothing was sent — the server never had to reject anything.
+    expect(host.pairs[0].clientSent.length).toBe(sentBefore);
+
+    // Typing clears the error; a valid save then works.
+    fireEvent.change(screen.getByLabelText("Player name:"), {
+      target: { value: "Alex" },
+    });
+    expect(screen.queryByTestId("name-error")).toBeNull();
+    fireEvent.blur(screen.getByLabelText("Player name:"));
+    expect(
+      await screen.findByText("Alex", { selector: '[data-testid="seat-p0"] *' })
+    ).toBeInTheDocument();
+  });
+
+  it("shows a server rejection as a normal error banner", async () => {
     const { harness, host } = await seatedHost();
     const guest = harness.addPlayer();
     await connectPlayer(guest);
@@ -80,13 +148,16 @@ describe("display names in the waiting room", () => {
     );
     expect(await screen.findByText(`2 / ${MAX_SEATS}`)).toBeInTheDocument();
 
+    // The host renames… but the guest leaves a beat later and a race is
+    // hard to stage honestly — instead drive the REAL server rule: names
+    // freeze once playing. Start the match, then try to save a name.
     fireEvent.click(screen.getByTestId("start-match"));
     await screen.findByTestId("multiplayer-game", {}, { timeout: 5000 });
 
-    // The waiting room never had an editor to take away — and the match
-    // screen has none either.
+    // The name editor is a waiting-room affordance: it is gone with the
+    // lobby (names are frozen into the match).
     expect(screen.queryByLabelText("Player name:")).toBeNull();
-    expect(screen.queryByTestId("display-name-input")).toBeNull();
+    expect(screen.queryByTestId("save-name")).toBeNull();
   });
 
   it("remote players' names appear live; unnamed players keep the fallback", async () => {
@@ -148,7 +219,10 @@ describe("display names in the waiting room", () => {
 
   it("the name survives an unexpected drop and reconnect (same seat)", async () => {
     const { host } = await seatedHost();
-    await playerAct(() => host.client.setName("Szymon"));
+    fireEvent.change(screen.getByLabelText("Player name:"), {
+      target: { value: "Szymon" },
+    });
+    fireEvent.blur(screen.getByLabelText("Player name:"));
     expect(await screen.findByText("Szymon")).toBeInTheDocument();
 
     // Unexpected drop: the seat is reserved; the client retries.
@@ -171,6 +245,23 @@ describe("display names in the waiting room", () => {
       return s.textContent?.includes("Szymon") ? s : null;
     });
     expect(seat).not.toBeNull();
+    expect(screen.getByLabelText("Player name:")).toHaveValue("Szymon");
     expect(within(seat as HTMLElement).getByText("You")).toBeInTheDocument();
+  });
+
+  it("Enter in the input saves too (keyboard path)", async () => {
+    const { host } = await seatedHost();
+    fireEvent.change(screen.getByLabelText("Player name:"), {
+      target: { value: "Zosia" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Player name:"), { key: "Enter" });
+    expect(lastSent(host.pairs[0])).toEqual({
+      protocolVersion: 1,
+      type: "set_name",
+      name: "Zosia",
+    });
+    expect(
+      await screen.findByText("Zosia", { selector: '[data-testid="seat-p0"] *' })
+    ).toBeInTheDocument();
   });
 });

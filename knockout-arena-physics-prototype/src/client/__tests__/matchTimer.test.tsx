@@ -48,8 +48,8 @@ afterEach(() => {
 });
 
 describe("formatting", () => {
-  it("renders the full six minutes as 6:00", () => {
-    expect(formatMatchClock(DURATION / 1000)).toBe("6:00");
+  it("renders the full four minutes as 4:00", () => {
+    expect(formatMatchClock(DURATION / 1000)).toBe("4:00");
   });
 
   it("zero-pads the seconds", () => {
@@ -72,19 +72,19 @@ describe("formatting", () => {
 });
 
 describe("what the clock shows", () => {
-  it("shows 6:00 at the start of a match", () => {
+  it("shows 4:00 at the start of a match", () => {
     renderIn(DURATION);
-    expect(clock()).toHaveTextContent("6:00");
+    expect(clock()).toHaveTextContent("4:00");
   });
 
   it("counts down as real time passes", () => {
     renderIn(DURATION);
     tickClock(1_000);
-    expect(clock()).toHaveTextContent("5:59");
+    expect(clock()).toHaveTextContent("3:59");
     tickClock(59_000);
-    expect(clock()).toHaveTextContent("5:00");
-    tickClock(120_000);
     expect(clock()).toHaveTextContent("3:00");
+    tickClock(120_000);
+    expect(clock()).toHaveTextContent("1:00");
   });
 
   it("crosses the minute boundary correctly", () => {
@@ -114,7 +114,7 @@ describe("what the clock shows", () => {
   it("exposes the remaining time to assistive tech", () => {
     renderIn(DURATION);
     expect(timer()).toHaveAttribute("role", "timer");
-    expect(timer()).toHaveAccessibleName("Match time remaining: 6:00");
+    expect(timer()).toHaveAccessibleName("Match time remaining: 4:00");
   });
 });
 
@@ -161,7 +161,7 @@ describe("it never drifts from the authoritative deadline", () => {
   it("re-derives from the snapshot rather than counting locally", () => {
     const { rerender } = renderIn(DURATION);
     tickClock(10_000);
-    expect(clock()).toHaveTextContent("5:50");
+    expect(clock()).toHaveTextContent("3:50");
 
     // The tab was suspended: wall-clock time jumped forward while no
     // interval ran. The very next sample re-derives from the deadline…
@@ -171,8 +171,8 @@ describe("it never drifts from the authoritative deadline", () => {
     rerender(<MatchTimer phase="aiming" deadline={START + DURATION} />);
     tickClock(250);
     // …so the value follows the CLOCK, not the number of ticks observed:
-    // a locally-counted timer would still be showing ~5:50 here.
-    expect(clock()).toHaveTextContent("4:20");
+    // a locally-counted timer would still be showing ~3:50 here.
+    expect(clock()).toHaveTextContent("2:20");
   });
 
   it("does not jump BACKWARDS when a late snapshot arrives", () => {
@@ -187,21 +187,21 @@ describe("it never drifts from the authoritative deadline", () => {
       readings.push(clock().textContent ?? "");
     }
     expect(readings).toEqual([
-      "5:59",
-      "5:58",
-      "5:57",
-      "5:56",
-      "5:55",
-      "5:54",
+      "3:59",
+      "3:58",
+      "3:57",
+      "3:56",
+      "3:55",
+      "3:54",
     ]);
   });
 
-  it("adopts a fresh deadline after a reset (a new 6 minutes)", () => {
+  it("adopts a fresh deadline after a reset (a new 4 minutes)", () => {
     const { rerender } = renderIn(5_000);
     expect(clock()).toHaveTextContent("0:05");
     // Rematch: the server arms a new full-length match.
     rerender(<MatchTimer phase="aiming" deadline={Date.now() + DURATION} />);
-    expect(clock()).toHaveTextContent("6:00");
+    expect(clock()).toHaveTextContent("4:00");
   });
 });
 
@@ -219,12 +219,12 @@ describe("render discipline", () => {
       const text = clock().textContent ?? "";
       if (readings[readings.length - 1] !== text) readings.push(text);
     }
-    // 40 samples produced only 11 distinct readings — the opening 6:00
+    // 40 samples produced only 11 distinct readings — the opening 4:00
     // plus one per elapsed second.
     expect(readings).toHaveLength(11);
-    expect(readings[0]).toBe("6:00");
-    expect(readings[1]).toBe("5:59");
-    expect(readings[10]).toBe("5:50");
+    expect(readings[0]).toBe("4:00");
+    expect(readings[1]).toBe("3:59");
+    expect(readings[10]).toBe("3:50");
   });
 
   it("never schedules an animation frame", () => {

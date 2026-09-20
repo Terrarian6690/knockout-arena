@@ -38,7 +38,7 @@ const CY = CONFIG.arena.centerY;
 
 const liveServers: GameServer[] = [];
 function newServer(): GameServer {
-  const server = createGameServer({ randomSkinIndex: () => 0 });
+  const server = createGameServer();
   liveServers.push(server);
   return server;
 }
@@ -195,7 +195,7 @@ describe("room creation and joining", () => {
     expect(result.room.id).toBeTruthy();
     expect(result.room.state).toBe("waiting");
     expect(result.room.seats).toEqual([
-      { playerId: "p0", connected: true, displayName: null, skin: 0 },
+      { playerId: "p0", connected: true, displayName: null },
     ]);
   });
 
@@ -330,17 +330,12 @@ describe("match lifecycle", () => {
     expect(started.room.state).toBe("playing");
     expect(started.room.seats.map((s) => s.playerId)).toEqual(["p0", "p1", "p2"]);
 
-    // A join after the match starts no longer touches the frozen roster:
-    // the latecomer takes the free seat and WAITS for the next match
-    // (no pawn in the running game).
+    // No joins after the match starts — the roster is frozen.
     const latecomer = server.connect();
-    const waited = server.joinRoom(latecomer, roomId);
-    expect(waited).toMatchObject({ ok: true, playerId: "p3" });
-    expect(started.room.seats.map((s) => s.playerId)).toEqual([
-      "p0",
-      "p1",
-      "p2",
-    ]); // the frozen roster is unchanged
+    expect(server.joinRoom(latecomer, roomId)).toEqual({
+      ok: false,
+      reason: "room-playing",
+    });
     // Starting again is rejected too.
     expect(server.startMatch(roomId)).toEqual({ ok: false, reason: "already-playing" });
 
@@ -370,8 +365,8 @@ describe("match lifecycle", () => {
     const room = server.getRoom(roomId)!;
     expect(room.state).toBe("playing");
     expect(room.seats).toEqual([
-      { playerId: "p0", connected: true, displayName: null, skin: 0 },
-      { playerId: "p1", connected: false, displayName: null, skin: 1 }, // vacated, still in the roster
+      { playerId: "p0", connected: true, displayName: null },
+      { playerId: "p1", connected: false, displayName: null }, // vacated, still in the roster
     ]);
 
     // The match continues for the remaining player; the leaver is out.
