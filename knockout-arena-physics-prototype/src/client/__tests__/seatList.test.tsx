@@ -54,7 +54,7 @@ describe("the seat list ordering and crowns", () => {
     for (const id of ["p0", "p1", "p2"]) {
       const trophy = screen.getByTestId(`trophy-${id}`);
       expect(trophy).toBeInTheDocument();
-      expect(trophy.getAttribute("width")).toBe("39"); // 3x the old 13
+      expect(trophy.getAttribute("width")).toBe("36"); // a few px under 39
       const winsSpan = screen.getByTestId(`wins-${id}`);
       expect(winsSpan.className).toContain("text-[33px]"); // 3x the old 11
       expect(winsSpan.lastElementChild).toBe(trophy); // number comes first
@@ -149,6 +149,31 @@ describe("the seat list's match-rail look", () => {
     const gone = screen.getByTestId("seat-p1");
     expect(gone.className).toContain("border-red-500/70");
     expect(within(gone).getByText("Disconnected")).toBeInTheDocument();
+  });
+
+  it("renders every player-info text at ONE size", () => {
+    render(
+      <SeatList
+        roster={[seat("p0"), seat("p1", { connected: false })]}
+        selfPlayerId="p0"
+      />
+    );
+
+    for (const id of ["p0", "p1"]) {
+      const info = screen.getByTestId(`info-${id}`);
+      // Only the TEXT spans (skip the dot, the disc and the wrapper).
+      const texts = Array.from(info.querySelectorAll("span span")).filter(
+        (el) => (el.textContent ?? "").length > 0 && el.children.length === 0
+      );
+      expect(texts.length).toBeGreaterThanOrEqual(2); // nick + status
+      // Nick, status line — both text-xs (12px).
+      expect(texts.every((el) => el.className.includes("text-xs"))).toBe(
+        true
+      );
+    }
+    // The You chip matches the info size too.
+    const you = within(screen.getByTestId("info-p0")).getByText("You");
+    expect(you.className).toContain("text-xs");
   });
 
   it("renders ONE column of rows (no side-by-side grid)", () => {

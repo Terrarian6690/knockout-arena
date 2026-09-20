@@ -131,7 +131,7 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
               <span className="min-w-0 shrink">
                 <span
                   className={cn(
-                    "block truncate text-sm font-bold leading-tight",
+                    "block truncate text-xs font-bold leading-tight",
                     connected ? "text-white" : "text-white/50"
                   )}
                 >
@@ -139,7 +139,7 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
                 </span>
                 <span
                   className={cn(
-                    "block text-[10px] leading-tight",
+                    "block text-xs leading-tight",
                     connected ? "text-white/50" : "text-red-300/70"
                   )}
                 >
@@ -157,7 +157,7 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
                 className="h-3 w-3 shrink-0 rounded-full ring-1 ring-white/25"
                 style={{ backgroundColor: playerColor(seat.skin ?? 0) }}
               />
-              {seat.playerId === selfPlayerId && <YouChip />}
+              {seat.playerId === selfPlayerId && <YouChip className="text-xs" />}
             </span>
             {/* The wins section — OUT OF THE FLOW: anchored at the
                 ~3/4 mark and centred vertically, so the tripled number
@@ -198,9 +198,14 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
 }
 
 /** "You" chip — marks the viewer's own pawn (server-reported). */
-export function YouChip() {
+export function YouChip({ className }: { readonly className?: string }) {
   return (
-    <span className="rounded-full border border-sky-400/30 bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-300">
+    <span
+      className={cn(
+        "rounded-full border border-sky-400/30 bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-300",
+        className
+      )}
+    >
       You
     </span>
   );
@@ -209,16 +214,16 @@ export function YouChip() {
 /**
  * The trophy badge — the wins section of every row ENDS with it: the
  * number before it counts the trophies (match wins) earned in this
- * room. Gold, drawn at 3x the tile's regular text size to match the
- * tripled counter.
+ * room. Gold, drawn large to match the tripled counter (a notch under
+ * its 33 px cap height, so the two read as one unit).
  */
 export function TrophyBadge({ trophyId }: { readonly trophyId: string }) {
   return (
     <svg
       data-testid={`trophy-${trophyId}`}
       aria-hidden="true"
-      width="39"
-      height="39"
+      width="36"
+      height="36"
       viewBox="0 0 24 24"
       className="shrink-0"
     >
