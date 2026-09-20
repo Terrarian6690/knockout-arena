@@ -191,7 +191,7 @@ export function RoomPanel({
   };
 
   return (
-    <div className="w-full max-w-2xl">
+    <div className="w-full max-w-xl">
       {/* The room's status line lives ABOVE the panel: the player reads
           what the room is doing before the details of it. While waiting
           the three dots animate (reduced motion keeps them static); the

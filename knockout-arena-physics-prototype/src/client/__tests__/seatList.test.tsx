@@ -58,6 +58,11 @@ describe("the seat list ordering and crowns", () => {
       const winsSpan = screen.getByTestId(`wins-${id}`);
       expect(winsSpan.className).toContain("text-[33px]"); // 3x the old 11
       expect(winsSpan.lastElementChild).toBe(trophy); // number comes first
+      // OUT OF THE FLOW: absolutely positioned at the ~3/4 mark,
+      // vertically centred — its size can never grow the tile.
+      expect(winsSpan.className).toContain("absolute");
+      expect(winsSpan.className).toContain("left-3/4");
+      expect(winsSpan.className).toContain("-translate-y-1/2");
     }
     expect(screen.getByTestId("wins-p1")).toHaveTextContent("3");
     expect(screen.getByTestId("wins-p2")).toHaveTextContent("1");

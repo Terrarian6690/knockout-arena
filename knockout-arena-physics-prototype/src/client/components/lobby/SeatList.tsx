@@ -100,9 +100,11 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
             data-wins={wins}
             // The match rail's tile grammar: green frame while in, red
             // frame (and muted text) once out. The text label below
-            // keeps the state from being colour-alone.
+            // keeps the state from being colour-alone. relative: the
+            // wins section is absolutely positioned, so its tripled
+            // size NEVER grows the tile — it is fitted to the tile.
             className={cn(
-              "flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs",
+              "relative flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs",
               connected
                 ? "border-emerald-500/60 bg-emerald-500/[0.06]"
                 : "border-red-500/70 bg-red-500/[0.07]"
@@ -157,14 +159,16 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
               />
               {seat.playerId === selfPlayerId && <YouChip />}
             </span>
-            {/* The wins section, starting at the ~3/4 mark: THREE TIMES
-                the regular tile text — the count FIRST, the trophy badge
-                right after it (e.g. "3 🏆"). */}
+            {/* The wins section — OUT OF THE FLOW: anchored at the
+                ~3/4 mark and centred vertically, so the tripled number
+                and trophy are fitted INTO the tile (border to border)
+                instead of stretching it. The info group's w-3/4 keeps
+                the name area clear of it. */}
             <span
               data-testid={`wins-${seat.playerId}`}
               title={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
               aria-label={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
-              className="flex shrink-0 items-center gap-2 text-[33px] font-bold leading-none tabular-nums text-white/80"
+              className="absolute left-3/4 top-1/2 flex w-1/4 -translate-y-1/2 items-center gap-2 text-[33px] font-bold leading-none tabular-nums text-white/80"
             >
               {wins}
               <TrophyBadge trophyId={seat.playerId} />

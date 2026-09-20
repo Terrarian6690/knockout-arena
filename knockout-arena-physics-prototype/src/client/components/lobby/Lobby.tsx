@@ -342,7 +342,7 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
           />
         )}
         {inRoom ? (
-          <div className="w-full max-w-2xl">
+          <div className="w-full max-w-xl">
             {state.lastError !== null && !dismissedError && (
               <ErrorBanner
                 error={state.lastError}

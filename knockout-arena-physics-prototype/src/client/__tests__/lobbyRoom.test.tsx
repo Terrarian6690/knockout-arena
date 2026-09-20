@@ -78,6 +78,22 @@ describe("lobby room screen", () => {
     expect(host.client.getState().roster).toHaveLength(2); // store = server truth
   });
 
+  it("keeps the waiting menu a notch narrower (max-w-xl)", async () => {
+    const { view } = await seatedHost();
+    const panel = screen.getByTestId("room-panel");
+    // The panel fills its column; the column itself is the max-w-xl
+    // wrapper in the lobby — assert the class chain upward.
+    let widthCapped = false;
+    for (let el: HTMLElement | null = panel; el !== null; el = el.parentElement) {
+      if (el.className.includes("max-w-xl")) {
+        widthCapped = true;
+        break;
+      }
+    }
+    expect(widthCapped).toBe(true);
+    expect(view.container.className).not.toContain("max-w-2xl");
+  });
+
   it("no seat row carries a HOST marker; You marks only your own seat", async () => {
     const { harness, view, roomId } = await seatedHost();
     // The host sees its own seat flagged as You — and NO Host chip:
