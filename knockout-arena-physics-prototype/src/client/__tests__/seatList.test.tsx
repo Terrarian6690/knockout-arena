@@ -154,12 +154,18 @@ describe("the seat list's match-rail look", () => {
     expect(list.className).not.toContain("grid-cols-3");
   });
 
-  it("keeps the skin swatch and the empty-seat placeholders", () => {
+  it("shows the disc RIGHT AFTER the nick; empty seats stay placeholders", () => {
     render(
       <SeatList roster={[seat("p0")]} selfPlayerId="p0" />
     );
 
-    expect(screen.getByTestId("skin-swatch-p0")).toBeInTheDocument();
+    const info = screen.getByTestId("info-p0");
+    const nick = within(info).getByText("Player 1").parentElement!;
+    const swatch = screen.getByTestId("skin-swatch-p0");
+    // The disc immediately follows the nick element in the row.
+    expect(nick.nextElementSibling).toBe(swatch);
+    // …and it is no longer a direct child of the tile (not at the edge).
+    expect(swatch.parentElement).toBe(info);
     const empties = screen.getAllByTestId("empty-seat");
     expect(empties.length).toBeGreaterThan(0);
     expect(empties[0]).toHaveTextContent("Waiting for player…");

@@ -126,7 +126,7 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
                   connected ? "bg-emerald-400" : "bg-red-400/70"
                 )}
               />
-              <span className="min-w-0 flex-1">
+              <span className="min-w-0 shrink">
                 <span
                   className={cn(
                     "block truncate text-sm font-bold leading-tight",
@@ -144,6 +144,17 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
                   {connected ? "Connected" : "Disconnected"}
                 </span>
               </span>
+              {/* The player's DISC SKIN — immediately AFTER the nick: the
+                  same palette index the arena renderer paints their pawn
+                  with, so the look sits right where the eye just read the
+                  name. */}
+              <span
+                aria-hidden
+                data-testid={`skin-swatch-${seat.playerId}`}
+                title="Disc skin"
+                className="h-3 w-3 shrink-0 rounded-full ring-1 ring-white/25"
+                style={{ backgroundColor: playerColor(seat.skin ?? 0) }}
+              />
               {seat.playerId === selfPlayerId && <YouChip />}
             </span>
             {/* The wins section, starting at the ~3/4 mark: the number
@@ -157,17 +168,6 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
               <TrophyBadge trophyId={seat.playerId} />
               {wins}
             </span>
-            {/* The player's DISC SKIN (dealt randomly unless they picked
-                one): the same palette index the arena renderer paints
-                their pawn with — at the tile's far edge, exactly where
-                the match rail puts its colour swatch. */}
-            <span
-              aria-hidden
-              data-testid={`skin-swatch-${seat.playerId}`}
-              title="Disc skin"
-              className="h-3 w-3 shrink-0 rounded-full ring-1 ring-white/25"
-              style={{ backgroundColor: playerColor(seat.skin ?? 0) }}
-            />
           </li>
         );
       })}
