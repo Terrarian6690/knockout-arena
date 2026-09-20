@@ -237,7 +237,7 @@ describe("the six-seat lobby stays compact and correct", () => {
     render(<SeatList roster={mixed} selfPlayerId="p0" />);
     expect(within(screen.getByTestId("seat-p5")).getByLabelText("disconnected")).toBeInTheDocument();
     expect(screen.getAllByLabelText("connected")).toHaveLength(MAX - 1);
-    expect(screen.getByTestId("seat-p5")).toHaveTextContent("Disconnected");
+    expect(within(screen.getByTestId("seat-p5")).getByLabelText("disconnected")).toBeInTheDocument();
   });
 
   it("keeps names and You correct at six seats; no HOST marker anywhere", () => {

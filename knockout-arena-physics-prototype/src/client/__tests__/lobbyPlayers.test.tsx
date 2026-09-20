@@ -76,7 +76,9 @@ describe("lobby player list", () => {
     expect(within(ownSeat).getByText("Tester")).toBeInTheDocument();
     expect(within(ownSeat).getByText("You")).toBeInTheDocument();
     expect(within(ownSeat).queryByText("Host")).toBeNull();
-    expect(within(ownSeat).getByText("Connected")).toBeInTheDocument();
+    // The connection state is the DOT's label — there is no status word.
+    expect(within(ownSeat).getByLabelText("connected")).toBeInTheDocument();
+    expect(within(ownSeat).queryByText("Connected")).toBeNull();
     expect(screen.queryByTestId("local-player-id")).toBeNull(); // removed
 
     // Empty seats are explicit placeholders, not blank space.
@@ -158,7 +160,8 @@ describe("lobby player list", () => {
     await playerAct(() => guest.client.close());
 
     const droppedSeat = await screen.findByTestId("seat-p1");
-    expect(within(droppedSeat).getByText("Disconnected")).toBeInTheDocument();
+    // No status word — the state lives on the dot's label.
+    expect(within(droppedSeat).queryByText("Disconnected")).toBeNull();
     expect(
       within(droppedSeat).getByRole("img", { name: "disconnected" })
     ).toBeInTheDocument();

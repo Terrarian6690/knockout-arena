@@ -144,14 +144,16 @@ describe("the seat list's match-rail look", () => {
 
     const alive = screen.getByTestId("seat-p0");
     expect(alive.className).toContain("border-emerald-500/60");
-    expect(within(alive).getByText("Connected")).toBeInTheDocument();
+    expect(within(alive).getByLabelText("connected")).toBeInTheDocument();
+    expect(within(alive).queryByText("Connected")).toBeNull(); // no word
 
     const gone = screen.getByTestId("seat-p1");
     expect(gone.className).toContain("border-red-500/70");
-    expect(within(gone).getByText("Disconnected")).toBeInTheDocument();
+    expect(within(gone).getByLabelText("disconnected")).toBeInTheDocument();
+    expect(within(gone).queryByText("Disconnected")).toBeNull();
   });
 
-  it("renders every player-info text at ONE size", () => {
+  it("keeps the info ONE line tall: nick only, no status word", () => {
     render(
       <SeatList
         roster={[seat("p0"), seat("p1", { connected: false })]}
@@ -161,19 +163,25 @@ describe("the seat list's match-rail look", () => {
 
     for (const id of ["p0", "p1"]) {
       const info = screen.getByTestId(`info-${id}`);
-      // Only the TEXT spans (skip the dot, the disc and the wrapper).
-      const texts = Array.from(info.querySelectorAll("span span")).filter(
+      // The ONLY text (besides the You chip) is the nick — one line.
+      const texts = Array.from(info.querySelectorAll("span")).filter(
         (el) => (el.textContent ?? "").length > 0 && el.children.length === 0
       );
-      expect(texts.length).toBeGreaterThanOrEqual(2); // nick + status
-      // Nick, status line — both text-xs (12px).
-      expect(texts.every((el) => el.className.includes("text-xs"))).toBe(
-        true
-      );
+      const nickTexts = texts.filter((el) => el.textContent !== "You");
+      expect(nickTexts).toHaveLength(1);
+      expect(nickTexts[0]!.className).toContain("text-xs");
+      // No status word anywhere in the row.
+      expect(info.textContent).not.toContain("Connected");
+      expect(info.textContent).not.toContain("Disconnected");
     }
-    // The You chip matches the info size too.
-    const you = within(screen.getByTestId("info-p0")).getByText("You");
-    expect(you.className).toContain("text-xs");
+    // The state still reads — on the dot (screen readers + hover).
+    expect(screen.getByTestId("seat-p0")).toHaveTextContent(/Player 1/);
+    expect(
+      within(screen.getByTestId("seat-p0")).getByLabelText("connected")
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("seat-p1")).getByLabelText("disconnected")
+    ).toBeInTheDocument();
   });
 
   it("renders ONE column of rows (no side-by-side grid)", () => {
@@ -196,11 +204,11 @@ describe("the seat list's match-rail look", () => {
     );
 
     const info = screen.getByTestId("info-p0");
-    const nick = within(info).getByText("Player 1").parentElement!;
+    const nick = within(info).getByText("Player 1");
     const swatch = screen.getByTestId("skin-swatch-p0");
     // The disc immediately follows the nick element in the row.
     expect(nick.nextElementSibling).toBe(swatch);
-    // …and it is no longer a direct child of the tile (not at the edge).
+    // …inside the info group, not at the tile's far edge.
     expect(swatch.parentElement).toBe(info);
     const empties = screen.getAllByTestId("empty-seat");
     expect(empties.length).toBeGreaterThan(0);

@@ -13,7 +13,9 @@ import { cn } from "../../utils/cn";
  * THE LOOK IS THE MATCH RAIL'S: the same one-line tiles the in-round
  * roster uses — a green frame while the player is connected, a red one
  * (and muted text) once they are not — so the lobby list and the match
- * rail read as the same thing in two states of the room.
+ * rail read as the same thing in two states of the room. Every element
+ * sits on ONE line of the SAME height; there is no status word (the
+ * dot carries the state for screen readers and hover).
  *
  * WINS: each tile ends (left of the disc swatch, on the right side of
  * the row) with the number of matches this seat's occupant has won in
@@ -104,7 +106,7 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
             // wins section is absolutely positioned, so its tripled
             // size NEVER grows the tile — it is fitted to the tile.
             className={cn(
-              "relative flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs",
+              "relative flex items-center gap-2 rounded-lg border px-2.5 py-2.5 text-xs",
               connected
                 ? "border-emerald-500/60 bg-emerald-500/[0.06]"
                 : "border-red-500/70 bg-red-500/[0.07]"
@@ -128,23 +130,16 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
                   connected ? "bg-emerald-400" : "bg-red-400/70"
                 )}
               />
-              <span className="min-w-0 shrink">
-                <span
-                  className={cn(
-                    "block truncate text-xs font-bold leading-tight",
-                    connected ? "text-white" : "text-white/50"
-                  )}
-                >
-                  {seat.displayName ?? seatLabel(seat.playerId)}
-                </span>
-                <span
-                  className={cn(
-                    "block text-xs leading-tight",
-                    connected ? "text-white/50" : "text-red-300/70"
-                  )}
-                >
-                  {connected ? "Connected" : "Disconnected"}
-                </span>
+              {/* ONE line, one height: just the nick. The connection
+                  state is carried by the dot (colour + its label for
+                  screen readers and hover) and the tile's frame. */}
+              <span
+                className={cn(
+                  "min-w-0 shrink truncate text-xs font-bold leading-tight",
+                  connected ? "text-white" : "text-white/50"
+                )}
+              >
+                {seat.displayName ?? seatLabel(seat.playerId)}
               </span>
               {/* The player's DISC SKIN — immediately AFTER the nick: the
                   same palette index the arena renderer paints their pawn
