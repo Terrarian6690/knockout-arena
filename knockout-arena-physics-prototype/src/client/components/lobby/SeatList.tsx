@@ -157,16 +157,17 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
               />
               {seat.playerId === selfPlayerId && <YouChip />}
             </span>
-            {/* The wins section, starting at the ~3/4 mark: the number
-                of trophies earned in this room, with the trophy badge. */}
+            {/* The wins section, starting at the ~3/4 mark: THREE TIMES
+                the regular tile text — the count FIRST, the trophy badge
+                right after it (e.g. "3 🏆"). */}
             <span
               data-testid={`wins-${seat.playerId}`}
               title={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
               aria-label={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
-              className="flex shrink-0 items-center gap-1 text-[11px] font-bold tabular-nums text-white/80"
+              className="flex shrink-0 items-center gap-2 text-[33px] font-bold leading-none tabular-nums text-white/80"
             >
-              <TrophyBadge trophyId={seat.playerId} />
               {wins}
+              <TrophyBadge trophyId={seat.playerId} />
             </span>
           </li>
         );
@@ -202,17 +203,18 @@ export function YouChip() {
 }
 
 /**
- * The trophy badge — marks the wins section of every row: the number
- * next to it counts the trophies (match wins) earned in this room.
- * Gold, drawn to read cleanly at ~13 px next to the counter.
+ * The trophy badge — the wins section of every row ENDS with it: the
+ * number before it counts the trophies (match wins) earned in this
+ * room. Gold, drawn at 3x the tile's regular text size to match the
+ * tripled counter.
  */
 export function TrophyBadge({ trophyId }: { readonly trophyId: string }) {
   return (
     <svg
       data-testid={`trophy-${trophyId}`}
       aria-hidden="true"
-      width="13"
-      height="13"
+      width="39"
+      height="39"
       viewBox="0 0 24 24"
       className="shrink-0"
     >

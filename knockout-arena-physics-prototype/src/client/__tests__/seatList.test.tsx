@@ -49,9 +49,15 @@ describe("the seat list ordering and crowns", () => {
     expect(screen.getByTestId("crown-p1")).toBeInTheDocument();
     expect(screen.queryByTestId("crown-p0")).toBeNull();
     expect(screen.queryByTestId("crown-p2")).toBeNull();
-    // …and the wins section is the TROPHY BADGE + the bare number.
+    // …and the wins section is the bare NUMBER first, the TROPHY BADGE
+    // after it — both three times the regular tile text.
     for (const id of ["p0", "p1", "p2"]) {
-      expect(screen.getByTestId(`trophy-${id}`)).toBeInTheDocument();
+      const trophy = screen.getByTestId(`trophy-${id}`);
+      expect(trophy).toBeInTheDocument();
+      expect(trophy.getAttribute("width")).toBe("39"); // 3x the old 13
+      const winsSpan = screen.getByTestId(`wins-${id}`);
+      expect(winsSpan.className).toContain("text-[33px]"); // 3x the old 11
+      expect(winsSpan.lastElementChild).toBe(trophy); // number comes first
     }
     expect(screen.getByTestId("wins-p1")).toHaveTextContent("3");
     expect(screen.getByTestId("wins-p2")).toHaveTextContent("1");
