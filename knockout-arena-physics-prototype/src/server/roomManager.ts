@@ -175,6 +175,13 @@ export interface RoomSeatInfo {
    * roster. Dealt randomly at seating unless the player sets one.
    */
   readonly skin: number;
+  /**
+   * How many matches this seat's occupant has won in this room (see
+   * RoomEntry.wins). ADDITIVE: the field is present only when NON-ZERO
+   * — a seat without win history reports no `wins` at all, mirroring
+   * the wire (protocol v1) — so absent reads as zero.
+   */
+  readonly wins?: number;
 }
 
 /** Immutable room snapshot (for transports, tests, observability). */
@@ -359,6 +366,15 @@ interface RoomEntry {
    * holds (see assignSkin). A freed/vacated seat returns to null.
    */
   skins: Array<number | null>;
+  /**
+   * seat index → how many matches THIS seat's occupant has won in this
+   * room (across play-again rematches; the roster — and the group —
+   * survive them). Wins belong to the SEAT'S OCCUPANT: when the seat
+   * changes owner (a freed lobby seat, a seat vacated mid-match that
+   * reopens) the counter starts from zero again, exactly like the name
+   * and the skin.
+   */
+  wins: number[];
   /** Seats vacated after the match started — the roster is frozen. */
   vacated: Set<number>;
   /**
@@ -695,6 +711,8 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
           connected: !room.reserved.has(i),
           displayName: room.names[i],
           skin: room.skins[i] ?? DEFAULT_SKIN,
+          // Additive wins: present only when non-zero (see the type).
+          ...(room.wins[i] > 0 ? { wins: room.wins[i] } : {}),
         });
       } else if (room.vacated.has(i)) {
         // Vacated mid-match: the frozen roster keeps the seat (and its
@@ -704,6 +722,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
           connected: false,
           displayName: room.names[i],
           skin: room.skins[i] ?? DEFAULT_SKIN,
+          ...(room.wins[i] > 0 ? { wins: room.wins[i] } : {}),
         });
       }
     }
@@ -749,6 +768,16 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     }
   }
 
+  /** The finished snapshot's winner id ("p2"), or null (no winner). */
+  function winnerOf(serialized: string): string | null {
+    try {
+      const parsed = JSON.parse(serialized) as { winnerId?: unknown };
+      return typeof parsed.winnerId === "string" ? parsed.winnerId : null;
+    } catch {
+      return null;
+    }
+  }
+
   // ── room operations ───────────────────────────────────────────────────
 
   function createRoom(token: string, options?: CreateRoomOptions): SeatResult {
@@ -773,6 +802,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       seats: Array.from({ length: MAX_PLAYERS }, () => null),
       names: Array.from({ length: MAX_PLAYERS }, () => null),
       skins: Array.from({ length: MAX_PLAYERS }, () => null),
+      wins: Array.from({ length: MAX_PLAYERS }, () => 0),
       vacated: new Set(),
       reserved: new Map(),
       hostToken: token, // the creator is the room host
@@ -953,9 +983,11 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       // A freed lobby seat is joinable again: its display name must not
       // survive into the next occupant — and neither may its skin (the
       // seat goes back to unassigned; the next occupant gets a fresh
-      // random draw that may legally reuse the color).
+      // random draw that may legally reuse the color) — and neither may
+      // its WIN COUNT: wins belong to the occupant, not the chair.
       room.names[seat] = null;
       room.skins[seat] = null;
+      room.wins[seat] = 0;
     }
     // A departure can drop the room below MIN_PLAYERS (cancel) or simply
     // leave a locked full-room countdown alone (Task 28).
@@ -1129,6 +1161,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     for (const seat of room.vacated) {
       room.names[seat] = null;
       room.skins[seat] = null;
+      room.wins[seat] = 0;
     }
     room.vacated.clear();
     room.state = "waiting";
@@ -1187,7 +1220,21 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     // One subscription drives both the room lifecycle (finished detection)
     // and the broadcast hook for every seated session.
     room.detachHost = host.onStateChange((serialized) => {
-      room.state = phaseOf(serialized) === "finished" ? "finished" : "playing";
+      const finished = phaseOf(serialized) === "finished";
+      // A match JUST ended (the playing → finished transition — the
+      // guard keeps repeated finished snapshots from re-crediting):
+      // credit its winner's seat with one win. A wipeout (winnerId
+      // null) credits nobody.
+      if (finished && room.state !== "finished") {
+        const winner = winnerOf(serialized);
+        if (winner !== null) {
+          const seat = Number.parseInt(winner.replace(/^p/, ""), 10);
+          if (Number.isInteger(seat) && seat >= 0 && seat < MAX_PLAYERS) {
+            room.wins[seat] += 1;
+          }
+        }
+      }
+      room.state = finished ? "finished" : "playing";
       for (const listener of [...room.listeners]) listener.cb(serialized);
     });
     host.start(); // the fixed 60 Hz loop — this is a real match now

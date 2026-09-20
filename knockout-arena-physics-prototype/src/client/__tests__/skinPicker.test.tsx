@@ -164,6 +164,51 @@ describe("the skin reaches the seat", () => {
     ).toBe(rgbOf(playerColor(3)));
   });
 
+  it("LEAVE BUG: after leaving, a skin change at home sends nothing (no not-in-room)", async () => {
+    // Protocol v1 never acknowledges a leave, so the client must drop
+    // the seat state itself — otherwise the home screen still believes
+    // it holds a seat and every cosmetic change there pings a seat that
+    // no longer exists ("not-in-room").
+    const harness = createServerHarness();
+    const player = harness.addPlayer();
+    renderLobby(player.client);
+    await connectPlayer(player);
+
+    // Explicit skin, then a room: the choice rides set_skin as usual.
+    fireEvent.click(picker());
+    fireEvent.click(screen.getByTestId("skin-option-3"));
+    fireEvent.click(screen.getByRole("button", { name: "Create Room" }));
+    await screen.findByTestId("room-code");
+    await waitFor(() => {
+      expect(
+        allSent(player.pairs[0]).filter((m) => m.type === "set_skin")
+      ).toHaveLength(1);
+    });
+
+    // Leave → home. Change the skin AGAIN.
+    fireEvent.click(screen.getByTestId("leave-room"));
+    await waitFor(() => {
+      expect(screen.getByTestId("player-name-input")).toBeInTheDocument();
+    });
+    fireEvent.click(picker());
+    fireEvent.click(screen.getByTestId("skin-option-5"));
+
+    // Still exactly ONE set_skin on the wire (the original one) and no
+    // error frame: the seat state is gone locally, nothing was sent to
+    // a room the player is no longer in.
+    expect(
+      allSent(player.pairs[0]).filter((m) => m.type === "set_skin")
+    ).toHaveLength(1);
+    expect(
+      allSent(player.pairs[0]).filter((m) => m.type === "error")
+    ).toHaveLength(0);
+    // The picker itself shows the new choice.
+    expect(picker().querySelector("svg circle")).toHaveAttribute(
+      "fill",
+      playerColor(5)
+    );
+  });
+
   it("a random player sends NOTHING — the dealt skin arrives on the roster", async () => {
     const harness = createServerHarness();
     const player = harness.addPlayer();

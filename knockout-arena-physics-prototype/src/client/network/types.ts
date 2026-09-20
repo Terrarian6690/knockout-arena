@@ -50,6 +50,12 @@ export interface RosterEntry {
    * wire, exactly like an absent displayName. Purely cosmetic.
    */
   readonly skin?: number;
+  /**
+   * Matches won by this seat's occupant in this room (across play-again
+   * rematches). Absent = zero (the wire omits zero — additive v1). The
+   * lobby sorts the seat list by it and crowns the leader.
+   */
+  readonly wins?: number;
 }
 
 /**

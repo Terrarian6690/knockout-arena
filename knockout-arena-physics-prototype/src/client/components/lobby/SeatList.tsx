@@ -10,6 +10,19 @@ import { cn } from "../../utils/cn";
  * display name when they set one, and the seat-derived "Player N"
  * fallback otherwise.
  *
+ * THE LOOK IS THE MATCH RAIL'S: the same one-line tiles the in-round
+ * roster uses — a green frame while the player is connected, a red one
+ * (and muted text) once they are not — so the lobby list and the match
+ * rail read as the same thing in two states of the room.
+ *
+ * WINS: each tile ends (left of the disc swatch, on the right side of
+ * the row) with the number of matches this seat's occupant has won in
+ * this room, and the list is SORTED by that count — the biggest winner
+ * on top, ties keeping seat order. Everyone tied at the top wears the
+ * crown; a room where nobody has won yet keeps plain seat order and no
+ * crown. A seat's count follows its OCCUPANT: a freed seat starts the
+ * next player from zero (server-side rule).
+ *
  * MAX_SEATS mirrors the server's room capacity and MIN_PLAYERS its start
  * rule (both UX mirrors only — the roster stays authoritative and the
  * server validates for real). MAX_SEATS is DERIVED from the engine's
@@ -49,7 +62,28 @@ export interface SeatListProps {
   readonly hostPlayerId: string | null;
 }
 
+/**
+ * The roster decorated for display: wins resolved (absent wire field =
+ * zero) and the original seat index kept so equal-win ties stay in seat
+ * order. Sorted by wins, DESCENDING.
+ */
+function rankedRoster(roster: readonly RosterEntry[]): Array<{
+  seat: RosterEntry;
+  index: number;
+  wins: number;
+}> {
+  return roster
+    .map((seat, index) => ({ seat, index, wins: seat.wins ?? 0 }))
+    .sort((a, b) => b.wins - a.wins || a.index - b.index);
+}
+
 export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) {
+  const ranked = rankedRoster(roster);
+  // The crown goes to EVERY seat tied at the top — but only when that
+  // top is actually a win (a fresh room crowns nobody).
+  const best = ranked.length > 0 ? ranked[0]!.wins : 0;
+  const crowned = best > 0 ? best : -1;
+
   const emptySeats = Math.max(0, MAX_SEATS - roster.length);
   return (
     <ul
@@ -60,26 +94,66 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
       // once the panel is wide enough for them.
       className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3"
     >
-      {roster.map((seat) => (
-        <li
-          key={seat.playerId}
-          data-testid={`seat-${seat.playerId}`}
-          className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5"
-        >
-          <div className="flex min-w-0 items-center gap-1.5">
+      {ranked.map(({ seat, wins }) => {
+        const connected = seat.connected;
+        return (
+          <li
+            key={seat.playerId}
+            data-testid={`seat-${seat.playerId}`}
+            data-wins={wins}
+            // The match rail's tile grammar: green frame while in, red
+            // frame (and muted text) once out. The text label below
+            // keeps the state from being colour-alone.
+            className={cn(
+              "flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs",
+              connected
+                ? "border-emerald-500/60 bg-emerald-500/[0.06]"
+                : "border-red-500/70 bg-red-500/[0.07]"
+            )}
+          >
             <span
               role="img"
-              aria-label={seat.connected ? "connected" : "disconnected"}
-              title={seat.connected ? "Connected" : "Disconnected"}
+              aria-label={connected ? "connected" : "disconnected"}
+              title={connected ? "Connected" : "Disconnected"}
               className={cn(
                 "h-2 w-2 shrink-0 rounded-full",
-                seat.connected ? "bg-emerald-400" : "bg-red-400/70"
+                connected ? "bg-emerald-400" : "bg-red-400/70"
               )}
             />
-            {/* The player's chosen DISC SKIN (default orange): the same
-                palette index the arena renderer paints their pawn with,
-                so every player list shows the real look. Absent field =
-                the default (the server omits defaults on the wire). */}
+            <span className="min-w-0 flex-1">
+              <span
+                className={cn(
+                  "block truncate text-sm font-bold leading-tight",
+                  connected ? "text-white" : "text-white/50"
+                )}
+              >
+                {seat.displayName ?? seatLabel(seat.playerId)}
+              </span>
+              <span
+                className={cn(
+                  "block text-[10px] leading-tight",
+                  connected ? "text-white/50" : "text-red-300/70"
+                )}
+              >
+                {connected ? "Connected" : "Disconnected"}
+              </span>
+            </span>
+            {seat.playerId === selfPlayerId && <YouChip />}
+            {seat.playerId === hostPlayerId && <HostChip />}
+            {wins === crowned && <Crown crownId={seat.playerId} />}
+            {/* The win counter — right side of the player's info. */}
+            <span
+              data-testid={`wins-${seat.playerId}`}
+              title={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
+              aria-label={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
+              className="shrink-0 text-[11px] font-bold tabular-nums text-white/80"
+            >
+              {wins}
+            </span>
+            {/* The player's DISC SKIN (dealt randomly unless they picked
+                one): the same palette index the arena renderer paints
+                their pawn with — at the tile's far edge, exactly where
+                the match rail puts its colour swatch. */}
             <span
               aria-hidden
               data-testid={`skin-swatch-${seat.playerId}`}
@@ -87,30 +161,15 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
               className="h-3 w-3 shrink-0 rounded-full ring-1 ring-white/25"
               style={{ backgroundColor: playerColor(seat.skin ?? 0) }}
             />
-            <span className="truncate text-sm font-bold leading-tight text-white">
-              {seat.displayName ?? seatLabel(seat.playerId)}
-            </span>
-            {seat.playerId === selfPlayerId && <YouChip />}
-            {seat.playerId === hostPlayerId && <HostChip />}
-          </div>
-          {/* The state is TEXT, never colour alone (accessibility), but
-              it is secondary information: small and muted. */}
-          <span
-            className={cn(
-              "shrink-0 text-[10px] leading-tight",
-              seat.connected ? "text-white/50" : "text-red-300/70"
-            )}
-          >
-            {seat.connected ? "Connected" : "Disconnected"}
-          </span>
-        </li>
-      ))}
+          </li>
+        );
+      })}
 
       {Array.from({ length: emptySeats }, (_, index) => (
         <li
           key={`empty-seat-${index}`}
           data-testid="empty-seat"
-          className="flex items-center rounded-lg border border-dashed border-white/15 px-3 py-1.5"
+          className="flex items-center rounded-lg border border-dashed border-white/15 px-3 py-2"
         >
           <span
             role="img"
@@ -141,5 +200,33 @@ export function HostChip() {
     <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
       Host
     </span>
+  );
+}
+
+/**
+ * The leader's crown — worn by every seat tied at the top of the win
+ * count. Gold, three-spike, drawn to sit right of the player's info and
+ * left of the win counter.
+ */
+export function Crown({ crownId }: { readonly crownId: string }) {
+  return (
+    <svg
+      data-testid={`crown-${crownId}`}
+      role="img"
+      aria-label="most wins in the room"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      className="shrink-0 drop-shadow"
+    >
+      <path
+        d="M3 8.5 L7.5 12 L12 5.5 L16.5 12 L21 8.5 L19.2 17.5 H4.8 Z"
+        fill="#fbbf24"
+        stroke="#f59e0b"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <rect x="4.8" y="18.6" width="14.4" height="1.8" rx="0.9" fill="#fbbf24" />
+    </svg>
   );
 }

@@ -416,6 +416,13 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
         // Leaving on purpose: this connection's credential is useless now
         // (the server revokes it with the seat).
         reconnectToken = null;
+        // Protocol v1 never acknowledges a leave — the server sends
+        // nothing back to the leaver — so the client must drop the seat
+        // state ITSELF. Without this the home screen still believes it
+        // holds a seat, and a cosmetic change there (a disc skin, a
+        // name) would send set_skin/set_name to a seat that no longer
+        // exists and answer "not-in-room".
+        clearRoomState();
       }
       return sent;
     },

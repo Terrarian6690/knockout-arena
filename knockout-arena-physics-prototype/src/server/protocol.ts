@@ -234,6 +234,10 @@ function wireSeat(seat: RoomSeatInfo): Record<string, unknown> {
   // per seat at seating time (random by default), so there is no single
   // default the field could be omitted for anymore. Clients still
   // tolerate an absent skin as DEFAULT_SKIN for older peers.
+  //
+  // `wins` is additive too and appears only when NON-ZERO — a fresh
+  // room's payload stays exactly as slim as before; a seasoned one
+  // carries the win counts the lobby sorts and crowns by.
   const base: Record<string, unknown> =
     seat.displayName === null
       ? { playerId: seat.playerId, connected: seat.connected }
@@ -242,7 +246,8 @@ function wireSeat(seat: RoomSeatInfo): Record<string, unknown> {
           connected: seat.connected,
           displayName: seat.displayName,
         };
-  return { ...base, skin: seat.skin };
+  const withWins = (seat.wins ?? 0) > 0 ? { ...base, wins: seat.wins } : base;
+  return { ...withWins, skin: seat.skin };
 }
 
 export function welcomeMessage(
