@@ -49,10 +49,26 @@ describe("the seat list ordering and crowns", () => {
     expect(screen.getByTestId("crown-p1")).toBeInTheDocument();
     expect(screen.queryByTestId("crown-p0")).toBeNull();
     expect(screen.queryByTestId("crown-p2")).toBeNull();
-    // …and the counters are labelled exactly "wins: N".
-    expect(screen.getByTestId("wins-p1")).toHaveTextContent("wins: 3");
-    expect(screen.getByTestId("wins-p2")).toHaveTextContent("wins: 1");
-    expect(screen.getByTestId("wins-p0")).toHaveTextContent("wins: 0");
+    // …and the wins section is the TROPHY BADGE + the bare number.
+    for (const id of ["p0", "p1", "p2"]) {
+      expect(screen.getByTestId(`trophy-${id}`)).toBeInTheDocument();
+    }
+    expect(screen.getByTestId("wins-p1")).toHaveTextContent("3");
+    expect(screen.getByTestId("wins-p2")).toHaveTextContent("1");
+    expect(screen.getByTestId("wins-p0")).toHaveTextContent("0");
+
+    // The crown leads the winner's row — the LEFTMOST element of it.
+    const winnerRow = screen.getByTestId("seat-p1");
+    expect(winnerRow.firstElementChild).toBe(screen.getByTestId("crown-p1"));
+
+    // All of the player's info sits in the left ~3/4 of the tile; the
+    // wins section starts where it ends.
+    const info = screen.getByTestId("info-p1");
+    expect(info.className).toContain("w-3/4");
+    expect(
+      info.compareDocumentPosition(screen.getByTestId("wins-p1")) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it("keeps seat order for ties and crowns every co-leader", () => {
@@ -84,8 +100,8 @@ describe("the seat list ordering and crowns", () => {
 
     expect(order()).toEqual(["p0", "p1"]);
     expect(screen.queryByTestId(/^crown-/)).toBeNull();
-    expect(screen.getByTestId("wins-p0")).toHaveTextContent("wins: 0");
-    expect(screen.getByTestId("wins-p1")).toHaveTextContent("wins: 0");
+    expect(screen.getByTestId("wins-p0")).toHaveTextContent("0");
+    expect(screen.getByTestId("wins-p1")).toHaveTextContent("0");
   });
 
   it("counts an absent wins field as zero (older payload)", () => {
@@ -101,7 +117,7 @@ describe("the seat list ordering and crowns", () => {
     );
 
     expect(order()).toEqual(["p0", "p1"]);
-    expect(screen.getByTestId("wins-p1")).toHaveTextContent("wins: 0");
+    expect(screen.getByTestId("wins-p1")).toHaveTextContent("0");
     expect(screen.getByTestId("crown-p0")).toBeInTheDocument();
   });
 });

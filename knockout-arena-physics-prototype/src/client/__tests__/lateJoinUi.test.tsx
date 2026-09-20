@@ -69,6 +69,6 @@ describe("joining a room with a running match", () => {
     expect(view.queryByTestId("match-rail")).toBeNull();
     // Their seat shows in the list (connected, with the win counter).
     expect(view.getByTestId("seat-p2")).toBeInTheDocument();
-    expect(view.getByTestId("wins-p2")).toHaveTextContent("wins: 0");
+    expect(view.getByTestId("wins-p2")).toHaveTextContent("0");
   });
 });

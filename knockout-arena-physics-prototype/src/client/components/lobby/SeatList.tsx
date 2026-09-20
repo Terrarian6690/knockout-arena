@@ -108,44 +108,54 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
                 : "border-red-500/70 bg-red-500/[0.07]"
             )}
           >
-            <span
-              role="img"
-              aria-label={connected ? "connected" : "disconnected"}
-              title={connected ? "Connected" : "Disconnected"}
-              className={cn(
-                "h-2 w-2 shrink-0 rounded-full",
-                connected ? "bg-emerald-400" : "bg-red-400/70"
-              )}
-            />
-            <span className="min-w-0 flex-1">
-              <span
-                className={cn(
-                  "block truncate text-sm font-bold leading-tight",
-                  connected ? "text-white" : "text-white/50"
-                )}
-              >
-                {seat.displayName ?? seatLabel(seat.playerId)}
-              </span>
-              <span
-                className={cn(
-                  "block text-[10px] leading-tight",
-                  connected ? "text-white/50" : "text-red-300/70"
-                )}
-              >
-                {connected ? "Connected" : "Disconnected"}
-              </span>
-            </span>
-            {seat.playerId === selfPlayerId && <YouChip />}
+            {/* The crown leads the row — it sits at the LEFT edge of the
+                tile of the player with the most wins. */}
             {wins === crowned && <Crown crownId={seat.playerId} />}
-            {/* The win counter — right side of the player's info,
-                labelled: "wins: 3". */}
+            {/* ALL of the player's info lives in the LEFT ~3/4 of the
+                tile; the wins section begins where it ends. */}
+            <span
+              data-testid={`info-${seat.playerId}`}
+              className="flex w-3/4 min-w-0 items-center gap-2"
+            >
+              <span
+                role="img"
+                aria-label={connected ? "connected" : "disconnected"}
+                title={connected ? "Connected" : "Disconnected"}
+                className={cn(
+                  "h-2 w-2 shrink-0 rounded-full",
+                  connected ? "bg-emerald-400" : "bg-red-400/70"
+                )}
+              />
+              <span className="min-w-0 flex-1">
+                <span
+                  className={cn(
+                    "block truncate text-sm font-bold leading-tight",
+                    connected ? "text-white" : "text-white/50"
+                  )}
+                >
+                  {seat.displayName ?? seatLabel(seat.playerId)}
+                </span>
+                <span
+                  className={cn(
+                    "block text-[10px] leading-tight",
+                    connected ? "text-white/50" : "text-red-300/70"
+                  )}
+                >
+                  {connected ? "Connected" : "Disconnected"}
+                </span>
+              </span>
+              {seat.playerId === selfPlayerId && <YouChip />}
+            </span>
+            {/* The wins section, starting at the ~3/4 mark: the number
+                of trophies earned in this room, with the trophy badge. */}
             <span
               data-testid={`wins-${seat.playerId}`}
               title={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
               aria-label={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
-              className="shrink-0 text-[11px] font-bold tabular-nums text-white/80"
+              className="flex shrink-0 items-center gap-1 text-[11px] font-bold tabular-nums text-white/80"
             >
-              wins: {wins}
+              <TrophyBadge trophyId={seat.playerId} />
+              {wins}
             </span>
             {/* The player's DISC SKIN (dealt randomly unless they picked
                 one): the same palette index the arena renderer paints
@@ -192,9 +202,49 @@ export function YouChip() {
 }
 
 /**
+ * The trophy badge — marks the wins section of every row: the number
+ * next to it counts the trophies (match wins) earned in this room.
+ * Gold, drawn to read cleanly at ~13 px next to the counter.
+ */
+export function TrophyBadge({ trophyId }: { readonly trophyId: string }) {
+  return (
+    <svg
+      data-testid={`trophy-${trophyId}`}
+      aria-hidden="true"
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      className="shrink-0"
+    >
+      {/* Cup bowl with the two side handles. */}
+      <path
+        d="M7 3.5h10V8a5 5 0 0 1-10 0V3.5z"
+        fill="#fbbf24"
+        stroke="#f59e0b"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7 5H4.5a2.75 2.75 0 0 0 2.9 4M17 5h2.5a2.75 2.75 0 0 1-2.9 4"
+        fill="none"
+        stroke="#f59e0b"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      {/* Stem and base. */}
+      <path d="M11 12.6h2v2.4h-2z" fill="#fbbf24" stroke="#f59e0b" strokeWidth="0.8" />
+      <path
+        d="M8.2 16.4h7.6v1.8a1 1 0 0 1-1 1H9.2a1 1 0 0 1-1-1v-1.8z"
+        fill="#f59e0b"
+      />
+    </svg>
+  );
+}
+
+/**
  * The leader's crown — worn by every seat tied at the top of the win
- * count. Gold, three-spike, drawn to sit right of the player's info and
- * left of the win counter.
+ * count. Gold, three-spike, drawn to sit at the LEFT edge of the tile,
+ * ahead of every other element in the row.
  */
 export function Crown({ crownId }: { readonly crownId: string }) {
   return (

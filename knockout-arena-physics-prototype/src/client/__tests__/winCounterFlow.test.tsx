@@ -103,12 +103,17 @@ describe("a won match moves the lobby win counter", () => {
     const winsP0 = within(screen.getByTestId("seat-p0")).getByTestId(
       "wins-p0"
     );
-    expect(winsP0).toHaveTextContent("wins: 1");
+    expect(winsP0).toHaveTextContent("1");
     // The loser stays at zero.
     expect(
       within(screen.getByTestId("seat-p1")).getByTestId("wins-p1")
-    ).toHaveTextContent("wins: 0");
-    // …and the winner is the crown wearer at the top of the list.
-    expect(within(screen.getByTestId("seat-p0")).getByTestId("crown-p0"));
+    ).toHaveTextContent("0");
+    // …and the winner wears the crown at the LEFT edge of their tile.
+    expect(
+      within(screen.getByTestId("seat-p0")).getByTestId("crown-p0")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("seat-p0").firstElementChild
+    ).toBe(screen.getByTestId("crown-p0"));
   }, 30000);
 });
