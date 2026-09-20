@@ -54,9 +54,9 @@ describe("the seat list ordering and crowns", () => {
     for (const id of ["p0", "p1", "p2"]) {
       const trophy = screen.getByTestId(`trophy-${id}`);
       expect(trophy).toBeInTheDocument();
-      expect(trophy.getAttribute("width")).toBe("36"); // a few px under 39
+      expect(trophy.getAttribute("width")).toBe("32"); // a few px under 36
       const winsSpan = screen.getByTestId(`wins-${id}`);
-      expect(winsSpan.className).toContain("text-[33px]"); // 3x the old 11
+      expect(winsSpan.className).toContain("text-[29px]"); // 3x-ish, a notch under 33
       expect(winsSpan.lastElementChild).toBe(trophy); // number comes first
       // OUT OF THE FLOW: absolutely positioned at the ~3/4 mark,
       // vertically centred — its size can never grow the tile.
@@ -169,7 +169,7 @@ describe("the seat list's match-rail look", () => {
       );
       const nickTexts = texts.filter((el) => el.textContent !== "You");
       expect(nickTexts).toHaveLength(1);
-      expect(nickTexts[0]!.className).toContain("text-xs");
+      expect(nickTexts[0]!.className).toContain("text-2xl"); // the doubled nick
       // No status word anywhere in the row.
       expect(info.textContent).not.toContain("Connected");
       expect(info.textContent).not.toContain("Disconnected");
@@ -182,6 +182,18 @@ describe("the seat list's match-rail look", () => {
     expect(
       within(screen.getByTestId("seat-p1")).getByLabelText("disconnected")
     ).toBeInTheDocument();
+  });
+
+  it("doubles the nick and matches the disc height to its text", () => {
+    render(
+      <SeatList roster={[seat("p0")]} selfPlayerId="p0" />
+    );
+
+    const nick = within(screen.getByTestId("info-p0")).getByText("Player 1");
+    expect(nick.className).toContain("text-2xl"); // 2x the 12px base
+    const swatch = screen.getByTestId("skin-swatch-p0");
+    expect(swatch.className).toContain("h-6"); // 24px = the nick's height
+    expect(swatch.className).toContain("w-6");
   });
 
   it("renders ONE column of rows (no side-by-side grid)", () => {

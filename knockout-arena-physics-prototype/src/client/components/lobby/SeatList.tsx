@@ -130,26 +130,26 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
                   connected ? "bg-emerald-400" : "bg-red-400/70"
                 )}
               />
-              {/* ONE line, one height: just the nick. The connection
-                  state is carried by the dot (colour + its label for
-                  screen readers and hover) and the tile's frame. */}
+              {/* ONE line, one height: just the nick — DOUBLED to
+                  24px. The connection state is carried by the dot
+                  (colour + its label for screen readers and hover) and
+                  the tile's frame. */}
               <span
                 className={cn(
-                  "min-w-0 shrink truncate text-xs font-bold leading-tight",
+                  "min-w-0 shrink truncate text-2xl font-bold leading-none",
                   connected ? "text-white" : "text-white/50"
                 )}
               >
                 {seat.displayName ?? seatLabel(seat.playerId)}
               </span>
-              {/* The player's DISC SKIN — immediately AFTER the nick: the
-                  same palette index the arena renderer paints their pawn
-                  with, so the look sits right where the eye just read the
-                  name. */}
+              {/* The player's DISC SKIN — immediately AFTER the nick and
+                  as TALL as its 24px text: the same palette index the
+                  arena renderer paints their pawn with. */}
               <span
                 aria-hidden
                 data-testid={`skin-swatch-${seat.playerId}`}
                 title="Disc skin"
-                className="h-3 w-3 shrink-0 rounded-full ring-1 ring-white/25"
+                className="h-6 w-6 shrink-0 rounded-full ring-1 ring-white/25"
                 style={{ backgroundColor: playerColor(seat.skin ?? 0) }}
               />
               {seat.playerId === selfPlayerId && <YouChip className="text-xs" />}
@@ -163,7 +163,7 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
               data-testid={`wins-${seat.playerId}`}
               title={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
               aria-label={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
-              className="absolute left-3/4 top-1/2 flex w-1/4 -translate-y-1/2 items-center gap-2 text-[33px] font-bold leading-none tabular-nums text-white/80"
+              className="absolute left-3/4 top-1/2 flex w-1/4 -translate-y-1/2 items-center gap-2 text-[29px] font-bold leading-none tabular-nums text-white/80"
             >
               {wins}
               <TrophyBadge trophyId={seat.playerId} />
@@ -209,16 +209,16 @@ export function YouChip({ className }: { readonly className?: string }) {
 /**
  * The trophy badge — the wins section of every row ENDS with it: the
  * number before it counts the trophies (match wins) earned in this
- * room. Gold, drawn large to match the tripled counter (a notch under
- * its 33 px cap height, so the two read as one unit).
+ * room. Gold, drawn large to match the counter (a notch under its
+ * 29 px cap height, so the two read as one unit).
  */
 export function TrophyBadge({ trophyId }: { readonly trophyId: string }) {
   return (
     <svg
       data-testid={`trophy-${trophyId}`}
       aria-hidden="true"
-      width="36"
-      height="36"
+      width="32"
+      height="32"
       viewBox="0 0 24 24"
       className="shrink-0"
     >
