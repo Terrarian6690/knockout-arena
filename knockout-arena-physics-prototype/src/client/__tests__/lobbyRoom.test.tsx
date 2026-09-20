@@ -190,7 +190,9 @@ describe("lobby room screen", () => {
     ).toEqual([{ protocolVersion: 1, type: "start_match" }]);
 
     // The server moves the room on → the lobby hands the screen to the
-    // multiplayer game (no local guessing).
+    // multiplayer game (no local guessing). The hand-over keys on a
+    // snapshot that includes OUR pawn — a late joiner's pawn is absent
+    // from the frozen roster, so THEY keep the lobby instead.
     await act(async () => {
       sockets[0].serverMessage(
         wire.roomState(
@@ -202,6 +204,11 @@ describe("lobby room screen", () => {
           "p0"
         )
       );
+    });
+    expect(screen.queryByTestId("multiplayer-game")).toBeNull(); // not yet
+
+    await act(async () => {
+      sockets[0].serverMessage(wire.snapshot({}, { p0: { isLocal: true } }));
     });
     expect(screen.getByTestId("multiplayer-game")).toBeInTheDocument();
     expect(screen.queryByTestId("start-match")).toBeNull();

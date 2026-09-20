@@ -88,11 +88,10 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
   return (
     <ul
       data-testid="seat-list"
-      // Six seats as a grid rather than a six-row stack: the lobby has
-      // horizontal room to spare and vertical room it does not, so the
-      // list is the first thing to fold. Two columns from `sm`, three
-      // once the panel is wide enough for them.
-      className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3"
+      // ONE column of full-width rows (each row a horizontal strip:
+      // status dot, name, chips, wins, disc) — the pinned layout, so
+      // six players read as one tidy stack instead of a wrapped grid.
+      className="flex flex-col gap-1.5"
     >
       {ranked.map(({ seat, wins }) => {
         const connected = seat.connected;
@@ -141,14 +140,15 @@ export function SeatList({ roster, selfPlayerId, hostPlayerId }: SeatListProps) 
             {seat.playerId === selfPlayerId && <YouChip />}
             {seat.playerId === hostPlayerId && <HostChip />}
             {wins === crowned && <Crown crownId={seat.playerId} />}
-            {/* The win counter — right side of the player's info. */}
+            {/* The win counter — right side of the player's info,
+                labelled: "wins: 3". */}
             <span
               data-testid={`wins-${seat.playerId}`}
               title={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
               aria-label={`${wins === 1 ? "1 win" : `${wins} wins`} in this room`}
               className="shrink-0 text-[11px] font-bold tabular-nums text-white/80"
             >
-              {wins}
+              wins: {wins}
             </span>
             {/* The player's DISC SKIN (dealt randomly unless they picked
                 one): the same palette index the arena renderer paints

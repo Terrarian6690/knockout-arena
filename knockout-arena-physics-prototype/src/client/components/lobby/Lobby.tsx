@@ -184,15 +184,30 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
     if (client.setSkin(skin)) appliedSkin.current = { seat, skin };
   }, [client, state.roomId, state.playerId, skin]);
 
-  // The server moved the room into the match → the game screen takes over.
+  // A match that is already running when we seat down may not include
+  // us: a late joiner waits in the lobby for the NEXT match. The
+  // snapshot's pawn list is the authority — our pawn simply is not in
+  // the frozen roster. (No snapshot yet counts as "not in it"; a real
+  // participant's pawn shows up within a frame.)
+  const inLiveMatch =
+    state.snapshot !== null &&
+    state.playerId !== null &&
+    state.snapshot.pawns.some((p) => p.id === state.playerId);
+  const waitingForMatch =
+    inRoom && state.roomState === "playing" && !inLiveMatch;
+
+  // The server moved the room into a match WE ARE PART of → the game
+  // screen takes over (also while "finished", so the result overlay is
+  // shown in context). A waiting late joiner stays in the lobby.
   useEffect(() => {
     if (
       inRoom &&
-      (state.roomState === "playing" || state.roomState === "finished")
+      (state.roomState === "playing" || state.roomState === "finished") &&
+      inLiveMatch
     ) {
       setMatchActive(true);
     }
-  }, [inRoom, state.roomState]);
+  }, [inRoom, state.roomState, inLiveMatch]);
 
   // Once we are connected again but no longer seated, the match view is
   // over. With seat recovery the room picture SURVIVES a drop (the server
@@ -333,6 +348,21 @@ export function Lobby({ onPracticeSolo }: { onPracticeSolo: () => void }) {
                 error={state.lastError}
                 onDismiss={() => setDismissedError(true)}
               />
+            )}
+            {waitingForMatch && (
+              <div
+                data-testid="match-waiting-banner"
+                role="status"
+                className="mb-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2.5"
+              >
+                <p className="text-sm font-bold text-amber-200">
+                  Waiting for the current game to end…
+                </p>
+                <p className="text-xs text-white/60">
+                  The running match has a fixed roster — you will join the
+                  next one automatically.
+                </p>
+              </div>
             )}
             <RoomPanel
               roomCode={state.roomId as string}

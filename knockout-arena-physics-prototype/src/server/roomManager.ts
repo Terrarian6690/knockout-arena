@@ -238,8 +238,8 @@ export type SeatResult =
         | "unknown-session" // malformed/absent session token
         | "already-in-room" // seated sessions must leave first
         | "unknown-room"
-        | "room-full" // > MAX_PLAYERS
-        | "room-playing"; // roster frozen (playing or finished)
+        | "room-full" // > MAX_PLAYERS (no free seat to wait in)
+        | "room-playing"; // legacy join refusal (joins now wait instead)
     };
 
 /** Setting a display name: the seat's own player only, lobby state only. */
@@ -837,12 +837,19 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       return { ok: false, reason: "unknown-room" };
     }
     if (findSeat(token)) return { ok: false, reason: "already-in-room" };
-    if (room.state !== "waiting") return { ok: false, reason: "room-playing" };
+    // A RUNNING (or just-finished) match no longer shuts the door: the
+    // newcomer takes a genuinely free seat and WAITS for the next match
+    // (the frozen roster — and the running game — are untouched; their
+    // pawn simply does not exist yet). lowestFreeSeat skips the seats
+    // vacated mid-match, so a departed player's chair stays theirs.
     const seat = lowestFreeSeat(room);
     if (seat === -1) return { ok: false, reason: "room-full" };
     room.seats[seat] = token;
     assignSkin(room, seat); // random, excluding what the seated hold
-    reconcileAutoStart(room); // a new arrival may shorten the wait (Task 28)
+    // Only a waiting room has a countdown to reconcile; a playing one
+    // has none (cancelled at start), and a finished one re-arms on
+    // reopen — a late arrival must not arm anything.
+    if (room.state === "waiting") reconcileAutoStart(room);
     return { ok: true, room: infoOf(room), playerId: `p${seat}` };
   }
 

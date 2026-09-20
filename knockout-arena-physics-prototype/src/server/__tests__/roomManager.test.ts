@@ -330,12 +330,17 @@ describe("match lifecycle", () => {
     expect(started.room.state).toBe("playing");
     expect(started.room.seats.map((s) => s.playerId)).toEqual(["p0", "p1", "p2"]);
 
-    // No joins after the match starts — the roster is frozen.
+    // A join after the match starts no longer touches the frozen roster:
+    // the latecomer takes the free seat and WAITS for the next match
+    // (no pawn in the running game).
     const latecomer = server.connect();
-    expect(server.joinRoom(latecomer, roomId)).toEqual({
-      ok: false,
-      reason: "room-playing",
-    });
+    const waited = server.joinRoom(latecomer, roomId);
+    expect(waited).toMatchObject({ ok: true, playerId: "p3" });
+    expect(started.room.seats.map((s) => s.playerId)).toEqual([
+      "p0",
+      "p1",
+      "p2",
+    ]); // the frozen roster is unchanged
     // Starting again is rejected too.
     expect(server.startMatch(roomId)).toEqual({ ok: false, reason: "already-playing" });
 

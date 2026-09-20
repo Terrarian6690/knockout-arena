@@ -462,11 +462,13 @@ describe("lobby → game screen transition", () => {
         { playerId: "p0", connected: true },
       ]));
     });
+
+    // A snapshot that includes OUR pawn is what actually hands the
+    // screen over (a late joiner's pawn is absent from the frozen
+    // roster — they stay in the lobby instead).
+    await feed(sockets, {}, { p0: { isLocal: true } });
     expect(await screen.findByTestId("multiplayer-game")).toBeInTheDocument();
     expect(screen.queryByTestId("room-panel")).toBeNull();
-
-    // Snapshot arrives → the game renders it.
-    await feed(sockets, {});
     expect(screen.getByTestId("arena-canvas")).toBeInTheDocument();
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
       "Choose your move — aim!"

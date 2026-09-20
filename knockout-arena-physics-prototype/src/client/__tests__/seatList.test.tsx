@@ -50,10 +50,10 @@ describe("the seat list ordering and crowns", () => {
     expect(screen.getByTestId("crown-p1")).toBeInTheDocument();
     expect(screen.queryByTestId("crown-p0")).toBeNull();
     expect(screen.queryByTestId("crown-p2")).toBeNull();
-    // …and the counters show the right numbers.
-    expect(screen.getByTestId("wins-p1")).toHaveTextContent("3");
-    expect(screen.getByTestId("wins-p2")).toHaveTextContent("1");
-    expect(screen.getByTestId("wins-p0")).toHaveTextContent("0");
+    // …and the counters are labelled exactly "wins: N".
+    expect(screen.getByTestId("wins-p1")).toHaveTextContent("wins: 3");
+    expect(screen.getByTestId("wins-p2")).toHaveTextContent("wins: 1");
+    expect(screen.getByTestId("wins-p0")).toHaveTextContent("wins: 0");
   });
 
   it("keeps seat order for ties and crowns every co-leader", () => {
@@ -87,8 +87,8 @@ describe("the seat list ordering and crowns", () => {
 
     expect(order()).toEqual(["p0", "p1"]);
     expect(screen.queryByTestId(/^crown-/)).toBeNull();
-    expect(screen.getByTestId("wins-p0")).toHaveTextContent("0");
-    expect(screen.getByTestId("wins-p1")).toHaveTextContent("0");
+    expect(screen.getByTestId("wins-p0")).toHaveTextContent("wins: 0");
+    expect(screen.getByTestId("wins-p1")).toHaveTextContent("wins: 0");
   });
 
   it("counts an absent wins field as zero (older payload)", () => {
@@ -105,7 +105,7 @@ describe("the seat list ordering and crowns", () => {
     );
 
     expect(order()).toEqual(["p0", "p1"]);
-    expect(screen.getByTestId("wins-p1")).toHaveTextContent("0");
+    expect(screen.getByTestId("wins-p1")).toHaveTextContent("wins: 0");
     expect(screen.getByTestId("crown-p0")).toBeInTheDocument();
   });
 });
@@ -127,6 +127,21 @@ describe("the seat list's match-rail look", () => {
     const gone = screen.getByTestId("seat-p1");
     expect(gone.className).toContain("border-red-500/70");
     expect(within(gone).getByText("Disconnected")).toBeInTheDocument();
+  });
+
+  it("renders ONE column of rows (no side-by-side grid)", () => {
+    render(
+      <SeatList
+        roster={[seat("p0"), seat("p1")]}
+        selfPlayerId="p0"
+        hostPlayerId="p0"
+      />
+    );
+
+    const list = screen.getByTestId("seat-list");
+    expect(list.className).toContain("flex-col");
+    expect(list.className).not.toContain("grid-cols-2");
+    expect(list.className).not.toContain("grid-cols-3");
   });
 
   it("keeps the skin swatch and the empty-seat placeholders", () => {
