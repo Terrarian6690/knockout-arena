@@ -201,8 +201,25 @@ export function MultiplayerGame({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* The match clock and the round decision countdown live in
+              the TOP BAR (requested): no strip below it, the arena gets
+              the full remaining height. The eliminated player's notice
+              appears here too — never over the board. */}
+          {snapshot !== null && (
+            <MatchTimer
+              phase={snapshot.phase}
+              deadline={snapshot.matchDeadline}
+            />
+          )}
+          {snapshot !== null && (
+            <RoundCountdown
+              phase={snapshot.phase}
+              deadline={snapshot.roundDeadline}
+            />
+          )}
           <AudioControl />
           {snapshot !== null && <RoundBadge snapshot={snapshot} />}
+          {snapshot !== null && <EliminatedNotice snapshot={snapshot} />}
         </div>
       </header>
 
@@ -230,25 +247,6 @@ export function MultiplayerGame({
             />
 
             <main ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 flex-col outline-none">
-              {/* The clocks' own BAR above the arena: match clock and,
-                  beside it, the round decision countdown, centered on the
-                  arena column. A real strip (in normal flow, not an
-                  overlay), so the timers never cover the board and are
-                  always in the same place. */}
-              <div
-                data-testid="clock-bar"
-                className="flex items-start justify-center gap-2 border-b border-white/5 bg-white/[0.02] px-4 py-2"
-              >
-                <MatchTimer
-                  phase={snapshot.phase}
-                  deadline={snapshot.matchDeadline}
-                />
-                <RoundCountdown
-                  phase={snapshot.phase}
-                  deadline={snapshot.roundDeadline}
-                />
-              </div>
-
               <ArenaView
                 snapshot={displaySnapshot ?? snapshot}
                 interactive={canAct && connected}
@@ -261,10 +259,7 @@ export function MultiplayerGame({
                   unaffected; it reads the server's snapshot only. */}
               <ShrinkWarning snapshot={snapshot} />
 
-              {/* The eliminated player's death notice: prominent but
-                  non-blocking (see EliminatedNotice) — the match goes on
-                  and the player keeps watching the board. */}
-              <EliminatedNotice snapshot={snapshot} />              {!connected && (
+              {!connected && (
                 <ConnectionBanner
                   status={state.status}
                   reconnectAttempt={state.reconnectAttempt}

@@ -5,11 +5,13 @@ import type { GameStateSnapshot } from "../../../game";
  *
  * When the local player's pawn leaves the arena the match keeps running
  * without them, so — unlike the solo screen's full overlay — this is a
- * non-blocking banner over the arena: impossible to miss (red card, 💥,
- * "Knocked out!"), yet it never traps the pointer, never swallows an
- * aiming click, and never covers the board the eliminated player is now
- * watching. The finished phase hands the screen to the match result
- * overlay, so the notice stands down there.
+ * COMPACT BADGE IN THE TOP BAR (requested: it must never cover the
+ * arena). The board stays 100% visible: the notice rides in the header
+ * next to the clocks, impossible to miss (red card, 💥, "Knocked
+ * out!"), announced via role=alert, yet it never traps the pointer and
+ * never overlaps the board the eliminated player is now watching. The
+ * finished phase hands the screen to the match result overlay, so the
+ * notice stands down there.
  *
  * Pure presentation of the authoritative viewer projection: the server's
  * snapshot says the local pawn is eliminated — the client never computes
@@ -28,24 +30,20 @@ export function EliminatedNotice({
   return (
     <div
       data-testid="eliminated-notice"
-      className="pointer-events-none absolute inset-x-0 top-14 z-20 flex justify-center px-4"
+      className="pointer-events-none flex shrink-0 items-center rounded-xl border border-red-400/40 bg-red-950/80 px-3 py-1.5 shadow-lg"
     >
-      <div
+      <span
         role="alert"
-        className="flex items-center gap-3 rounded-xl border border-red-400/40 bg-red-950/80 px-5 py-3 shadow-lg backdrop-blur"
+        className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-red-200"
       >
-        <span aria-hidden="true" className="text-2xl leading-none">
+        <span aria-hidden="true" className="text-base leading-none">
           💥
         </span>
-        <div className="flex flex-col items-start gap-0.5">
-          <span className="text-base font-black uppercase tracking-wide text-red-200">
-            Knocked out!
-          </span>
-          <span className="text-xs text-white/60">
-            Your pawn left the arena — watching the rest of the match.
-          </span>
-        </div>
-      </div>
+        Knocked out!
+        <span className="text-xs font-medium normal-case tracking-normal text-white/60">
+          watching the rest of the match
+        </span>
+      </span>
     </div>
   );
 }

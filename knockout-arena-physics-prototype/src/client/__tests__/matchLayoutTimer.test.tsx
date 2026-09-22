@@ -9,19 +9,20 @@ import { createScriptedClient, wire } from "./lobbyTestHarness";
 /**
  * THE MATCH CLOCKS' PLACE ON SCREEN.
  *
- * Requested: the "time left in the match" readout belongs BELOW the top
- * bar on the arena screen, not crammed into the header next to the logo.
+ * Requested (supersedes the earlier "own bar below the top bar" design):
+ * the timers — the match clock AND the round decision countdown — live
+ * IN THE MAIN TOP BAR, next to the logo; the strip that used to sit
+ * between the top bar and the arena is GONE, so the arena gets the full
+ * remaining height. Things that have to stay true, and are easy to
+ * break by accident:
  *
- * It lives in a dedicated CLOCK BAR above the arena — a real strip in
- * normal flow (not an overlay), centered on the arena column, with the
- * round decision countdown sitting right beside it. Things that have to
- * stay true, and are easy to break by accident:
- *
- *   - the bar is IN FLOW, so the clocks never cover the board (the
- *     arena canvas is a sibling BELOW the bar, not under it);
- *   - the clocks still belong to the arena column, never the header;
- *   - the shrink warning overlays the canvas on its own again (it no
- *     longer shares a band with the clocks, so it needs no clearance).
+ *   - both timers render inside the <header> (the top bar);
+ *   - NO clock bar exists anywhere — nothing sits between the top bar
+ *     and the arena but the arena itself;
+ *   - the clocks still disappear when the match is over;
+ *   - the shrink warning keeps overlaying the canvas on its own band;
+ *   - the eliminated player's notice also lives in the top bar — it
+ *     never covers the board (see eliminatedNotice.test.tsx).
  */
 
 async function renderGame() {
@@ -52,62 +53,62 @@ async function feed(
 /** A live match deadline, comfortably in the future. */
 const deadline = () => Date.now() + 120_000;
 
-describe("the match clock sits below the top bar", () => {
-  it("is no longer inside the header", async () => {
+describe("the match clocks live in the top bar", () => {
+  it("both timers are inside the header (the main top bar)", async () => {
     const { sockets } = await renderGame();
-    await feed(sockets, { matchDeadline: deadline() });
-
-    const timer = screen.getByTestId("match-timer");
-    const header = document.querySelector("header");
-    expect(header).not.toBeNull();
-    expect(timer).toBeInTheDocument();
-    // The whole point of the move: the clock is outside the top bar.
-    expect(header!.contains(timer)).toBe(false);
-  });
-
-  it("renders below the header in document order", async () => {
-    const { sockets } = await renderGame();
-    await feed(sockets, { matchDeadline: deadline() });
+    await feed(sockets, {
+      matchDeadline: deadline(),
+      roundDeadline: Date.now() + 5_000,
+    });
 
     const header = document.querySelector("header")!;
-    const timer = screen.getByTestId("match-timer");
-    expect(header.compareDocumentPosition(timer)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
+    expect(header).not.toBeNull();
+    expect(header.contains(screen.getByTestId("match-timer"))).toBe(true);
+    expect(header.contains(screen.getByTestId("round-countdown"))).toBe(true);
   });
 
-  it("lives in its own in-flow bar, never floating over the board", async () => {
+  it("no clock bar exists between the top bar and the arena", async () => {
     const { sockets } = await renderGame();
     await feed(sockets, { matchDeadline: deadline() });
 
-    const timer = screen.getByTestId("match-timer");
-    const bar = timer.parentElement!;
-    // A real strip above the arena — not an absolutely positioned
-    // overlay — so the clocks can never cover the board.
-    expect(bar).toHaveAttribute("data-testid", "clock-bar");
-    expect(bar.className).not.toContain("absolute");
-    // The canvas is NOT inside the bar: sibling below it, not under it.
-    expect(bar.contains(screen.getByTestId("arena-canvas"))).toBe(false);
-  });
-
-  it("sits above the canvas as its sibling in the arena column", async () => {
-    const { sockets } = await renderGame();
-    await feed(sockets, { matchDeadline: deadline() });
-
-    const timer = screen.getByTestId("match-timer");
+    // The old strip is gone…
+    expect(screen.queryByTestId("clock-bar")).toBeNull();
+    // …and the arena is the FIRST child of its column (its wrapper —
+    // nothing sits between the top bar and the board).
     const main = document.querySelector("main")!;
     const canvas = screen.getByTestId("arena-canvas");
-    // Same arena column…
-    expect(main.contains(timer)).toBe(true);
-    expect(main.contains(canvas)).toBe(true);
-    // …and the bar comes BEFORE the canvas in document order: the strip
-    // is above the board, and the board keeps its full height.
-    expect(
-      timer.compareDocumentPosition(canvas) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    expect(main.firstElementChild).toBe(canvas.parentElement);
   });
 
-  it("the shrink warning overlays the canvas on its own band again", async () => {
+  it("the timers are NOT inside the arena column", async () => {
+    const { sockets } = await renderGame();
+    await feed(sockets, {
+      matchDeadline: deadline(),
+      roundDeadline: Date.now() + 5_000,
+    });
+
+    const main = document.querySelector("main")!;
+    expect(main.contains(screen.getByTestId("match-timer"))).toBe(false);
+    expect(
+      main.contains(screen.getByTestId("round-countdown"))
+    ).toBe(false);
+  });
+
+  it("both clocks still disappear when the match is over", async () => {
+    const { sockets } = await renderGame();
+    await feed(sockets, {
+      matchDeadline: deadline(),
+      roundDeadline: Date.now() + 5_000,
+    });
+    expect(screen.getByTestId("match-timer")).toBeInTheDocument();
+    expect(screen.getByTestId("round-countdown")).toBeInTheDocument();
+
+    await feed(sockets, { phase: "finished", matchDeadline: deadline() });
+    expect(screen.queryByTestId("match-timer")).toBeNull();
+    expect(screen.queryByTestId("round-countdown")).toBeNull();
+  });
+
+  it("the shrink warning overlays the canvas on its own band", async () => {
     const { sockets } = await renderGame();
     await feed(sockets, {
       matchDeadline: deadline(),
@@ -121,19 +122,16 @@ describe("the match clock sits below the top bar", () => {
       },
     });
 
-    const bar = screen.getByTestId("match-timer").parentElement!;
     const band = screen.getByTestId("shrink-warning").parentElement!;
-    // The clocks' bar is in flow; the warning is the arena's only top
-    // overlay now — so they structurally cannot collide anymore.
-    expect(bar.className).not.toContain("absolute");
+    // The warning is an arena overlay (and the only one at its top —
+    // the clocks are in the header, structurally unable to collide).
     expect(band.className).toContain("absolute");
   });
 
   it("no longer makes the shrink warning reserve room for the clocks", async () => {
-    // The clocks moved out of the arena's overlay band into their own
-    // bar, so the warning's top padding is back to a small value — the
-    // old large clearance (pt-14, sized to clear a clock badge) would
-    // now just push the warning oddly far down the board.
+    // The clocks are in the top bar, so the warning's top padding is a
+    // small value — the old large clearance (pt-14, sized to clear a
+    // clock badge) would push the warning oddly far down the board.
     const { sockets } = await renderGame();
     await feed(sockets, {
       matchDeadline: deadline(),
@@ -154,36 +152,6 @@ describe("the match clock sits below the top bar", () => {
       return token === undefined ? 0 : Number(token.slice(3));
     };
     expect(topPad(band.className)).toBeLessThanOrEqual(2);
-  });
-
-  it("the decision countdown sits beside the clock, over the arena", async () => {
-    // Requested: the decision-time badge lives NEXT TO the match clock —
-    // one centered row over the arena — not in the top-right header.
-    const { sockets } = await renderGame();
-    await feed(sockets, {
-      matchDeadline: deadline(),
-      roundDeadline: Date.now() + 5_000,
-    });
-
-    const clock = screen.getByTestId("match-timer");
-    const countdown = screen.getByTestId("round-countdown");
-    // Same clock-bar row, side by side.
-    expect(countdown.parentElement).toBe(clock.parentElement);
-    // And that row belongs to the arena column (main), never the header.
-    const main = document.querySelector("main")!;
-    const header = document.querySelector("header")!;
-    expect(main.contains(countdown)).toBe(true);
-    expect(header.contains(countdown)).toBe(false);
-    expect(header.contains(clock)).toBe(false);
-  });
-
-  it("still disappears when the match is over", async () => {
-    const { sockets } = await renderGame();
-    await feed(sockets, { matchDeadline: deadline() });
-    expect(screen.getByTestId("match-timer")).toBeInTheDocument();
-
-    await feed(sockets, { phase: "finished", matchDeadline: deadline() });
-    expect(screen.queryByTestId("match-timer")).toBeNull();
   });
 });
 
