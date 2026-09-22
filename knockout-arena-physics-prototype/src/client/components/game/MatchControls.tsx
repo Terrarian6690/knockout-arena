@@ -46,11 +46,15 @@ export function MatchControls({
   return (
     <div
       data-testid="match-controls"
-      className="flex flex-col items-center justify-center gap-4 border-t border-white/10 bg-white/[0.02] px-4 py-4 sm:flex-row sm:gap-8 sm:py-4"
+      // ONE compact row on every screen: on a phone the arena must own
+      // the display, so the bar is meter + Confirm side by side, no
+      // captions, minimal padding (~68px tall); desktop keeps the
+      // captions and a little more air (sm:), but slimmer than before.
+      className="flex items-center justify-center gap-3 border-t border-white/10 bg-white/[0.02] px-3 py-1.5 sm:gap-8 sm:px-4 sm:py-2.5"
     >
       {/* The power arrow: grows thin+green (weak) → wide+red (strong). */}
-      <div className="flex flex-col items-center gap-1.5">
-        <div className="text-[11px] uppercase tracking-widest text-white/50">
+      <div className="flex min-w-0 flex-1 flex-col items-center gap-1 sm:flex-none">
+        <div className="hidden text-[11px] uppercase tracking-widest text-white/50 sm:block">
           Power
         </div>
         <PowerMeter
@@ -74,11 +78,11 @@ export function MatchControls({
           aria-label="Power N" and aria-pressed on the current level),
           so a screen reader still hears which power is selected. */}
 
-      <div className="flex flex-col items-center gap-1">
+      <div className="flex shrink-0 flex-col items-center gap-1">
         {/* The commitment: CURRENT aim + CURRENT power → CONFIRM. The
             button never launches by itself — the round resolves on the
             server (everyone confirmed, or its deadline). */}
-        <div className="text-[11px] uppercase tracking-widest text-white/50">
+        <div className="hidden text-[11px] uppercase tracking-widest text-white/50 sm:block">
           Lock aim + power
         </div>
         <button
@@ -87,7 +91,7 @@ export function MatchControls({
           disabled={!canAct}
           data-testid="launch"
           className={cn(
-            "rounded-xl px-7 py-3 text-base font-bold uppercase tracking-wide shadow-lg transition-all",
+            "rounded-xl px-4 py-2 text-sm font-bold uppercase tracking-wide shadow-lg transition-all sm:px-7 sm:py-3 sm:text-base",
             canAct
               ? "bg-gradient-to-br from-amber-400 to-orange-600 text-white hover:from-amber-300 hover:to-orange-500 active:scale-95 shadow-orange-900/40"
               : "bg-gradient-to-br from-emerald-500/80 to-emerald-600/80 text-white shadow-emerald-900/40",
