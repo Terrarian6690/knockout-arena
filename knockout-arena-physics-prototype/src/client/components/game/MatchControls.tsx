@@ -48,15 +48,15 @@ export function MatchControls({
       data-testid="match-controls"
       // ONE compact row on every screen: on a phone the arena must own
       // the display, so the bar is meter + Confirm side by side, no
-      // captions, minimal padding (~68px tall); desktop keeps the
-      // captions and a little more air (sm:), but slimmer than before.
-      className="flex items-center justify-center gap-3 border-t border-white/10 bg-white/[0.02] px-3 py-1.5 sm:gap-8 sm:px-4 sm:py-2.5"
+      // captions, minimal padding (~68px tall). Desktop is a row of the
+      // same two controls without the captions either, ~80px tall —
+      // about 30px shorter than the old captioned stack (the controls
+      // carry their own labels: aria-label "Power", per-button digits,
+      // and the button text itself).
+      className="flex items-center justify-center gap-3 border-t border-white/10 bg-white/[0.02] px-3 py-1.5 sm:gap-8 sm:px-4 sm:py-2"
     >
       {/* The power arrow: grows thin+green (weak) → wide+red (strong). */}
-      <div className="flex min-w-0 flex-1 flex-col items-center gap-1 sm:flex-none">
-        <div className="hidden text-[11px] uppercase tracking-widest text-white/50 sm:block">
-          Power
-        </div>
+      <div className="flex min-w-0 flex-1 items-center justify-center sm:flex-none">
         <PowerMeter
           power={power}
           disabled={!canAct}
@@ -78,13 +78,10 @@ export function MatchControls({
           aria-label="Power N" and aria-pressed on the current level),
           so a screen reader still hears which power is selected. */}
 
-      <div className="flex shrink-0 flex-col items-center gap-1">
+      <div className="flex shrink-0 items-center">
         {/* The commitment: CURRENT aim + CURRENT power → CONFIRM. The
             button never launches by itself — the round resolves on the
             server (everyone confirmed, or its deadline). */}
-        <div className="hidden text-[11px] uppercase tracking-widest text-white/50 sm:block">
-          Lock aim + power
-        </div>
         <button
           type="button"
           onClick={onLaunch}

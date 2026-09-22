@@ -56,3 +56,35 @@ describe("MatchControls confirm label", () => {
     expect(btn).toHaveAccessibleName("Waiting for round…");
   });
 });
+
+describe("the control bar's height budget", () => {
+  it("carries no captions on ANY screen — the desktop row too", () => {
+    // The desktop bar got ~30px shorter by dropping the "Power" and
+    // "Lock aim + power" captions everywhere: the meter announces
+    // itself (aria-label "Power", per-button digits) and the button
+    // states its own action, so the words were dead height.
+    render(
+      <MatchControls power={3} canAct={true} lockedIn={false} onPowerChange={noop} onLaunch={noop} />
+    );
+    const bar = screen.getByTestId("match-controls");
+    expect(bar.textContent).not.toContain("Lock aim + power");
+    const ownText = (bar.textContent ?? "").replace(
+      screen.getByTestId("power-meter").textContent ?? "",
+      ""
+    );
+    expect(ownText).not.toMatch(/power/i);
+  });
+
+  it("is a slim row on desktop too: 64px meter, py-2 padding", () => {
+    render(
+      <MatchControls power={3} canAct={true} lockedIn={false} onPowerChange={noop} onLaunch={noop} />
+    );
+    const bar = screen.getByTestId("match-controls");
+    expect(bar.className).toContain("sm:py-2");
+    const meter = screen.getByTestId("power-meter");
+    expect(meter.className).toContain("sm:h-16");
+    expect(meter.className).not.toContain("sm:h-[72px]");
+    // Phones keep their own compact row untouched.
+    expect(meter.className).toContain("h-14");
+  });
+});

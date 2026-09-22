@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNetworkClient, useNetworkState } from "../../network/react";
 import { aimAt, type GameStateSnapshot, type Vec2 } from "../../../game";
 import { cn } from "../../utils/cn";
 import { ErrorBanner } from "../lobby/ErrorBanner";
 import { ArenaView } from "./ArenaView";
+import {
+  enterMobileFullscreen,
+  exitMobileFullscreen,
+} from "../../mobileFullscreen";
 import { AudioControl } from "./AudioControl";
 import { audio } from "../../audio";
 import { EliminatedNotice } from "./EliminatedNotice";
@@ -176,6 +180,23 @@ export function MultiplayerGame({
     client.connect();
   };
 
+  // PHONE BROWSERS: the first touch inside the match screen is the user
+  // gesture that may request fullscreen — the moment the address bar
+  // gets out of the arena's way (see mobileFullscreen.ts). Once per
+  // mounted screen; leaving the match hands the chrome back.
+  const fullscreenRequestedRef = useRef(false);
+  const handleRootPointerDown = useCallback(() => {
+    if (fullscreenRequestedRef.current) return;
+    fullscreenRequestedRef.current = true;
+    void enterMobileFullscreen();
+  }, []);
+  useEffect(
+    () => () => {
+      if (fullscreenRequestedRef.current) exitMobileFullscreen();
+    },
+    []
+  );
+
   // Focus restore target for the result overlay (Task 11). The element
   // focused when the match ended is often gone by the time the overlay
   // closes — MatchControls unmounts with the running match — so the
@@ -185,6 +206,7 @@ export function MultiplayerGame({
   return (
     <div
       data-testid="multiplayer-game"
+      onPointerDown={handleRootPointerDown}
       className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased"
     >
       <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6">

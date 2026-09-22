@@ -97,6 +97,11 @@ describe("the roster is a vertical column", () => {
     const rail = screen.getByTestId("match-rail");
     expect(rail.className).toMatch(/\bw-\d+\b/); // an explicit width
     expect(rail.className).toContain("shrink-0"); // never squeezed away
+    // Phones: HALF the old width (w-44 → w-20) — the arena owns the
+    // small screen; desktop keeps the roomy sm:w-52.
+    expect(rail.className).toContain("w-20");
+    expect(rail.className).toContain("sm:w-52");
+    expect(rail.className).not.toContain("w-44");
   });
 
   it("renders one row per player, in snapshot order", () => {

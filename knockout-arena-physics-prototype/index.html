@@ -2,9 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Knockout Arena</title>
     <meta name="theme-color" content="#0b0e14" />
+    <!--
+      MOBILE CHROME: the server serves /manifest.webmanifest (see
+      httpServer.ts) so an installed PWA launches with no browser
+      chrome at all; the apple-* metas cover iOS home-screen installs.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Knockout Arena" />
     <!--
       FAVICONS ARE INLINE DATA URIs ON PURPOSE.
 

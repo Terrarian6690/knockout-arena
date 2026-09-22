@@ -161,7 +161,7 @@ export function PowerMeter({
         "relative select-none",
         // A fixed aspect box: the SVG and the buttons share one
         // coordinate space, so the points always sit on the arrow.
-        "h-14 w-full max-w-[208px] sm:h-[72px] sm:w-[300px] sm:max-w-full",
+        "h-14 w-full max-w-[208px] sm:h-16 sm:w-[300px] sm:max-w-full",
         disabled && "opacity-60 saturate-50"
       )}
     >

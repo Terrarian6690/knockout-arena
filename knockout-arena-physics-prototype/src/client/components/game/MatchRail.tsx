@@ -51,7 +51,7 @@ export function MatchRail({ snapshot, roomVisibility }: MatchRailProps) {
   return (
     <div
       data-testid="match-rail"
-      className="flex w-44 shrink-0 flex-col gap-1.5 overflow-y-auto border-r border-white/10 bg-white/[0.02] p-2 sm:w-52 sm:p-3"
+      className="flex w-20 shrink-0 flex-col gap-1.5 overflow-y-auto border-r border-white/10 bg-white/[0.02] p-2 sm:w-52 sm:p-3"
     >
       {/* The roster's title, in place of the subtitle that used to sit
           under the logo. Bigger than the tiles it heads, because it is

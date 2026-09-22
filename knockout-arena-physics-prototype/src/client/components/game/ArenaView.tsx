@@ -33,6 +33,47 @@ export function shrinkPreviewPulse(nowMs: number): number {
 /** DOM id linking the canvas to its text alternative (Task 12). */
 const ARENA_DESCRIPTION_ID = "arena-state-description";
 
+// ── pinch-zoom & pan (phones) ──────────────────────────────────────────
+/** How the drawn arena is magnified/shifted over its container. */
+type ViewTransform = { scale: number; tx: number; ty: number };
+const IDENTITY_VIEW: ViewTransform = { scale: 1, tx: 0, ty: 0 };
+const MIN_SCALE = 1;
+const MAX_SCALE = 4;
+/** Above this zoom the "Reset view" pill appears. */
+const ZOOMED_EPSILON = 1.01;
+
+function firstTwo(
+  pointers: Map<number, { x: number; y: number }>
+): Array<{ x: number; y: number }> {
+  const out: Array<{ x: number; y: number }> = [];
+  for (const point of pointers.values()) {
+    out.push(point);
+    if (out.length === 2) break;
+  }
+  return out;
+}
+
+function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+function midOf(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+/**
+ * The gesture baseline: pinch = zoom (the distance between two fingers
+ * drives the scale, keeping the world point under the pinch midpoint
+ * anchored), two-finger drag = pan (the midpoint's travel). ONE finger
+ * stays aiming — the two-finger gesture is deliberately the only
+ * zoom/pan input, so it never fights the aim.
+ */
+type Gesture = {
+  dist: number;
+  mid: { x: number; y: number };
+  view: ViewTransform;
+};
+
 /**
  * The multiplayer arena canvas.
  *
@@ -135,6 +176,76 @@ export function ArenaView({
   // snapshot/canvas size through refs without depending on them.
   latestRef.current = snapshot;
   canvasSizeRef.current = canvasSize;
+
+  // ── pinch-zoom & pan state (phones) ──────────────────────────────
+  // The applied transform lives in React state (it drives the canvas
+  // style and the reset pill); the live pointer tracking is refs, so
+  // the render loop above stays untouched by the gesture.
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [view, setView] = useState<ViewTransform>(IDENTITY_VIEW);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const gestureRef = useRef<Gesture | null>(null);
+
+  function handleGesturePointerDown(event: PointerEvent<HTMLDivElement>) {
+    pointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+    if (pointersRef.current.size < 2) return;
+    if (gestureRef.current === null) {
+      const [a, b] = firstTwo(pointersRef.current);
+      gestureRef.current = {
+        dist: Math.max(1, distance(a!, b!)),
+        mid: midOf(a!, b!),
+        view: viewRef.current,
+      };
+      // Gesture fingers never aim: keep this press off the canvas (the
+      // FIRST finger already went through and aimed as usual).
+      event.stopPropagation();
+    }
+  }
+
+  function handleGesturePointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (!pointersRef.current.has(event.pointerId)) return;
+    pointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+    const gesture = gestureRef.current;
+    if (gesture === null || pointersRef.current.size < 2) return;
+    const [a, b] = firstTwo(pointersRef.current);
+    const mid = midOf(a!, b!);
+    const scale = Math.min(
+      MAX_SCALE,
+      Math.max(MIN_SCALE, (gesture.view.scale * distance(a!, b!)) / gesture.dist)
+    );
+    // Keep the world point that sat under the baseline midpoint under
+    // the CURRENT midpoint, then add the midpoint's travel as pan.
+    let tx =
+      mid.x - ((gesture.mid.x - gesture.view.tx) / gesture.view.scale) * scale;
+    let ty =
+      mid.y - ((gesture.mid.y - gesture.view.ty) / gesture.view.scale) * scale;
+    tx += mid.x - gesture.mid.x;
+    ty += mid.y - gesture.mid.y;
+    // The canvas must keep covering its container (no gaps).
+    const w = wrapperRef.current?.clientWidth ?? 0;
+    const h = wrapperRef.current?.clientHeight ?? 0;
+    tx = Math.min(0, Math.max(w - w * scale, tx));
+    ty = Math.min(0, Math.max(h - h * scale, ty));
+    setView({ scale, tx, ty });
+  }
+
+  function handleGesturePointerEnd(event: PointerEvent<HTMLDivElement>) {
+    if (!pointersRef.current.delete(event.pointerId)) return;
+    if (pointersRef.current.size < 2) gestureRef.current = null;
+  }
+
+  /** Reset the view (the pill, or programmatically). */
+  const resetView = useCallback(() => {
+    setView(IDENTITY_VIEW);
+  }, []);
 
   /** Paint one frame: the interpolated visual state + render-only effects. */
   const draw = useCallback(() => {
@@ -284,8 +395,12 @@ export function ArenaView({
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const px = event.clientX - rect.left;
-    const py = event.clientY - rect.top;
+    // The pinch-zoom rides a CSS transform on this canvas: the client
+    // rect is the SCALED box, so first fold it back to layout pixels —
+    // then the unzoomed board math below is exact, zoom or not.
+    const zoom = viewRef.current.scale;
+    const px = (event.clientX - rect.left) / zoom;
+    const py = (event.clientY - rect.top) / zoom;
     const transform = computeTransform(canvasSize.width, canvasSize.height);
     if (transform.scale <= 0) {
       // Canvas not measured yet — fall back to the world center.
@@ -323,7 +438,14 @@ export function ArenaView({
   }
 
   return (
-    <div className="relative flex-1 overflow-hidden">
+    <div
+      ref={wrapperRef}
+      className="relative flex-1 overflow-hidden"
+      onPointerDownCapture={handleGesturePointerDown}
+      onPointerMove={handleGesturePointerMove}
+      onPointerUp={handleGesturePointerEnd}
+      onPointerCancel={handleGesturePointerEnd}
+    >
       <canvas
         ref={canvasRef}
         data-testid="arena-canvas"
@@ -338,10 +460,29 @@ export function ArenaView({
           "h-full w-full touch-none",
           interactive ? "cursor-crosshair" : "cursor-default"
         )}
+        style={
+          view.scale !== 1 || view.tx !== 0 || view.ty !== 0
+            ? {
+                transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`,
+                transformOrigin: "0 0",
+              }
+            : undefined
+        }
         onPointerDown={handlePointer}
         onPointerMove={handlePointer}
         onContextMenu={handleContextMenu}
       />
+      {/* Pinch-zoom escape hatch: visible only while actually zoomed. */}
+      {view.scale > ZOOMED_EPSILON && (
+        <button
+          type="button"
+          data-testid="arena-view-reset"
+          onClick={resetView}
+          className="absolute bottom-3 right-3 z-10 rounded-lg border border-white/20 bg-black/60 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-white hover:bg-black/80"
+        >
+          Reset view
+        </button>
+      )}
       {/* Visually hidden; rebuilt only when the described state
           changes, never on plain snapshot ticks. */}
       <ArenaStateDescription

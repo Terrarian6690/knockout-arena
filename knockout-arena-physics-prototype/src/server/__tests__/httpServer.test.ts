@@ -156,6 +156,38 @@ describe("static client serving", () => {
       (await fetch(`http://127.0.0.1:${server.port()}/`, { method: "POST" })).status
     ).toBe(404);
   });
+
+  it("GET /manifest.webmanifest serves the PWA manifest (fullscreen display)", async () => {
+    const server = await makeServer();
+    const res = await httpGet(server.port(), "/manifest.webmanifest");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/manifest+json");
+    const manifest = JSON.parse(res.body) as {
+      display: string;
+      start_url: string;
+      icons: Array<{ sizes: string; src: string }>;
+    };
+    // Installed PWA = no browser chrome at all on a phone.
+    expect(manifest.display).toBe("fullscreen");
+    expect(manifest.start_url).toBe("/");
+    expect(manifest.icons.length).toBeGreaterThan(0);
+    expect(manifest.icons[0]!.sizes).toBe("192x192");
+    // The icon rides as a data URI: nothing else is served, so an
+    // icon file path would be a guaranteed 404.
+    expect(manifest.icons[0]!.src).toMatch(/^data:image\/png;base64,/);
+    // HEAD works (no body); other methods are refused.
+    const head = await fetch(`http://127.0.0.1:${server.port()}/manifest.webmanifest`, {
+      method: "HEAD",
+    });
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+    expect(
+      (await fetch(`http://127.0.0.1:${server.port()}/manifest.webmanifest`, { method: "POST" }))
+        .status
+    ).toBe(405);
+    // The catch-all 404 still stands for everything else.
+    expect((await httpGet(server.port(), "/manifest.json")).status).toBe(404);
+  });
 });
 
 describe("the WebSocket edge (protocol v1 on the same port)", () => {
