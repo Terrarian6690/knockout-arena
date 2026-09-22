@@ -331,7 +331,7 @@ describe("multiplayer aiming — changing the choice (6, 7, 8)", () => {
     );
     expect(screen.getByTestId("launch")).toBeDisabled();
     expect(screen.getByTestId("launch")).toHaveTextContent(
-      "Confirmed — waiting…"
+      "Wait for the next game"
     );
     for (const level of [1, 2, 3, 4, 5]) {
       expect(

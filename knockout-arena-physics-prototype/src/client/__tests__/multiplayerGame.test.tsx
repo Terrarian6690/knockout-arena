@@ -159,7 +159,7 @@ describe("multiplayer game: round ownership", () => {
     await feed(sockets, {}, { p0: { confirmed: true } });
     expect(screen.getByTestId("launch")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Power 4" })).toBeDisabled();
-    expect(screen.getByTestId("launch")).toHaveTextContent("Confirmed — waiting…");
+    expect(screen.getByTestId("launch")).toHaveTextContent("Wait for the next game");
     pointerAim();
     expect(sentCommands(sockets)).toHaveLength(0);
   });
@@ -350,6 +350,31 @@ describe("multiplayer game: commands", () => {
 
     expect(screen.queryByTestId("error-banner")).toBeNull();
     // The screen stays fully playable.
+    expect(screen.getByTestId("launch")).toBeEnabled();
+  });
+
+  it("never shows a banner for an already-confirmed echo (double confirm)", async () => {
+    // A confirm sent twice (a click racing the next snapshot, or Space +
+    // click) locks in ONCE on the server; the duplicate answers
+    // already-confirmed — information, not a fault: the very next
+    // snapshot flips the button to "Wait for the next game", and a red
+    // "Server error" banner would only mislead.
+    const { sockets } = await renderGame();
+    await feed(sockets, {});
+
+    await act(async () => {
+      sockets[0].serverMessage(
+        JSON.stringify({
+          protocolVersion: 1,
+          type: "error",
+          code: "already-confirmed",
+          message:
+            "the move is locked in for this round — wait for the next one",
+        })
+      );
+    });
+
+    expect(screen.queryByTestId("error-banner")).toBeNull();
     expect(screen.getByTestId("launch")).toBeEnabled();
   });
 });

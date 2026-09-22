@@ -9,7 +9,7 @@ import { MatchControls } from "../components/game/MatchControls";
  * player can sit in must read as words — never a bare "…" that assistive
  * tech announces as "dot dot dot". The three states:
  *   - canAct:            "Confirm" (enabled)
- *   - confirmed:         "Confirmed — waiting…" (disabled, locked choice)
+ *   - confirmed:         "Wait for the next game" (disabled, locked choice)
  *   - everything else    "Waiting for round…" (disabled: round resolving,
  *                        eliminated-but-watching, or disconnected)
  */
@@ -40,7 +40,7 @@ describe("MatchControls confirm label", () => {
     );
     const btn = screen.getByTestId("launch");
     expect(btn).toBeDisabled();
-    expect(btn).toHaveTextContent("Confirmed — waiting…");
+    expect(btn).toHaveTextContent("Wait for the next game");
   });
 
   it("passive states carry a meaningful label, never a bare ellipsis", () => {

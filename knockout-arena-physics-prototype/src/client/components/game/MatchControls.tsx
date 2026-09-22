@@ -97,7 +97,7 @@ export function MatchControls({
           {canAct
             ? "Confirm"
             : lockedIn
-              ? "Confirmed — waiting…"
+              ? "Wait for the next game"
               : "Waiting for round…"}
         </button>
       </div>

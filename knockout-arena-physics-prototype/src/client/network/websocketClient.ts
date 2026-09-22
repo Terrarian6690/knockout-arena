@@ -278,7 +278,17 @@ export function createNetworkClient(options: NetworkClientOptions = {}): Network
         // the UI to the new phase anyway, so showing a "Server error"
         // banner would only mislead — skip it. (A rejected reconnect
         // below stays a real error: the seat was lost.)
-        if (message.code === "wrong-phase") return;
+        // Likewise an already-confirmed echo: a double confirm (click
+        // racing the next snapshot, or Space + click) locks in once on
+        // the server and answers this on the duplicates. The lock-in is
+        // real — the very next snapshot flips the button — so showing a
+        // "Server error" banner would only mislead.
+        if (
+          message.code === "wrong-phase" ||
+          message.code === "already-confirmed"
+        ) {
+          return;
+        }
         if (reconnectToken !== null && state.status !== "connected") {
           // A recovery handshake was pending and the server rejected it
           // (invalid or expired credential — indistinguishable by

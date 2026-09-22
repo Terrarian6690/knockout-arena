@@ -159,7 +159,7 @@ describe("the Confirm button: renamed, not rewired", () => {
       />
     );
     expect(screen.getByTestId("launch")).toHaveTextContent(
-      "Confirmed — waiting…"
+      "Wait for the next game"
     );
     confirmed.unmount();
 

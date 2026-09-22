@@ -203,8 +203,7 @@ export function MultiplayerGame({
         <div className="flex items-center gap-2">
           {/* The match clock and the round decision countdown live in
               the TOP BAR (requested): no strip below it, the arena gets
-              the full remaining height. The eliminated player's notice
-              appears here too — never over the board. */}
+              the full remaining height. */}
           {snapshot !== null && (
             <MatchTimer
               phase={snapshot.phase}
@@ -219,7 +218,6 @@ export function MultiplayerGame({
           )}
           <AudioControl />
           {snapshot !== null && <RoundBadge snapshot={snapshot} />}
-          {snapshot !== null && <EliminatedNotice snapshot={snapshot} />}
         </div>
       </header>
 
@@ -258,6 +256,12 @@ export function MultiplayerGame({
                   capturing pointer events, so aiming and Confirm are
                   unaffected; it reads the server's snapshot only. */}
               <ShrinkWarning snapshot={snapshot} />
+
+              {/* The eliminated player's death notice: same spot as ever,
+                  over the arena, WITH an OK button — clicking it clears
+                  the message (the match goes on, the player keeps
+                  watching the board). */}
+              <EliminatedNotice snapshot={snapshot} />
 
               {!connected && (
                 <ConnectionBanner

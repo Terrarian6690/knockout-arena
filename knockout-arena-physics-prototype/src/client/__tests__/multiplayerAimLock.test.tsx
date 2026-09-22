@@ -228,7 +228,7 @@ describe("aim lock (4): Confirm uses the locked direction and never changes it",
     expect(lastDrawn().aimDirection).toEqual({ x: 1, y: 0 });
     expect(screen.getByTestId("launch")).toBeDisabled();
     expect(screen.getByTestId("launch")).toHaveTextContent(
-      "Confirmed — waiting…"
+      "Wait for the next game"
     );
   });
 });

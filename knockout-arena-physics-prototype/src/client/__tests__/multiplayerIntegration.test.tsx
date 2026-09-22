@@ -142,7 +142,7 @@ describe("two clients play one authoritative match (full stack)", () => {
     ).toBe(true);
     expect((host.client.getState().snapshot as GameStateSnapshot).phase).toBe("aiming"); // still the SAME round
     expect(screen.getByTestId("launch")).toBeDisabled(); // the choice is locked
-    expect(screen.getByTestId("launch")).toHaveTextContent("Confirmed — waiting…");
+    expect(screen.getByTestId("launch")).toHaveTextContent("Wait for the next game");
     expect(screen.getByTestId("turn-badge")).toHaveTextContent(
       "Ready — waiting for other players"
     );
