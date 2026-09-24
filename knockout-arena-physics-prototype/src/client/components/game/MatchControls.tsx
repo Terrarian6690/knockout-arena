@@ -53,7 +53,7 @@ export function MatchControls({
       // about 30px shorter than the old captioned stack (the controls
       // carry their own labels: aria-label "Power", per-button digits,
       // and the button text itself).
-      className="flex items-center justify-center gap-3 border-t border-white/10 bg-white/[0.02] px-3 py-1.5 sm:gap-8 sm:px-4 sm:py-2"
+      className="flex items-center justify-center gap-3 border-t border-white/10 bg-white/[0.02] px-3 py-1.5 sm:gap-8 sm:px-4 sm:py-2 max-sm:pb-[calc(env(safe-area-inset-bottom)+10px)]"
     >
       {/* The power arrow: grows thin+green (weak) → wide+red (strong). */}
       <div className="flex min-w-0 flex-1 items-center justify-center sm:flex-none">

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from "react";
-import { arenaFromSnapshot, type GameStateSnapshot } from "../../../game";
-import { computeTransform, render } from "../../renderer";
+import { arenaFromSnapshot, CONFIG, type GameStateSnapshot } from "../../../game";
+import { computeTransformWithArenaFit, render } from "../../renderer";
 import {
   INTERPOLATION_DELAY_MS,
   SnapshotBuffer,
@@ -317,7 +317,14 @@ export function ArenaView({
     // no new canvas calls and no input-path involvement: worldPoint below
     // keeps using the unshaken computeTransform for aiming.
     const shake = vfxRef.current.shakeOffset(now);
-    const transform = computeTransform(w, h);
+    // Portrait-aware fit: on a phone held upright the ARENA CIRCLE (the
+    // only place anything can happen) fills the canvas's width instead
+    // of floating between side gutters of the landscape world rect.
+    const transform = computeTransformWithArenaFit(
+      w,
+      h,
+      CONFIG.arena.radius
+    );
     const shaken =
       shake.x !== 0 || shake.y !== 0
         ? {
@@ -401,7 +408,13 @@ export function ArenaView({
     const zoom = viewRef.current.scale;
     const px = (event.clientX - rect.left) / zoom;
     const py = (event.clientY - rect.top) / zoom;
-    const transform = computeTransform(canvasSize.width, canvasSize.height);
+    // The SAME transform the draw path uses (portrait circle fit
+    // included) — aiming coordinates stay exact at any canvas shape.
+    const transform = computeTransformWithArenaFit(
+      canvasSize.width,
+      canvasSize.height,
+      CONFIG.arena.radius
+    );
     if (transform.scale <= 0) {
       // Canvas not measured yet — fall back to the world center.
       return { x: arenaRef.current.centerX, y: arenaRef.current.centerY };

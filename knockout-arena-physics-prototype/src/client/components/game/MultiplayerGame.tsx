@@ -207,6 +207,12 @@ export function MultiplayerGame({
     <div
       data-testid="multiplayer-game"
       onPointerDown={handleRootPointerDown}
+      // 100dvh (with the h-screen class as the older-browsers fallback):
+      // 100vh on a phone includes the strip UNDER the browser's bottom
+      // bar, which buried the control bar in the "cut off" part of the
+      // screen. The dynamic viewport height tracks what is actually
+      // visible, so the bar always sits above the browser chrome.
+      style={{ height: "100dvh" }}
       className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e14] font-sans text-white antialiased"
     >
       <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6">

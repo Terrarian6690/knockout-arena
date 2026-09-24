@@ -44,6 +44,37 @@ export function computeTransform(
   };
 }
 
+/**
+ * The portrait variant of the world fit: the world is landscape, so on
+ * a portrait canvas the contain-fit binds on WIDTH and strands the
+ * CIRCULAR floor in side gutters (the square world's corners are the
+ * only thing the extra height buys). Nothing actionable ever renders
+ * outside the arena circle — pawns glide past its edge and are gone —
+ * so in portrait the transform instead fits the circle (plus a small
+ * breathing margin) to the canvas's shorter side. The arena becomes
+ * noticeably bigger exactly where the space was being wasted.
+ *
+ * Landscape canvases return the plain world fit, unchanged.
+ */
+export function computeTransformWithArenaFit(
+  canvasWidth: number,
+  canvasHeight: number,
+  arenaRadius: number
+): { scale: number; offsetX: number; offsetY: number } {
+  const base = computeTransform(canvasWidth, canvasHeight);
+  if (canvasHeight <= canvasWidth) return base;
+  const pad = 12; // total breathing room around the boundary ring
+  const fit = (Math.min(canvasWidth, canvasHeight) - pad) / (2 * arenaRadius);
+  // Never smaller than the world fit (degenerate canvases aside, the
+  // circle fit is the larger of the two in portrait).
+  const scale = Math.max(base.scale, fit);
+  return {
+    scale,
+    offsetX: (canvasWidth - CONFIG.world.width * scale) / 2,
+    offsetY: (canvasHeight - CONFIG.world.height * scale) / 2,
+  };
+}
+
 export function render(
   ctx: CanvasRenderingContext2D,
   snapshot: GameStateSnapshot,
