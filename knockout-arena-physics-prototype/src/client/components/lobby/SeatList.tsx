@@ -143,14 +143,18 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
               >
                 {seat.displayName ?? seatLabel(seat.playerId)}
               </span>
-              {/* The player's DISC SKIN — immediately AFTER the nick and
-                  as TALL as its 24px text: the same palette index the
-                  arena renderer paints their pawn with. */}
+              {/* The player's DISC SKIN — immediately AFTER the nick,
+                  and AS LARGE AS THE FRAME ALLOWS: negative margins
+                  cancel the tile's own padding, so the 44px disc is
+                  tangent to the tile's border top and bottom (the
+                  tile's height does not grow — the disc simply fills
+                  it). The same palette index / image the arena renderer
+                  paints their pawn with. */}
               <span
                 aria-hidden
                 data-testid={`skin-swatch-${seat.playerId}`}
                 title="Disc skin"
-                className="h-6 w-6 shrink-0 rounded-full ring-1 ring-white/25"
+                className="-my-2.5 h-11 w-11 shrink-0 rounded-full ring-1 ring-white/25"
                 style={skinSwatchStyle(seat.skin ?? 0)}
               />
               {seat.playerId === selfPlayerId && <YouChip className="text-xs" />}

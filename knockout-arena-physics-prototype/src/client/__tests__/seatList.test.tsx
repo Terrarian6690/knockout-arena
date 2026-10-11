@@ -192,8 +192,11 @@ describe("the seat list's match-rail look", () => {
     const nick = within(screen.getByTestId("info-p0")).getByText("Player 1");
     expect(nick.className).toContain("text-2xl"); // 2x the 12px base
     const swatch = screen.getByTestId("skin-swatch-p0");
-    expect(swatch.className).toContain("h-6"); // 24px = the nick's height
-    expect(swatch.className).toContain("w-6");
+    // 44px, tangent to the tile's border (the negative margins cancel
+    // the tile's py-2.5): as large as the frame allows.
+    expect(swatch.className).toContain("h-11");
+    expect(swatch.className).toContain("w-11");
+    expect(swatch.className).toContain("-my-2.5");
   });
 
   it("renders ONE column of rows (no side-by-side grid)", () => {

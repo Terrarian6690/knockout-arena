@@ -72,9 +72,9 @@ export function SkinPicker({
         )}
       >
         {value === null ? (
-          <RandomDisc size={24} />
+          <RandomDisc size={28} />
         ) : (
-          <DiscSwatch skin={value} size={24} />
+          <DiscSwatch skin={value} size={28} />
         )}
         <span
           aria-hidden="true"
@@ -89,7 +89,7 @@ export function SkinPicker({
           data-testid="skin-menu"
           role="menu"
           aria-label="Choose a disc skin"
-          className="absolute right-0 top-[calc(100%+6px)] z-30 flex gap-1.5 rounded-xl border border-white/15 bg-slate-900/95 p-2 shadow-xl backdrop-blur"
+          className="absolute right-0 top-[calc(100%+6px)] z-30 flex max-w-[calc(100vw-2.5rem)] flex-wrap gap-1.5 rounded-xl border border-white/15 bg-slate-900/95 p-2 shadow-xl backdrop-blur"
         >
           {/* The RANDOM choice first — it is the default. */}
           <button
@@ -111,7 +111,7 @@ export function SkinPicker({
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
             )}
           >
-            <RandomDisc size={30} />
+            <RandomDisc size={40} />
           </button>
           {skinChoices().map((choice) => (
             <button
@@ -134,7 +134,7 @@ export function SkinPicker({
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
               )}
             >
-              <DiscSwatch skin={choice.index} size={30} />
+              <DiscSwatch skin={choice.index} size={40} />
             </button>
           ))}
         </div>
