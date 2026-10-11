@@ -21,6 +21,12 @@ import type * as EngineApi from "../index";
 /** Every value (runtime) export of the engine entry point, sorted. */
 const EXPECTED_RUNTIME_EXPORTS = [
   "CONFIG",
+  "IMAGE_SKINS",
+  "IMAGE_SKIN_BASE",
+  // The IMAGE-based disc skins (ids 100+): IMAGE_SKINS/IMAGE_SKIN_BASE
+  // are the shared data contract — choosable skins for the wardrobe,
+  // secret name-trigger ones the server alone assigns — placed with the
+  // rest of the alphabetical exports below.
   // The fixed pawn palette (Task: disc skins): the picker and every
   // player list render seat colors from these shared tables.
   "PLAYER_COLORS",
@@ -33,17 +39,24 @@ const EXPECTED_RUNTIME_EXPORTS = [
   "arenaEdgeRadius",
   "arenaFromSnapshot",
   "arenaShrinkView",
+  "choosableImageSkins",
   "createArena",
   "createGame",
   "deserializeGameState",
   "floorRadius",
+  "imageSkinById",
+  "imageSkinFallbackColor",
   "indicatorLength",
   "initialArenaRadius",
+  "isChoosableSkinId",
+  "isImageSkin",
   "isMinArenaRadius",
+  "isSecretSkin",
   "minArenaRadius",
   "playerColor",
   "playerStroke",
   "projectSnapshot",
+  "secretSkinForName",
   "serializeGameState",
   // The FIXED spawn slots (Task 7 — six-player capacity): the single
   // source of spawn positions. Exported so the server, tests and any

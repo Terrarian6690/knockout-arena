@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import {
   CONFIG,
   PLAYER_COLORS,
+  isChoosableSkinId,
+  isImageSkin,
+  secretSkinForName,
   type CommandRejection,
   type GameCommand,
   type PlayerSpec,
@@ -266,7 +269,7 @@ export type SkinResult =
       reason:
         | "unknown-session" // malformed/absent session token
         | "not-in-room" // the session holds no seat
-        | "invalid-skin" // not an integer in [0, palette length)
+        | "invalid-skin" // not a palette index or a choosable image skin
         | "room-playing"; // skins are frozen once the match starts
     };
 
@@ -366,6 +369,15 @@ interface RoomEntry {
    * holds (see assignSkin). A freed/vacated seat returns to null.
    */
   skins: Array<number | null>;
+  /**
+   * seat index → the EXPLICIT skin that seat's occupant last picked in
+   * the wardrobe (palette index or a choosable image skin), or null
+   * when they never picked / chose Random. Bookkeeping ONLY — it never
+   * reaches the wire: it exists so a SECRET name-trigger skin can take
+   * the seat's visible skin over and hand the explicit choice back
+   * when the name stops matching.
+   */
+  explicitSkins: Array<number | null>;
   /**
    * seat index → how many matches THIS seat's occupant has won in this
    * room (across play-again rematches; the roster — and the group —
@@ -700,6 +712,37 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     return room.skins[seat] as number;
   }
 
+  /**
+   * Re-evaluate the SECRET image skins against a seat's display name
+   * (the name-trigger contract): a name containing a trigger awards
+   * that skin — list order is the priority, the assignment is silent,
+   * and the picker never offered it. When the name matches NOTHING and
+   * the seat still WEARS a secret skin (rename away), the occupant's
+   * last EXPLICIT wardrobe pick is restored — or, without one, a fresh
+   * random palette deal, exactly like the "Random" choice.
+   *
+   * Runs on every name write (setName is the only way a name enters a
+   * seat) and after the "Random" reset in setSkin. The explicit picks
+   * in setSkin deliberately skip it: a conscious wardrobe choice wins
+   * over the secret until the next name change re-evaluates.
+   */
+  function applySecretSkin(room: RoomEntry, seat: number): void {
+    const secret = secretSkinForName(room.names[seat] ?? "");
+    if (secret !== null) {
+      room.skins[seat] = secret;
+      return;
+    }
+    if (!isImageSkin(room.skins[seat] ?? -1)) return;
+    // The explicit pick is always a validated skin (palette or a
+    // choosable image) — setSkin wrote it — so null is the only "no".
+    const explicit = room.explicitSkins[seat];
+    if (explicit === null) {
+      assignSkin(room, seat);
+    } else {
+      room.skins[seat] = explicit;
+    }
+  }
+
   function infoOf(room: RoomEntry): RoomInfo {
     const seats: RoomSeatInfo[] = [];
     for (let i = 0; i < MAX_PLAYERS; i++) {
@@ -802,6 +845,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       seats: Array.from({ length: MAX_PLAYERS }, () => null),
       names: Array.from({ length: MAX_PLAYERS }, () => null),
       skins: Array.from({ length: MAX_PLAYERS }, () => null),
+      explicitSkins: Array.from({ length: MAX_PLAYERS }, () => null),
       wins: Array.from({ length: MAX_PLAYERS }, () => 0),
       vacated: new Set(),
       reserved: new Map(),
@@ -994,6 +1038,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
       // its WIN COUNT: wins belong to the occupant, not the chair.
       room.names[seat] = null;
       room.skins[seat] = null;
+      room.explicitSkins[seat] = null;
       room.wins[seat] = 0;
     }
     // A departure can drop the room below MIN_PLAYERS (cancel) or simply
@@ -1095,6 +1140,10 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     const name = normalizeDisplayName(rawName);
     if (name === null) return { ok: false, reason: "invalid-name" };
     seated.room.names[seated.seat] = name;
+    // The name-trigger skins: matching names earn their secret skin
+    // (and non-matching names give it back) — server-assigned, never
+    // listed anywhere.
+    applySecretSkin(seated.room, seated.seat);
     return { ok: true, room: infoOf(seated.room) };
   }
 
@@ -1115,19 +1164,26 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     }
     if (rawSkin === null) {
       // Back to the DEFAULT behavior: a fresh RANDOM skin, excluding
-      // whatever the other seats hold.
+      // whatever the other seats hold — and the explicit pick is gone
+      // with it. A matching secret name re-applies its skin on top.
+      seated.room.explicitSkins[seated.seat] = null;
       assignSkin(seated.room, seated.seat);
+      applySecretSkin(seated.room, seated.seat);
       return { ok: true, room: infoOf(seated.room) };
     }
     if (
       typeof rawSkin !== "number" ||
       !Number.isInteger(rawSkin) ||
       rawSkin < 0 ||
-      rawSkin >= PLAYER_COLORS.length
+      // The palette plus the CHOOSABLE image skins. Secret ones are
+      // server-assigned only — they are refused here exactly like any
+      // other unknown id (no existence leak).
+      (rawSkin >= PLAYER_COLORS.length && !isChoosableSkinId(rawSkin))
     ) {
       return { ok: false, reason: "invalid-skin" };
     }
     seated.room.skins[seated.seat] = rawSkin;
+    seated.room.explicitSkins[seated.seat] = rawSkin;
     return { ok: true, room: infoOf(seated.room) };
   }
 
@@ -1168,6 +1224,7 @@ export function createRoomManager(options?: RoomManagerOptions): RoomManager {
     for (const seat of room.vacated) {
       room.names[seat] = null;
       room.skins[seat] = null;
+      room.explicitSkins[seat] = null;
       room.wins[seat] = 0;
     }
     room.vacated.clear();

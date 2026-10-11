@@ -75,9 +75,10 @@ describe("the skin picker on the home screen", () => {
 
     fireEvent.click(picker());
     const menu = screen.getByTestId("skin-menu");
-    // Random first, then the six palette colors.
+    // Random first, then the six palette colors, then the CHOOSABLE
+    // image skins (the black hole) — the secret ones never list.
     expect(menu.querySelectorAll("[role=menuitemradio]")).toHaveLength(
-      PLAYER_COLORS.length + 1
+      PLAYER_COLORS.length + 2
     );
     expect(screen.getByTestId("skin-option-random")).toBeInTheDocument();
     expect(

@@ -1,4 +1,5 @@
-import { playerColor, type GameStateSnapshot } from "../../../game";
+import { type GameStateSnapshot } from "../../../game";
+import { skinSwatchStyle } from "../lobby/skins";
 import { cn } from "../../utils/cn";
 import { YouChip } from "../lobby/SeatList";
 
@@ -93,11 +94,13 @@ export function MatchRail({ snapshot, roomVisibility }: MatchRailProps) {
                 "h-3 w-3 shrink-0 rounded-full ring-1",
                 out ? "opacity-40 ring-white/15" : "ring-white/25"
               )}
-              style={{
-                // Greyed out when eliminated: the pawn's colour stops
-                // mattering once it is off the board.
-                backgroundColor: out ? "#6b7280" : playerColor(pawn.colorIndex),
-              }}
+              style={
+                out
+                  ? // Greyed out when eliminated: the pawn's look stops
+                    // mattering once it is off the board.
+                    { backgroundColor: "#6b7280" }
+                  : skinSwatchStyle(pawn.colorIndex)
+              }
             />
             {pawn.isLocal && <YouChip />}
           </div>

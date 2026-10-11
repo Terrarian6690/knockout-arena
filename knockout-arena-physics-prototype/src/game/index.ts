@@ -81,5 +81,6 @@ export {
   type Arena,
 } from "./arena";
 export { CONFIG } from "./config";
+export * from "./imageSkins";
 export { playerColor, playerStroke, PLAYER_COLORS, PLAYER_STROKES } from "./player";
 export { indicatorLength, aimAt } from "./aiming";

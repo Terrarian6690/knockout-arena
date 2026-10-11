@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { playerColor, playerStroke, PLAYER_COLORS } from "../../../game";
 import { cn } from "../../utils/cn";
 import { skinChoices, skinName, type SkinChoice } from "./skins";
+import { imageSkinUrl } from "../../imageSkinAssets";
+import { isImageSkin } from "../../../game";
 
 /**
  * The disc-skin picker — a small button showing the CURRENT choice (the
@@ -146,6 +148,41 @@ export function SkinPicker({
  * lighter outline, top-left specular highlight.
  */
 export function DiscSwatch({ skin, size }: { readonly skin: number; readonly size: number }) {
+  const clipId = `disc-clip-${useId().replace(/[^a-zA-Z0-9-]/g, "")}`;
+  const imageUrl = isImageSkin(skin) ? imageSkinUrl(skin) : null;
+  if (imageUrl !== null) {
+    // The image skin: the LARGEST CENTERED CIRCLE of the asset (any
+    // input aspect ratio — "slice" crops the longer side, the circle
+    // clip rounds it), over its fallback color so a not-yet-decoded
+    // image still shows a proper disc. Same gloss as the palette discs.
+    return (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        className="block"
+      >
+        <defs>
+          <clipPath id={clipId}>
+            <circle cx="12" cy="12" r="10" />
+          </clipPath>
+        </defs>
+        <circle cx="12" cy="12" r="10" fill={playerColor(skin)} />
+        <image
+          href={imageUrl}
+          x="0"
+          y="0"
+          width="24"
+          height="24"
+          preserveAspectRatio="xMidYMid slice"
+          clipPath={`url(#${clipId})`}
+        />
+        <circle cx="12" cy="12" r="10" fill="none" stroke={playerStroke(skin)} strokeWidth="2" />
+        <circle cx="8.4" cy="8.4" r="3.4" fill="rgba(255,255,255,0.35)" />
+      </svg>
+    );
+  }
   return (
     <svg
       width={size}

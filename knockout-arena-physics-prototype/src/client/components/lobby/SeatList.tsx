@@ -1,4 +1,5 @@
-import { CONFIG, playerColor } from "../../../game";
+import { CONFIG } from "../../../game";
+import { skinSwatchStyle } from "./skins";
 import type { RosterEntry } from "../../network/types";
 import { cn } from "../../utils/cn";
 
@@ -150,7 +151,7 @@ export function SeatList({ roster, selfPlayerId }: SeatListProps) {
                 data-testid={`skin-swatch-${seat.playerId}`}
                 title="Disc skin"
                 className="h-6 w-6 shrink-0 rounded-full ring-1 ring-white/25"
-                style={{ backgroundColor: playerColor(seat.skin ?? 0) }}
+                style={skinSwatchStyle(seat.skin ?? 0)}
               />
               {seat.playerId === selfPlayerId && <YouChip className="text-xs" />}
             </span>

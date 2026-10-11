@@ -153,8 +153,9 @@ export function parseClientMessage(raw: string): ParsedClientMessage {
 
     case "set_skin":
       // Shape only: a number, or null (= deal a fresh RANDOM skin).
-      // Whether the number is a valid palette index is the room
-      // manager's semantic call (clean "invalid-skin" error).
+      // Whether the number is a palette index or a choosable image
+      // skin is the room manager's semantic call (clean "invalid-skin"
+      // error).
       if (
         hasOnly(envelope, "type", "protocolVersion", "skin") &&
         (typeof envelope.skin === "number" || envelope.skin === null)

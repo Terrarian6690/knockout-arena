@@ -1,4 +1,5 @@
-import { CONFIG, arenaEdgeRadius, createArena, playerColor, playerStroke, indicatorLength, type Arena, type GameStateSnapshot } from "../game";
+import { CONFIG, arenaEdgeRadius, createArena, indicatorLength, isImageSkin, playerColor, playerStroke, type Arena, type GameStateSnapshot } from "../game";
+import { imageSkinUrl } from "./imageSkinAssets";
 import type { EffectFrame } from "./effects";
 
 /**
@@ -321,6 +322,30 @@ function drawShrinkPreview(
   ctx.globalAlpha = 1;
 }
 
+/**
+ * The preloaded HTMLImageElements for image skins, by wire id. Created
+ * on first need from the bundled URLs; `complete && naturalWidth > 0`
+ * gates every draw, so a not-yet-decoded (or failed) asset silently
+ * falls back to the pawn's palette color — the board never waits on an
+ * image, and a broken one can never blank a pawn.
+ */
+const imageSkinImages = new Map<number, HTMLImageElement>();
+
+function drawableImageSkinImage(colorIndex: number): HTMLImageElement | null {
+  if (!isImageSkin(colorIndex)) return null;
+  let image = imageSkinImages.get(colorIndex);
+  if (image === undefined) {
+    const url = imageSkinUrl(colorIndex);
+    if (url === null) return null;
+    image = new Image();
+    image.src = url;
+    imageSkinImages.set(colorIndex, image);
+  }
+  return image !== null && image.complete && image.naturalWidth > 0
+    ? image
+    : null;
+}
+
 function drawPawn(
   ctx: CanvasRenderingContext2D,
   pawn: GameStateSnapshot["pawns"][number],
@@ -341,11 +366,26 @@ function drawPawn(
   ctx.fillStyle = "rgba(0,0,0,0.35)";
   ctx.fill();
 
-  // Body.
+  // Body. Image skins: the LARGEST CENTERED CIRCLE of the asset — the
+  // centered square of its shorter side, clipped to the pawn's circle
+  // (any input aspect ratio, nothing squashed). Until the asset is
+  // decoded (or if it never loads) the palette fallback fills in, so a
+  // pawn is always a proper disc.
+  const image = drawableImageSkinImage(pawn.colorIndex);
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fillStyle = fill;
-  ctx.fill();
+  if (image !== null) {
+    const side = Math.min(image.naturalWidth, image.naturalHeight);
+    const sx = (image.naturalWidth - side) / 2;
+    const sy = (image.naturalHeight - side) / 2;
+    ctx.save();
+    ctx.clip();
+    ctx.drawImage(image, sx, sy, side, side, x - r, y - r, r * 2, r * 2);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
   ctx.lineWidth = 2;
   ctx.strokeStyle = stroke;
   ctx.stroke();
