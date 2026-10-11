@@ -140,8 +140,9 @@ describe("renderer — image-skin pawns", () => {
     expect([sw, sh]).toEqual([128, 128]);
     expect(sx).toBe(64);
     expect(sy).toBe(0);
-    // Destination: the pawn's bounding box, after the clip.
-    const r = CONFIG.pawn.radius;
+    // Destination: the pawn's VISUAL bounding box — image skins draw
+    // 20% larger than the physical radius (draw-only inflation).
+    const r = CONFIG.pawn.radius * 1.2;
     expect([dx, dy, dw, dh]).toEqual([450 - r, 350 - r, r * 2, r * 2]);
     // The clip belongs to the pawn's circle, opened just before.
     const arcBefore = calls
@@ -149,8 +150,13 @@ describe("renderer — image-skin pawns", () => {
       .reverse()
       .find((c) => c.op === "arc");
     expect(arcBefore).toBeTruthy();
-    // Palette pawns remain plain fills — no clip, no drawImage.
+    // Palette pawns remain plain fills — no clip, no drawImage…
     const plain = draw(2);
     expect(plain.some((c) => c.op === "drawImage")).toBe(false);
+    // …and only the PALETTE pawn gets the specular gloss; the image
+    // pawn's light is baked into its photo.
+    const gloss = { op: "set:fillStyle", args: ["rgba(255,255,255,0.35)"] };
+    expect(calls).not.toContainEqual(gloss);
+    expect(plain).toContainEqual(gloss);
   });
 });

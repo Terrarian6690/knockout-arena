@@ -72,9 +72,9 @@ export function SkinPicker({
         )}
       >
         {value === null ? (
-          <RandomDisc size={20} />
+          <RandomDisc size={24} />
         ) : (
-          <DiscSwatch skin={value} size={20} />
+          <DiscSwatch skin={value} size={24} />
         )}
         <span
           aria-hidden="true"
@@ -111,7 +111,7 @@ export function SkinPicker({
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
             )}
           >
-            <RandomDisc size={24} />
+            <RandomDisc size={30} />
           </button>
           {skinChoices().map((choice) => (
             <button
@@ -134,7 +134,7 @@ export function SkinPicker({
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
               )}
             >
-              <DiscSwatch skin={choice.index} size={24} />
+              <DiscSwatch skin={choice.index} size={30} />
             </button>
           ))}
         </div>
@@ -178,8 +178,8 @@ export function DiscSwatch({ skin, size }: { readonly skin: number; readonly siz
           preserveAspectRatio="xMidYMid slice"
           clipPath={`url(#${clipId})`}
         />
+        {/* No specular blob on image skins: the photo has its own light. */}
         <circle cx="12" cy="12" r="10" fill="none" stroke={playerStroke(skin)} strokeWidth="2" />
-        <circle cx="8.4" cy="8.4" r="3.4" fill="rgba(255,255,255,0.35)" />
       </svg>
     );
   }

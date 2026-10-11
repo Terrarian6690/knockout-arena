@@ -91,7 +91,7 @@ export function MatchRail({ snapshot, roomVisibility }: MatchRailProps) {
               aria-hidden
               data-testid={`rail-swatch-${pawn.id}`}
               className={cn(
-                "h-3 w-3 shrink-0 rounded-full ring-1",
+                "h-4 w-4 shrink-0 rounded-full ring-1",
                 out ? "opacity-40 ring-white/15" : "ring-white/25"
               )}
               style={

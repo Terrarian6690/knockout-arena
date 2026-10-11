@@ -360,9 +360,15 @@ function drawPawn(
   const fill = playerColor(pawn.colorIndex);
   const stroke = playerStroke(pawn.colorIndex);
 
+  // An IMAGE skin renders 20% larger than its physical body (draw-only
+  // inflation — physics, hits and aim math stay on the true radius): a
+  // photo needs the extra pixels to read at board scale.
+  const image = drawableImageSkinImage(pawn.colorIndex);
+  const visualR = image !== null ? r * 1.2 : r;
+
   // Shadow for depth.
   ctx.beginPath();
-  ctx.arc(x + 2, y + 3, r, 0, Math.PI * 2);
+  ctx.arc(x + 2, y + 3, visualR, 0, Math.PI * 2);
   ctx.fillStyle = "rgba(0,0,0,0.35)";
   ctx.fill();
 
@@ -371,16 +377,25 @@ function drawPawn(
   // (any input aspect ratio, nothing squashed). Until the asset is
   // decoded (or if it never loads) the palette fallback fills in, so a
   // pawn is always a proper disc.
-  const image = drawableImageSkinImage(pawn.colorIndex);
   ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.arc(x, y, visualR, 0, Math.PI * 2);
   if (image !== null) {
     const side = Math.min(image.naturalWidth, image.naturalHeight);
     const sx = (image.naturalWidth - side) / 2;
     const sy = (image.naturalHeight - side) / 2;
     ctx.save();
     ctx.clip();
-    ctx.drawImage(image, sx, sy, side, side, x - r, y - r, r * 2, r * 2);
+    ctx.drawImage(
+      image,
+      sx,
+      sy,
+      side,
+      side,
+      x - visualR,
+      y - visualR,
+      visualR * 2,
+      visualR * 2
+    );
     ctx.restore();
   } else {
     ctx.fillStyle = fill;
@@ -390,16 +405,20 @@ function drawPawn(
   ctx.strokeStyle = stroke;
   ctx.stroke();
 
-  // Highlight (top-left specular).
-  ctx.beginPath();
-  ctx.arc(x - r * 0.3, y - r * 0.3, r * 0.45, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(255,255,255,0.35)";
-  ctx.fill();
+  // Highlight (top-left specular) — PALETTE discs only: on an image
+  // skin the baked picture already carries its own light, and a fake
+  // white blob just smudges it.
+  if (image === null) {
+    ctx.beginPath();
+    ctx.arc(x - r * 0.3, y - r * 0.3, r * 0.45, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.fill();
+  }
 
   // Active pulse ring.
   if (isActive && snapshot.phase === "aiming") {
     ctx.beginPath();
-    ctx.arc(x, y, r + 5, 0, Math.PI * 2);
+    ctx.arc(x, y, visualR + 5, 0, Math.PI * 2);
     ctx.strokeStyle = "rgba(255,255,255,0.6)";
     ctx.lineWidth = 1.5;
     ctx.stroke();

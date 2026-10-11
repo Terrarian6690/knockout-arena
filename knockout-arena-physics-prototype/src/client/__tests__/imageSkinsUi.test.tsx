@@ -72,16 +72,18 @@ describe("the image swatch crop contract", () => {
     // in the document is the clipPath's own, no fill)
     const under = container.querySelectorAll("circle")[1]!;
     expect(under.getAttribute("fill")).toBe(playerColor(100));
-    // …and the gloss stays.
-    expect(container.querySelector('circle[fill="rgba(255,255,255,0.35)"]')).not.toBeNull();
+    // …and NO fake specular blob: the photo carries its own light.
+    expect(container.querySelector('circle[fill="rgba(255,255,255,0.35)"]')).toBeNull();
   });
 
-  it("palette skins render the plain disc (no image machinery)", () => {
+  it("palette skins render the plain disc: gloss kept, no image machinery", () => {
     const { container } = render(<DiscSwatch skin={2} size={24} />);
     expect(container.querySelector("image")).toBeNull();
     expect(container.querySelector("clipPath")).toBeNull();
     expect(container.querySelector("circle")!.getAttribute("fill")).toBe(
       playerColor(2)
     );
+    // The specular highlight is a PALETTE-disc feature.
+    expect(container.querySelector('circle[fill="rgba(255,255,255,0.35)"]')).not.toBeNull();
   });
 });
