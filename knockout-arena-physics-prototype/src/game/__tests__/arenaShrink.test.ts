@@ -370,7 +370,7 @@ describe("the shrink moves the LOGICAL boundary (no physical wall)", () => {
     // p1 hugs the rim — exactly where a settled pawn rests against the
     // CURRENT edge: inside today's boundary, outside the next one. This
     // is the case the shrink exists for.
-    const doomed = floorRadius(createArena(INITIAL)) - PAWN_R - 1; // 297
+    const doomed = floorRadius(createArena(INITIAL)) - PAWN_R - 1; // 293
     const safe = floorRadius(createArena(MIN)) - 40; // deep inside forever
     g.loadState(
       matchState(
@@ -494,7 +494,7 @@ describe("the shrink moves the LOGICAL boundary (no physical wall)", () => {
     const small = createArena(240);
     const big = createArena(330);
     // Just past the small arena's threshold (drawn edge + a whole pawn
-    // diameter = 256), but comfortably inside the big one's (346).
+    // diameter = 288), but comfortably inside the big one's (348).
     const between = arenaEdgeRadius(small) + PAWN_R + 2; // 258
     expect(between).toBeLessThan(arenaEdgeRadius(big) + PAWN_R);
     expect(isPawnOutOfBounds(big, CX, CY + between, PAWN_R)).toBe(false);

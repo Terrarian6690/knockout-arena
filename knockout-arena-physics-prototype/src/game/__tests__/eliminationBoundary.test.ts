@@ -31,15 +31,15 @@ import { CONFIG } from "../config";
  * So this file hard-codes the arithmetic:
  *
  *     outer radius      330
- *   − wall thickness     16
+ *   − wall thickness     18
  *   ────────────────────────
- *     floor radius      314
- *   + pawn radius        16
+ *     floor radius      312
+ *   + pawn radius        18
  *   ────────────────────────
  *     DRAWN EDGE        330   (the platform the player sees)
- *   + pawn radius        16
+ *   + pawn radius        18
  *   ────────────────────────
- *     ELIMINATION AT    346   (strictly greater than)
+ *     ELIMINATION AT    348   (strictly greater than)
  *
  * Every number is written out. If any CONFIG value moves, or the rule
  * drifts back to killing at the drawn edge (the half-out bug), these
@@ -54,17 +54,17 @@ describe("the elimination boundary is floor + pawn radius, in absolute units", (
     // Guard the inputs: if these move, the literals below are stale and
     // the failure should say so here rather than looking like a logic bug.
     expect(CONFIG.arena.radius).toBe(330);
-    expect(CONFIG.arena.wallThickness).toBe(16);
-    expect(CONFIG.pawn.radius).toBe(16);
+    expect(CONFIG.arena.wallThickness).toBe(18);
+    expect(CONFIG.pawn.radius).toBe(18);
     expect(CONFIG.arena.centerX).toBe(CENTER_X);
     expect(CONFIG.arena.centerY).toBe(CENTER_Y);
-    expect(floorRadius(createArena())).toBe(314);
+    expect(floorRadius(createArena())).toBe(312);
   });
 
-  it("eliminates at exactly 346 units — not 330", () => {
+  it("eliminates at exactly 348 units — not 330", () => {
     const arena = createArena();
     const at = (d: number) =>
-      isPawnOutOfBounds(arena, CENTER_X + d, CENTER_Y, 16);
+      isPawnOutOfBounds(arena, CENTER_X + d, CENTER_Y, 18);
 
     // 330 is the DRAWN edge: the pawn is exactly half out here, still
     // sitting on the platform. It must live. This is the assertion that
@@ -77,12 +77,12 @@ describe("the elimination boundary is floor + pawn radius, in absolute units", (
       expect(at(d)).toBe(false);
     }
 
-    // 346 exactly: the pawn's inner rim grazes the drawn edge — a whole
+    // 348 exactly: the pawn's inner rim grazes the drawn edge — a whole
     // diameter is off. Strictly greater-than, so this still survives.
-    expect(at(346)).toBe(false);
+    expect(at(348)).toBe(false);
 
-    // Past 346: completely clear of the platform, eliminated.
-    for (const d of [346.001, 347, 360, 400]) {
+    // Past 348: completely clear of the platform, eliminated.
+    for (const d of [348.001, 349, 360, 400]) {
       expect(at(d)).toBe(true);
     }
   });
@@ -91,11 +91,11 @@ describe("the elimination boundary is floor + pawn radius, in absolute units", (
     const arena = createArena();
     // The difference between the correct rule and the half-out bug,
     // stated as a number: one whole pawn diameter beyond the platform.
-    let lastAlive = 314;
-    for (let d = 314; d <= 380; d += 0.5) {
-      if (!isPawnOutOfBounds(arena, CENTER_X + d, CENTER_Y, 16)) lastAlive = d;
+    let lastAlive = 312;
+    for (let d = 312; d <= 380; d += 0.5) {
+      if (!isPawnOutOfBounds(arena, CENTER_X + d, CENTER_Y, 18)) lastAlive = d;
     }
-    expect(lastAlive).toBe(346);
+    expect(lastAlive).toBe(348);
     expect(lastAlive - arenaEdgeRadius(arena)).toBe(CONFIG.pawn.radius);
     // Measured from the floor it is two radii — a full diameter.
     expect(lastAlive - floorRadius(arena)).toBe(2 * CONFIG.pawn.radius);
@@ -104,30 +104,30 @@ describe("the elimination boundary is floor + pawn radius, in absolute units", (
   it("holds at every radius on the shrink schedule", () => {
     // 330 → 290 → 250 → 210 → 180, and the boundary tracks each one.
     const expected: ReadonlyArray<readonly [number, number, number]> = [
-      // [arena radius, floor, elimination distance = drawn edge + 16]
-      [330, 314, 346],
-      [290, 274, 306],
-      [250, 234, 266],
-      [210, 194, 226],
-      [180, 164, 196],
+      // [arena radius, floor, elimination distance = drawn edge + 18]
+      [330, 312, 348],
+      [290, 272, 308],
+      [250, 232, 268],
+      [210, 192, 228],
+      [180, 162, 198],
     ];
     for (const [radius, floor, boundary] of expected) {
       const arena = createArena(radius);
       expect(floorRadius(arena)).toBe(floor);
       expect(
-        isPawnOutOfBounds(arena, CENTER_X + boundary, CENTER_Y, 16)
+        isPawnOutOfBounds(arena, CENTER_X + boundary, CENTER_Y, 18)
       ).toBe(false); // survives AT the boundary
       expect(
-        isPawnOutOfBounds(arena, CENTER_X + boundary + 0.001, CENTER_Y, 16)
+        isPawnOutOfBounds(arena, CENTER_X + boundary + 0.001, CENTER_Y, 18)
       ).toBe(true); // dies just past it
       // …and is emphatically alive at the floor edge (half out).
-      expect(isPawnOutOfBounds(arena, CENTER_X + floor, CENTER_Y, 16)).toBe(
+      expect(isPawnOutOfBounds(arena, CENTER_X + floor, CENTER_Y, 18)).toBe(
         false
       );
     }
   });
 
-  it("is radially symmetric — 346 in every direction, not just +x", () => {
+  it("is radially symmetric — 348 in every direction, not just +x", () => {
     const arena = createArena();
     for (let i = 0; i < 16; i += 1) {
       const angle = (i / 16) * Math.PI * 2;
@@ -136,12 +136,12 @@ describe("the elimination boundary is floor + pawn radius, in absolute units", (
           arena,
           CENTER_X + Math.cos(angle) * d,
           CENTER_Y + Math.sin(angle) * d,
-          16
+          18
         );
-      // Floating point: a point placed at exactly 346 by cos/sin can land
+      // Floating point: a point placed at exactly 348 by cos/sin can land
       // a hair over, so assert just inside and just outside the boundary.
-      expect(probe(345.99)).toBe(false);
-      expect(probe(346.01)).toBe(true);
+      expect(probe(347.99)).toBe(false);
+      expect(probe(348.01)).toBe(true);
       expect(probe(330)).toBe(false); // half out, alive, at every angle
     }
   });
@@ -149,10 +149,10 @@ describe("the elimination boundary is floor + pawn radius, in absolute units", (
 
 describe("the boundary coincides with the OUTER ring — the perception trap", () => {
   it("puts the death line on the ring's outer edge, not the floor edge", () => {
-    // This is why correct behaviour can look early. wallThickness (16)
-    // happens to equal the pawn radius (16), so at the instant of death
+    // This is why correct behaviour can look early. wallThickness (18)
+    // happens to equal the pawn radius (18), so at the instant of death
     // the pawn exactly fills the visual ring band: its inner edge rests
-    // on the floor line (314) and its outer edge on the outer border
+    // on the floor line (312) and its outer edge on the outer border
     // (330). The pawn still LOOKS like it is sitting on the rim.
     const arena = createArena();
     const boundary = floorRadius(arena) + CONFIG.pawn.radius;
@@ -163,12 +163,12 @@ describe("the boundary coincides with the OUTER ring — the perception trap", (
     // At the moment of death the pawn spans exactly the ring band.
     const innerEdgeAtDeath = boundary - CONFIG.pawn.radius;
     const outerEdgeAtDeath = boundary + CONFIG.pawn.radius;
-    expect(innerEdgeAtDeath).toBe(floorRadius(arena)); // 314
-    expect(outerEdgeAtDeath).toBe(arena.radius + CONFIG.pawn.radius); // 346
+    expect(innerEdgeAtDeath).toBe(floorRadius(arena)); // 312
+    expect(outerEdgeAtDeath).toBe(arena.radius + CONFIG.pawn.radius); // 348
 
     // The pawn is drawn at its true radius, so this is genuinely what a
     // player sees — the rendering is not lying, the rim is just wide.
-    expect(CONFIG.pawn.radius).toBe(16);
+    expect(CONFIG.pawn.radius).toBe(18);
   });
 
   it("keeps that coincidence at every shrink step", () => {

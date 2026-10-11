@@ -60,7 +60,7 @@ export function floorRadius(arena: Arena): number {
  * this helper. The elimination rule (isPawnOutOfBounds) fires at
  * `floorRadius + pawnRadius`; the wall band that used to be drawn
  * between the floor and `arena.radius` was precisely `wallThickness`
- * wide, and wallThickness === pawn.radius === 16. So:
+ * wide, and wallThickness === CONFIG.pawn.radius (18). So:
  *
  *     floorRadius(a) + pawn.radius  ===  a.radius - 16 + 16  ===  a.radius
  *

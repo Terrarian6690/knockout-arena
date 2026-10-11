@@ -578,9 +578,11 @@ describe("repeated turns", () => {
       expect(s.phase).toBe("aiming");
       expect(pawnOf(s).eliminated).toBe(false);
     }
-    // The pawn drifted toward the center across turns.
+    // The pawn drifted toward the center across turns. (30, not 40: the
+    // disc grew from radius 16 to 18, so at the same launch speeds it
+    // glides slightly less far per turn — the drift is still real.)
     expect(distFromCenter(pawnOf(g.snapshot()).position)).toBeLessThan(
-      distFromCenter(SPAWN) - 40
+      distFromCenter(SPAWN) - 30
     );
     g.destroy();
   });

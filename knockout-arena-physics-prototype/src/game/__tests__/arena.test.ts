@@ -88,14 +88,14 @@ describe("isPawnOutOfBounds (geometric elimination rule)", () => {
 });
 
 describe("arena size (source of truth)", () => {
-  it("pins the enlarged radius: 330 outer, 314 floor, centered in the world", () => {
+  it("pins the enlarged radius: 330 outer, 312 floor, centered in the world", () => {
     // CONFIG.arena is the single source of truth: spawns, the logical
     // elimination boundary, resting projection and rendering all derive
     // from it (nothing hard-codes a radius anywhere else).
     expect(CONFIG.arena.radius).toBe(330);
     expect(CONFIG.arena.centerX).toBe(450);
     expect(CONFIG.arena.centerY).toBe(350);
-    expect(floorRadius(createArena())).toBe(314); // 330 - wallThickness 16
+    expect(floorRadius(createArena())).toBe(312); // 330 - wallThickness 18
     // The whole arena fits inside the world frame with room to spare.
     expect(CONFIG.arena.radius).toBeLessThan(
       Math.min(CONFIG.world.width / 2, CONFIG.world.height / 2)

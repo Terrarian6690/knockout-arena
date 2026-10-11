@@ -20,7 +20,7 @@ import { createPhysicsWorld } from "../physics";
  *
  * THE ROUND RULE (isPawnOutOfBounds) now gives a full diameter of grace:
  *
- *     death at  arenaEdgeRadius + pawnRadius   (330 + 16 = 346)
+ *     death at  arenaEdgeRadius + pawnRadius   (330 + 18 = 348)
  *
  * so the pawn's inner rim must clear the drawn edge before it falls.
  * Between 330 and 346 the pawn hangs over the void and lives.
@@ -123,7 +123,7 @@ describe("settling never teleports the pawn", () => {
   it("a pawn that stops in the grace band is left exactly there", () => {
     // The grace band only means something if the pawn is allowed to
     // REMAIN in it. settleOnFloor used to drag anything past
-    // floorRadius - pawnRadius - 1 (297) back to that circle, a jump of
+    // floorRadius - pawnRadius - 1 (293) back to that circle, a jump of
     // up to 49 units that deleted the whole "teetering on the brink"
     // moment the round rule exists to allow.
     const arena = createArena();

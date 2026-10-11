@@ -37,21 +37,27 @@ export const CONFIG = {
     /**
      * Width of the VISUAL boundary ring marking the floor edge. Not a
      * collider — the playable floor ends at radius - wallThickness and
-     * the elimination rule measures from there (see arena.ts).
+     * the elimination rule measures from there (see arena.ts). KEPT
+     * EQUAL to pawn.radius: the visible-edge identity
+     * (floorRadius + wallThickness + pawnRadius === arena.radius) and
+     * the whole boundary story hang on that pairing.
      */
-    wallThickness: 16,
+    wallThickness: 18,
     /**
      * How far INSIDE the floor edge pawns spawn: the spawn ring sits at
      * floor − pawnRadius − spawnMargin (see arena.ts, the single source
      * of spawn positions).
      *
-     * Sized against the shrink step on purpose. With the old margin of 8
-     * the ring landed at 290, which is EXACTLY the elimination boundary
-     * after the first shrink (floor 274 + pawnRadius 16 = 290) — pawns
-     * survived only because `>` is strict and axis-aligned spawns come
-     * out to exactly 290.0. Any spawn at an off-axis angle rounded to
-     * 290.00000000000006 and was wiped out the moment the arena first
-     * shrank. 16 keeps a real 8-unit clearance at every angle.
+     * Sized against the shrink schedule on purpose: the shrink-drop
+     * rule removes any pawn whose centre ends past the shrunken VISIBLE
+     * edge (arena.radius), and the ring must sit well inside that at
+     * every step. With pawn 18 / wall 18 the ring is at
+     * 330 - 18 - 18 - 16 = 278 — 12 clear of the first shrink's 290 —
+     * and the clearance is step-invariant (both sides shrink together).
+     * 16 keeps a real clearance at every angle. (The original margin 8
+     * once landed the ring EXACTLY on the old pre-Task-30 boundary
+     * after the first shrink — off-axis spawns rounded to 290.000006
+     * and were wiped out; 16 exists so that can never return.)
      */
     spawnMargin: 16,
     /**
@@ -72,12 +78,12 @@ export const CONFIG = {
      * → 164. Every later interval elapses without effect.
      *
      * The step is deliberately LARGER than the margin a settled pawn
-     * keeps from the edge (wallThickness + pawnRadius + 1 = 33): a pawn
+     * keeps from the edge (wallThickness + pawnRadius + 1 = 37): a pawn
      * that ends a round hugging the rim is genuinely caught by the next
      * boundary and eliminated, so the mechanic really does close the
      * space. It is small enough, though, that the FIRST shrink does not
      * instantly wipe out everyone who is still standing on the spawn
-     * ring (282, see arena.spawnMargin) — the pressure builds over
+     * ring (278, see arena.spawnMargin) — the pressure builds over
      * rounds instead of ending the match in one stroke.
      */
     shrink: {
@@ -108,7 +114,10 @@ export const CONFIG = {
    * easy to reason about for balancing.
    */
   pawn: {
-    radius: 16,
+    // A touch larger than the original 16: the disc is the player's
+    // FACE (image skins), and the extra world units give the picture
+    // more room on the board (mass follows area via density).
+    radius: 18,
     density: 0.004,
     friction: 0.05,
     frictionAir: 0.016,
